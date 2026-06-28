@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.18`
+Latest version: `1.5.19`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.19
+
+- Adds a runtime diagnostic self-test for the legacy field policy introduced in 1.5.18.
+- Verifies that AI-generated lorebook writes suppress `secondkey` and `mode:"multiple"` unless explicitly requested.
+- Verifies that model context hides legacy lorebook activation details and character `personality/scenario` aliases.
 
 ## 1.5.18
 
