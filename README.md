@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.6`
+Latest version: `1.5.7`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.7
+
+- Removes an older duplicated top-level LBI/Ollama/API Hub helper block so strict parsers and webviews do not trip over duplicate declarations.
+- Keeps the newer API Hub/sub-agent implementation as the single active implementation.
+- Removes the remaining duplicated `ensureArray` helper and verifies `no-redeclare` / `no-undef` for the release file.
+- Rebuilds the release from the clean UTF-8 1.5.6 source to avoid Korean text corruption.
 
 ## 1.5.6
 
@@ -38,7 +45,6 @@ This repository is dedicated to SuperVibeBot only. Other plugins should use thei
 - Keeps sub-agent packet size below the effective context budget with extra headroom.
 - Reduces sub-agent parallelism, manager-board size, workstream render count, and bulk-create chunk size on constrained devices.
 - Debounces workstream rendering and flushes state on visibility changes to reduce webview crashes.
-- Adds runtime diagnostics for adaptive mobile/PocketRisu budgets.
 
 ## 1.5.3
 
