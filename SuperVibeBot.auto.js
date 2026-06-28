@@ -1,18 +1,19 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.16
-//@version 1.5.16
+//@display-name 🐸 SuperVibeBot v1.5.23
+//@version 1.5.23
 //@api 3.0
-//@update-url https://github.com/nupa0w0-hash/supervibebot-update/raw/refs/heads/main/SuperVibeBot.update.js
+//@update-url https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.16는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.23는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
+const SUPER_VIBE_BOT_RELEASE_UPDATE_URL = 'https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js';
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
 const PERSONA_APPLY_DISABLED = true;
@@ -163,7 +164,7 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.16 Release Notes
+ * SuperVibeBot v1.5.23 Release Notes
  *
  * 🎉 Major Changes
  * - Caps sub-agent consultation packets to 120k desktop, 80k constrained, and 60k background chars
@@ -182,6 +183,13 @@ async function safeCopyText(text, options = {}) {
  * ✨ New Features
  * - Sub-agent packet hard caps now apply from adaptive runtime limits before provider calls
  * - Lorebook Builder now treats multiple keys and secondkey as explicit advanced options, not defaults
+ * - AI-generated lorebook writes now remove secondkey/multiple mode unless explicitly requested
+ * - Model context hides legacy lorebook activation details and character personality/scenario aliases by default
+ * - Runtime diagnostics now verify the legacy field policy for lorebook writes and model context
+ * - Runtime diagnostics now verify SuperVibeBot uses the GitHub Releases latest update URL
+ * - Plugin creation guidance now recommends GitHub Releases latest/download over raw branch URLs
+ * - Plugin update-url guidance no longer uses source/raw-like Korean wording that can confuse authors
+ * - Runtime diagnostics now verify full character context does not leak unused personality/scenario fields
  * - Sub-agent report calls now default to 4096 output tokens on desktop and 2048 on constrained/mobile/webview profiles
  * - Explicit sub-agent output overrides are clamped to a WebView-safe hard cap
  * - API responses that ignore max_tokens are shortened before entering Kero's parser/renderer
@@ -194,6 +202,11 @@ async function safeCopyText(text, options = {}) {
  * 🔧 Improvements
  * - Runtime diagnostics now verify packet hard caps for desktop, PocketRisu, and background profiles
  * - Runtime diagnostics now verify bulk apply idx filtering
+ * - Runtime diagnostics now verify secondkey/multiple mode suppression and personality/scenario alias filtering
+ * - Runtime diagnostics now reject raw refs update-url regressions for SuperVibeBot
+ * - RisuAI plugin metadata guide now warns against raw.githubusercontent branch URLs as default update channels
+ * - Validation messages now say HTTPS .js file URL instead of raw/source-like JS URL wording
+ * - Strengthened legacy character field self-checks so Kero keeps traits/setup inside desc instead of deprecated fields
  * - Prevents GLM/Kimi/API Hub sub-agents from returning or rendering oversized manager reports
  * - Runtime diagnostics now verify sub-agent hard caps, response truncation, and conservative large-payload parallel limits
  * - Safer selected-item expansion in both global and Kero chat execution paths
@@ -360,6 +373,43 @@ function sanitizeLorebookEntry(entry, index) {
     return { entry: sanitized, changed };
 }
 
+function isExplicitLorebookSecondKeyRequest(options = {}, source = {}) {
+    if (options.allowSecondkey === true || options.allowSecondKey === true) return true;
+    const action = options.action && typeof options.action === 'object' ? options.action : {};
+    const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+    const sourceObject = source && typeof source === 'object' ? source : {};
+    const text = [
+        options.userRequest,
+        options.request,
+        options.prompt,
+        options.instruction,
+        options.description,
+        action.userRequest,
+        action.request,
+        action.prompt,
+        action.instruction,
+        action.description,
+        payload.userRequest,
+        payload.request,
+        payload.prompt,
+        payload.instruction,
+        payload.description,
+        sourceObject.userRequest,
+        sourceObject.request,
+        sourceObject.prompt,
+        sourceObject.instruction,
+        sourceObject.description
+    ].map(value => safeString(value)).join('\n');
+    return /(second\s*key|secondkey|secondary\s+key|보조\s*키|2차\s*키|and\s*[-_\s]?(key|trigger)|and\s*트리거|다중\s*키|복수\s*키|멀티플\s*키|multiple\s+keys?)/i.test(text);
+}
+
+function normalizeLorebookSecondKeyForWrite(value, options = {}, source = {}, label = '로어북 보조 키') {
+    const raw = safeString(value).trim();
+    if (!raw) return '';
+    if (!isExplicitLorebookSecondKeyRequest(options, source)) return '';
+    return recoverKeroActionDirectivesFromFieldText(raw, label, options.deferredActions, options);
+}
+
 function sanitizeLorebookEntries(entries) {
     const warnings = [];
     if (!Array.isArray(entries)) {
@@ -376,6 +426,50 @@ function sanitizeLorebookEntries(entries) {
             changed = true;
             warnings.push(`#${index + 1} 항목이 비정상 타입을 포함하고 있어 자동 보정했습니다.`);
         }
+        return result.entry;
+    });
+    return { entries: sanitized, changed, warnings: dedupeWarnings(warnings) };
+}
+
+function normalizeLorebookModeForWrite(value, options = {}, source = {}) {
+    const mode = safeString(value || 'normal').trim() || 'normal';
+    if (/^multiple$/i.test(mode) && !isExplicitLorebookSecondKeyRequest(options, source)) {
+        return 'normal';
+    }
+    return mode;
+}
+
+function sanitizeLorebookEntryForAiWrite(entry, index, options = {}) {
+    const result = sanitizeLorebookEntry(entry, index);
+    const next = { ...result.entry };
+    const source = entry && typeof entry === 'object' ? entry : {};
+    const warnings = [];
+    let changed = result.changed;
+
+    if (Object.prototype.hasOwnProperty.call(next, 'secondkey') && !isExplicitLorebookSecondKeyRequest(options, source)) {
+        delete next.secondkey;
+        changed = true;
+        warnings.push(`#${index + 1} 보조 키(secondkey)는 명시 요청이 없어 제거했습니다.`);
+    }
+
+    if (/^multiple$/i.test(safeString(next.mode)) && !isExplicitLorebookSecondKeyRequest(options, source)) {
+        next.mode = 'normal';
+        changed = true;
+        warnings.push(`#${index + 1} mode:"multiple"은 명시 요청이 없어 normal로 보정했습니다.`);
+    }
+
+    return { entry: next, changed, warnings };
+}
+
+function sanitizeLorebookEntriesForAiWrite(entries, options = {}) {
+    const base = sanitizeLorebookEntries(entries);
+    if (!Array.isArray(base.entries)) return base;
+    let changed = base.changed;
+    const warnings = [...(base.warnings || [])];
+    const sanitized = base.entries.map((entry, index) => {
+        const result = sanitizeLorebookEntryForAiWrite(entry, index, options);
+        if (result.changed) changed = true;
+        warnings.push(...(result.warnings || []));
         return result.entry;
     });
     return { entries: sanitized, changed, warnings: dedupeWarnings(warnings) };
@@ -1812,11 +1906,11 @@ Each lorebook entry has:
 - **key** (string) — Unique identifier
 - **comment** (string) — Display name in the editor
 - **content** (string) — The actual lore text injected into context
-- **mode** (string) — \`normal\`, \`multiple\`, \`constant\`, \`child\`, or \`folder\`
+- **mode** (string) — \`normal\`, \`constant\`, \`child\`, or \`folder\`. \`multiple\` is legacy/advanced and should not be used unless explicitly requested.
 - **insertorder** (number) — Insertion order / priority
 - **selective** (boolean) — If true, only triggers when key matches
 - **alwaysActive** (boolean) — Include constantly when appropriate
-- **secondkey** (string) — Legacy/advanced secondary trigger key; leave empty unless the user explicitly asks for AND-key behavior
+- **secondkey** (string) — Legacy/advanced secondary trigger key. Do not include it in new output unless the user explicitly asks for AND-key behavior.
 - **useRegex** (boolean) — Treat keys as regex when needed
 - **folder** (string) — Parent folder key/id
 
@@ -1826,7 +1920,7 @@ Do not output legacy fields such as **position**, **disable**, **insertonce**, *
 - Use specific character names, location names, and concept terms as keys
 - Prefer one practical primary key per entry. Do not use multiple-key mode by default.
 - Include both English and Korean variants only when the character/material actually uses both names.
-- Leave secondkey empty by default. Use secondary keys only when the user explicitly asks for strict AND-trigger lore.
+- Omit secondkey in new entries by default. Use secondary keys only when the user explicitly asks for strict AND-trigger lore.
 
 ### Content Writing Best Practices
 1. **Be complete before concise** — Remove filler, but keep concrete facts, relationships, constraints, sensory cues, and roleplay hooks.
@@ -1850,7 +1944,7 @@ Group related entries into folders:
 [{{char_name}} - Character Profile]
 - Role: (relationship to {{char}} or {{user}})
 - Appearance: (2-3 key visual traits)
-- Personality: (3-4 core traits with behavioral examples)
+- Traits/Behavior: (3-4 core traits with behavioral examples)
 - Speech: (speaking style, verbal tics, language register)
 - Key Facts: (important plot-relevant information)
 \`\`\`
@@ -5562,7 +5656,7 @@ function formatNpcDetailContent(name, fields) {
         `- Physical: ${safeFields[2]}`,
         `- Attire: ${safeFields[3]}`,
         `- Job/Affiliation: ${safeFields[4]}`,
-        `- Personality: ${safeFields[5]}`,
+        `- Traits/Behavior: ${safeFields[5]}`,
         `- Relationship: ${safeFields[6]}`
     ];
     if (safeFields[7]) {
@@ -5658,7 +5752,7 @@ function parseCharacterList(text) {
         let physical = '';
         let attire = '';
         let jobAffil = '';
-        let personality = '';
+        let traits = '';
         let relationship = '';
         let etc = '';
         body.split('\n').forEach((line) => {
@@ -5674,12 +5768,12 @@ function parseCharacterList(text) {
             else if (label.includes('외형') || label.includes('신체') || label.includes('physical')) physical = value;
             else if (label.includes('복장') || label.includes('attire') || label.includes('clothing')) attire = value;
             else if (label.includes('직업') || label.includes('job') || label.includes('role') || label.includes('affiliation') || label.includes('소속')) jobAffil = value;
-            else if (label.includes('성격') || label.includes('personality')) personality = value;
+            else if (label.includes('성격') || label.includes('personality') || label.includes('traits') || label.includes('behavior')) traits = value;
             else if (label.includes('관계') || label.includes('relationship')) relationship = value;
             else if (label.includes('etc') || label.includes('기타')) etc = value;
         });
         const ageGender = [age, gender].filter(Boolean).join('/');
-        const fields = [name, ageGender, physical, attire, jobAffil, personality, relationship, etc];
+        const fields = [name, ageGender, physical, attire, jobAffil, traits, relationship, etc];
         entries.push({ name, fields: sanitizeNpcFields(fields, name) });
     }
     if (entries.length === 0) {
@@ -5984,7 +6078,6 @@ async function buildNpcListFromChats(char, batch) {
                 mode: 'folder',
                 insertorder: lorebooks.length,
                 alwaysActive: false,
-                secondkey: '',
                 selective: false
             }, lorebooks.length);
             folderEntry = folderPayload.entry;
@@ -6063,7 +6156,7 @@ async function buildNpcListFromChats(char, batch) {
      - Physical: ...
      - Attire: ...
      - Job/Affiliation: ...
-     - Personality: ...
+     - Traits/Behavior: ...
      - Relationship: ...
      - etc: ... (optional)
      </EN (KR / Native)>
@@ -6078,7 +6171,7 @@ async function buildNpcListFromChats(char, batch) {
   8. CRITICAL: The user/player name is "${userNameForPrompt}". NEVER include the user as an NPC. In the chat log, the user appears as "--${userNameForPrompt}". Exclude them entirely.
   9. Include only proper NPC names revealed in NEW_CHATS. Exclude generic roles like "남자", "여자", "학생" etc.
   10. Relationship: 1–2 short English sentences. Use "${userNameForPrompt}" for the player. Include proper nouns (names/affiliations/places) that appear in NEW_CHATS only.
-  11. Use the exact field order shown in rule 1. Only include "- etc:" if there is extra NPC-specific info not covered elsewhere.
+  11. Use the exact field order shown in rule 1. Do not use the legacy "Personality" field name. Only include "- etc:" if there is extra NPC-specific info not covered elsewhere.
   12. Keep each field concise (1–2 short sentences). Summarize, do not expand. Avoid overly long descriptions.
   13. Fill every required field. If unknown, infer cautiously from NEW_CHATS only. Do not use "Unknown" or "불명".
       The "etc" line is optional and should be omitted if empty.
@@ -6174,7 +6267,6 @@ Return ONLY the NPC blocks, no explanations.`;
                     mode: 'normal',
                     insertorder: updatedLorebooks.length,
                     alwaysActive: false,
-                    secondkey: '',
                     selective: false,
                     folder: folderKey
                 }, updatedLorebooks.length);
@@ -8500,7 +8592,7 @@ async function applyKeroBatchResults(results, target, options = {}) {
         if (target === 'lorebook') {
             if (targetList[item.idx]) {
                 if (typeof item.improved === 'object' && item.improved !== null && 'content' in item.improved) {
-                    targetList[item.idx] = sanitizeLorebookEntry(item.improved, item.idx).entry;
+                    targetList[item.idx] = sanitizeLorebookEntryForAiWrite(item.improved, item.idx, options).entry;
                 } else {
                     targetList[item.idx].content = safeString(item.improved);
                 }
@@ -11996,6 +12088,89 @@ function addSvbRuntimeIndexFallbackSelfTest(checks) {
     ));
 }
 
+function addSvbRuntimeLegacyFieldPolicySelfTest(checks) {
+    const result = readSvbRuntimeValue('legacy 필드 정책 자체 테스트', () => {
+        const defaultWrite = sanitizeLorebookEntryForAiWrite({
+            key: '진단',
+            secondkey: '숨겨야 하는 보조 키',
+            mode: 'multiple',
+            content: '진단 본문'
+        }, 0, {}).entry;
+        const explicitWrite = sanitizeLorebookEntryForAiWrite({
+            key: '진단',
+            secondkey: '명시 요청 보조 키',
+            mode: 'multiple',
+            content: '진단 본문'
+        }, 1, { userRequest: '보조 키와 multiple key를 명시적으로 사용해' }).entry;
+        const contextEntry = makeLorebookEntryForModelContext({
+            key: '진단',
+            secondkey: '컨텍스트에 노출되면 안 되는 값',
+            mode: 'multiple',
+            content: '진단 본문'
+        }, 2);
+        const extraFields = getCharacterExtraCloneFields({
+            name: '진단 캐릭터',
+            personalityText: '숨겨야 하는 성격 별칭',
+            scenario_prompt: '숨겨야 하는 시나리오 별칭',
+            customField: '보존해야 하는 커스텀 필드'
+        }, ['name']);
+        const fullContext = buildFullCharacterContext({
+            name: '진단 캐릭터',
+            desc: '디스크립션 본문',
+            personality: '모델 컨텍스트에 나오면 안 되는 personality 본문',
+            scenario: '모델 컨텍스트에 나오면 안 되는 scenario 본문',
+            personalityText: '모델 컨텍스트에 나오면 안 되는 personalityText 본문',
+            scenario_prompt: '모델 컨텍스트에 나오면 안 되는 scenario_prompt 본문',
+            customField: '보존 가능한 기타 필드'
+        }) || {};
+        const fullContextText = JSON.stringify(fullContext);
+        const pipelineEntry = makeLorebookEntryForModelContext(defaultWrite, 3);
+        return {
+            defaultHasSecondkey: Object.prototype.hasOwnProperty.call(defaultWrite, 'secondkey'),
+            defaultMode: safeString(defaultWrite.mode),
+            explicitSecondkey: safeString(explicitWrite.secondkey),
+            explicitMode: safeString(explicitWrite.mode),
+            contextHasSecondkey: Object.prototype.hasOwnProperty.call(contextEntry, 'secondkey'),
+            contextText: JSON.stringify(contextEntry),
+            contextMode: safeString(contextEntry.mode),
+            contextLegacySecondkeyPresent: contextEntry.legacySecondkeyPresent === true,
+            contextLegacyModeWasMultiple: contextEntry.legacyModeWasMultiple === true,
+            extraHasPersonalityAlias: Object.keys(extraFields).some((key) => /personality|scenario|성격|시나리오/i.test(key)),
+            customField: extraFields.customField,
+            fullContextLeaksLegacyCharacterFields: /personality|scenario/.test(fullContextText)
+                || fullContextText.includes('모델 컨텍스트에 나오면 안 되는'),
+            fullContextKeepsDesc: fullContext?.descriptions?.desc === '디스크립션 본문',
+            fullContextKeepsCustomExtra: fullContext?.rawCharacterExtraFields?.customField === '보존 가능한 기타 필드',
+            pipelineHasSecondkey: Object.prototype.hasOwnProperty.call(pipelineEntry, 'secondkey'),
+            pipelineMode: safeString(pipelineEntry.mode)
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, 'legacy 필드 정책 자체 테스트', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (value.defaultHasSecondkey) problems.push('AI 기본 저장에서 secondkey 제거 실패');
+    if (value.defaultMode !== 'normal') problems.push('AI 기본 저장에서 multiple mode 보정 실패');
+    if (value.explicitSecondkey !== '명시 요청 보조 키') problems.push('명시 요청 secondkey 보존 실패');
+    if (value.explicitMode !== 'multiple') problems.push('명시 요청 multiple mode 보존 실패');
+    if (value.contextHasSecondkey || safeString(value.contextText).includes('컨텍스트에 노출되면 안 되는 값')) problems.push('모델 컨텍스트 secondkey 값 숨김 실패');
+    if (value.contextMode !== 'normal' || !value.contextLegacySecondkeyPresent || !value.contextLegacyModeWasMultiple) problems.push('모델 컨텍스트 legacy 표시/보정 실패');
+    if (value.extraHasPersonalityAlias) problems.push('personality/scenario alias extra 필터 실패');
+    if (value.customField !== '보존해야 하는 커스텀 필드') problems.push('비 legacy extra 필드 보존 실패');
+    if (value.fullContextLeaksLegacyCharacterFields) problems.push('full character context personality/scenario 원문 숨김 실패');
+    if (!value.fullContextKeepsDesc) problems.push('full character context desc 보존 실패');
+    if (!value.fullContextKeepsCustomExtra) problems.push('full character context custom extra 보존 실패');
+    if (value.pipelineHasSecondkey || value.pipelineMode !== 'normal') problems.push('AI-write to context pipeline legacy 차단 실패');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        'legacy 필드 정책 자체 테스트',
+        problems.length ? `문제: ${problems.join(' / ')}` : 'secondkey/multiple/personality/scenario alias 기본 경로 차단 및 명시 요청 보존 확인',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
 function addSvbRuntimeKeroChatContinuitySelfTest(checks) {
     const result = readSvbRuntimeValue('Kero recent chat continuity self test', () => {
         const currentInput = 'apply that fix now';
@@ -12328,6 +12503,15 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             '//@name ignored-plugin',
             '//@api 3.0'
         ].join('\n'));
+        const superVibeMetadata = buildPluginMetadataSummary([
+            '//@name SuperVibeBot',
+            '//@display-name 🐸 SuperVibeBot diagnostic',
+            '//@version 1.5.23',
+            '//@api 3.0',
+            `//@update-url ${SUPER_VIBE_BOT_RELEASE_UPDATE_URL}`
+        ].join('\n'));
+        const superVibeUsesReleaseLatest = /^https:\/\/github\.com\/nupa0w0-hash\/supervibebot-update\/releases\/latest\/download\/SuperVibeBot\.update\.js$/i.test(SUPER_VIBE_BOT_RELEASE_UPDATE_URL);
+        const superVibeUsesLegacyRawRefs = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main|github\.com\/nupa0w0-hash\/supervibebot-update\/raw\/refs\/heads\/main/i.test(SUPER_VIBE_BOT_RELEASE_UPDATE_URL);
         return {
             autoUpdateReady: metadata.autoUpdateReady === true,
             versionByteIndex: metadata.versionByteIndex,
@@ -12340,7 +12524,11 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             badVersionRejected,
             storedInvalidRejected,
             storedMismatchRejected,
-            stringMetadataIgnored: !stringMetadataIgnored.version && !stringMetadataIgnored.name
+            stringMetadataIgnored: !stringMetadataIgnored.version && !stringMetadataIgnored.name,
+            superVibeUpdateUrl: SUPER_VIBE_BOT_RELEASE_UPDATE_URL,
+            superVibeMetadataReady: superVibeMetadata.autoUpdateReady === true,
+            superVibeUsesReleaseLatest,
+            superVibeUsesLegacyRawRefs
         };
     });
     if (!result.ok) {
@@ -12361,10 +12549,13 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
     if (!value.storedInvalidRejected) problems.push('저장 updateURL http 허용');
     if (!value.storedMismatchRejected) problems.push('script/store updateURL 불일치 허용');
     if (!value.stringMetadataIgnored) problems.push('스크립트 문자열 내부 메타데이터 오인');
+    if (!value.superVibeMetadataReady) problems.push('슈바봇 release update-url 자동 업데이트 판정 실패');
+    if (!value.superVibeUsesReleaseLatest) problems.push('슈바봇 update-url이 release latest 경로가 아님');
+    if (value.superVibeUsesLegacyRawRefs) problems.push('슈바봇 update-url이 raw refs 캐시 위험 경로임');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '플러그인 자동 업데이트 메타데이터 자체 테스트',
-        `version byte ${value.versionByteIndex ?? -1} · 기본 ${value.defaultVersion || '없음'} · 저장 ${value.normalizedVersion || '없음'}${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
+        `version byte ${value.versionByteIndex ?? -1} · 기본 ${value.defaultVersion || '없음'} · 저장 ${value.normalizedVersion || '없음'} · 슈바봇 URL ${value.superVibeUpdateUrl || '없음'}${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -13388,6 +13579,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
+    addSvbRuntimeLegacyFieldPolicySelfTest(checks);
     addSvbRuntimeContextPayloadSelfTest(checks);
     addSvbRuntimeSubAgentPayloadBudgetSelfTest(checks);
     addSvbRuntimeAdaptiveLimitsSelfTest(checks);
@@ -28878,7 +29070,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
             const char = await getCharacterData();
             if (!char) return { success: false };
-            const result = await applyKeroCharacterPatchAction(action, char, { progressOptions: actionProgressOptions, ...actionAbortOptions });
+            const result = await applyKeroCharacterPatchAction(action, char, { progressOptions: actionProgressOptions, action, userRequest: action.userRequest || action.request || '', ...actionAbortOptions });
             if (result?.message) {
                 await addInlineSuccessMessage(result.message);
             }
@@ -30366,7 +30558,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     // item.improved가 전체 entry 객체인지 content만인지 판별
                     if (typeof item.improved === 'object' && item.improved !== null && 'content' in item.improved) {
                         // 전체 entry 객체 → sanitize 후 교체
-                        const sanitized = sanitizeLorebookEntry(item.improved, item.idx);
+                        const sanitized = sanitizeLorebookEntryForAiWrite(item.improved, item.idx, options);
                         targetList[item.idx] = sanitized.entry;
                     } else {
                         // content만 → safeString 적용
@@ -32388,8 +32580,9 @@ ${metaBlock}
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
-- 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url https://... 원본 JS URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
-- //@update-url은 https 원본 JS여야 하며 서버가 CORS와 Range 요청을 지원해야 한다. GitHub raw 또는 Cloudflare Workers 같은 안정적인 배포 URL을 사용한다.
+- 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
+- //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 브라우저 fetch가 가능해야 한다. GitHub를 쓰는 경우 raw 브랜치 URL보다 Releases latest/download/FILENAME.js를 우선 사용한다.
+- raw.githubusercontent.com 브랜치 경로와 GitHub raw refs 경로는 캐시/지연으로 업데이트가 안 보일 수 있으므로 자동 업데이트 기본값으로 추천하지 않는다.
 
         ### update (수정)
         - 사용자가 명시적으로 수정/업데이트를 요청하면 별도 승인 없이 바로 실행된다.
@@ -36285,6 +36478,35 @@ function getExtraCloneFields(source, knownKeys = []) {
     return Object.fromEntries(Object.entries(clone || {}).filter(([key]) => !known.has(key)));
 }
 
+function isLegacyCharacterExtraFieldKey(key) {
+    const normalized = safeString(key).trim().replace(/[\s_-]+/g, '').toLowerCase();
+    if (!normalized) return false;
+    if (normalized === 'personality' || normalized === 'scenario') return true;
+    if (/^(personality|scenario)(text|field|fields|data|note|notes|prompt|description|desc)$/.test(normalized)) return true;
+    return normalized === '성격' || normalized === '시나리오';
+}
+
+function getCharacterExtraCloneFields(source, knownKeys = []) {
+    const extras = getExtraCloneFields(source, knownKeys);
+    return Object.fromEntries(Object.entries(extras).filter(([key]) => !isLegacyCharacterExtraFieldKey(key)));
+}
+
+function makeLorebookEntryForModelContext(lore, index) {
+    const entry = { index, ...makeCloneableData(lore) };
+    if (Object.prototype.hasOwnProperty.call(entry, 'secondkey')) {
+        const secondKey = safeString(entry.secondkey).trim();
+        delete entry.secondkey;
+        if (secondKey) {
+            entry.legacySecondkeyPresent = true;
+        }
+    }
+    if (/^multiple$/i.test(safeString(entry.mode))) {
+        entry.legacyModeWasMultiple = true;
+        entry.mode = 'normal';
+    }
+    return entry;
+}
+
 function summarizeModuleForContext(module) {
     if (!module) return null;
     const cjs = safeString(module.cjs || '');
@@ -36762,7 +36984,7 @@ function buildPluginMetadataSummary(script) {
     const updateUrlValid = updateURL ? isValidPluginUpdateUrl(updateURL) : false;
     const versionComparable = version ? isRisuComparablePluginVersion(version) : false;
     const problems = [];
-    if (updateURL && !updateUrlValid) problems.push('//@update-url은 https 원본 JS URL이어야 합니다.');
+    if (updateURL && !updateUrlValid) problems.push('//@update-url은 https로 시작하는 .js 파일 URL이어야 합니다.');
     if (updateURL && !version) problems.push('//@update-url을 쓰려면 //@version이 필요합니다.');
     if (updateURL && version && !versionWithinUpdateCheckWindow) problems.push('RisuAI 업데이트 검사용 //@version이 첫 512바이트 안에 없습니다.');
     if (updateURL && version && !versionComparable) problems.push('RisuAI 버전 비교는 1.2.3 같은 숫자 점 표기만 안정적으로 처리합니다.');
@@ -36803,7 +37025,7 @@ function validatePluginScriptMetadata(script, expectedName, options = {}) {
     }
     if (metadata.updateURL) {
         if (!metadata.updateUrlValid) {
-            throw new Error(`${label} script의 //@update-url은 유효한 https 원본 JS URL이어야 합니다.`);
+            throw new Error(`${label} script의 //@update-url은 유효한 HTTPS .js 파일 URL이어야 합니다.`);
         }
         if (!metadata.version) {
             throw new Error(`${label} script에서 //@update-url을 쓰려면 //@version이 필요합니다.`);
@@ -36825,7 +37047,7 @@ function validatePluginAutoUpdateSettings(plugin, label = '플러그인') {
     const storedVersion = safeString(plugin.versionOfPlugin).trim();
     if (storedUpdateURL) {
         if (!isValidPluginUpdateUrl(storedUpdateURL)) {
-            throw new Error(`${label}의 updateURL은 유효한 https 원본 JS URL이어야 합니다.`);
+            throw new Error(`${label}의 updateURL은 유효한 HTTPS .js 파일 URL이어야 합니다.`);
         }
         if (!storedVersion) {
             throw new Error(`${label}의 updateURL을 쓰려면 versionOfPlugin 또는 script의 //@version이 필요합니다.`);
@@ -38000,14 +38222,14 @@ function normalizeCharacterPatchLore(entry, index, options = {}) {
         ...safe,
         comment: safe.comment || safe.name || safe.title || `Fantasy Lore ${index + 1}`,
         key: safe.key || '',
-        secondkey: safe.secondkey || '',
+        secondkey: normalizeLorebookSecondKeyForWrite(safe.secondkey, options, safe, `로어북 #${index + 1} 보조 키`),
         content: recoverKeroActionDirectivesFromFieldText(safe.content || safe.text || safe.body || '', `로어북 #${index + 1}`, options.deferredActions, options),
         insertorder: Number.isFinite(parsedInsertOrder) ? parsedInsertOrder : index,
         alwaysActive: safe.alwaysActive === true,
         selective: safe.selective === true,
-        mode: safe.mode || 'normal'
+        mode: normalizeLorebookModeForWrite(safe.mode || 'normal', options, safe)
     };
-    return sanitizeLorebookEntry(draft, index).entry;
+    return sanitizeLorebookEntryForAiWrite(draft, index, options).entry;
 }
 
 function isKeroCharacterPatchTarget(target) {
@@ -38029,7 +38251,7 @@ async function applyKeroCharacterPatchAction(action, char, options = {}) {
     const sources = getCharacterPatchSources(payload);
     const changes = [];
     const deferredActions = [];
-    const patchFieldOptions = { ...patchProgressOptions, deferredActions };
+    const patchFieldOptions = { ...patchProgressOptions, action, userRequest: action?.userRequest || action?.request || payload?.userRequest || payload?.request || options.userRequest || options.request || '', deferredActions };
     const forbiddenPatchFields = ['personality', '성격', 'scenario', '시나리오']
         .filter((key) => getFirstPatchValue(sources, [key]).found);
     if (forbiddenPatchFields.length) {
@@ -38831,14 +39053,14 @@ function buildFullCharacterContext(char) {
             creatorNotes: data.creatorNotes || '',
             translatorNote: data.translatorNote || data.translatorNotes || data.translationNote || data.translator_note || ''
         },
-        lorebooks: lorebooks.map((lore, index) => ({ index, ...makeCloneableData(lore) })),
+        lorebooks: lorebooks.map((lore, index) => makeLorebookEntryForModelContext(lore, index)),
         regexScripts: regexScripts.map((script, index) => ({ index, ...makeCloneableData(script) })),
         triggers: triggers.map((trigger, index) => ({ index, ...makeCloneableData(trigger) })),
         variables: defaultVariables,
         globalNote,
         backgroundHtml,
         characterFields,
-        rawCharacterExtraFields: getExtraCloneFields(data, [
+        rawCharacterExtraFields: getCharacterExtraCloneFields(data, [
             'name', 'creator', 'tags', 'desc', 'personality', 'scenario', 'firstMessage',
             'alternateGreetings', 'alternate_greetings', 'exampleMessage', 'systemPrompt',
             'postHistoryInstructions', 'notes', 'creatorNotes', 'translatorNote',
@@ -39593,7 +39815,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.16 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.23 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -39626,7 +39848,8 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - Recommended: \`//@display-name\`, \`//@version\`, \`//@arg\`, \`//@link\`, \`//@update-url\`
 - \`//@name\` is the stable plugin identity. Do not rename it during updates; use displayName/\`//@display-name\` for visible labels.
 - \`//@version\` is required for RisuAI update checks and should be within the first 512 bytes.
-- \`//@update-url\` must be an HTTPS raw JavaScript URL that supports CORS and Range requests. Do not invent a placeholder update URL.
+- \`//@update-url\` must be an HTTPS JavaScript file URL that supports browser fetches. For GitHub-hosted plugins, prefer Releases \`latest/download/FILENAME.js\` over raw branch URLs.
+- Avoid \`raw.githubusercontent.com\` branch URLs and GitHub raw refs URLs for default auto-update guidance because branch raw caches can stay stale.
 - When updating an existing plugin, keep \`//@name\` unchanged, bump \`//@version\`, and preserve \`//@update-url\` unless the user provides a new release URL.
 
 ### Runtime Rules
@@ -39739,10 +39962,10 @@ Dynamic context injection.
 
 ### Current RisuAI Entry Shape
 - \`key\`: primary activation keywords or folder id.
-- \`secondkey\`: legacy/advanced secondary activation keywords; keep empty unless the user explicitly asks for AND-key behavior.
+- \`secondkey\`: legacy/advanced secondary activation keywords. Do not output it for new entries unless the user explicitly asks for AND-key behavior.
 - \`comment\`: display name / memo.
 - \`content\`: injected lore text.
-- \`mode\`: \`normal\`, \`multiple\`, \`constant\`, \`child\`, or \`folder\`.
+- \`mode\`: \`normal\`, \`constant\`, \`child\`, or \`folder\`. \`multiple\` is legacy/advanced and should not be generated unless explicitly requested.
 - \`insertorder\`: insertion priority/order number.
 - \`alwaysActive\`: constant activation flag.
 - \`selective\`: require matching keys.
@@ -40681,7 +40904,7 @@ async function applyBulkResultToCharacter(targetType, result) {
     }
     let saved = false;
     if (targetType === 'lorebook') {
-        const sanitizedPack = sanitizeLorebookEntries(result);
+        const sanitizedPack = sanitizeLorebookEntriesForAiWrite(result);
         if (sanitizedPack.changed) {
             result = sanitizedPack.entries;
             if (sanitizedPack.warnings?.length) {
@@ -41563,7 +41786,6 @@ STRICT JSON OUTPUT FORMAT (JSON Array):
     "mode": "normal",
     "insertorder": 100,
     "alwaysActive": false,
-    "secondkey": "",
     "selective": false,
     "useRegex": false,
     "folder": "folder:uuid (optional, if inside folder)"
@@ -41575,14 +41797,13 @@ STRICT JSON OUTPUT FORMAT (JSON Array):
     "mode": "folder",
     "insertorder": 100,
     "alwaysActive": false,
-    "secondkey": "",
     "selective": false
   }
 ]
 
 RULES:
 - Return ONLY the JSON Array.
-- Use one practical primary key by default; leave secondkey empty unless explicitly requested.
+- Use one practical primary key by default; omit secondkey unless explicitly requested.
 - Do not use multiple-key mode unless the user explicitly asks for it.
 - Preserve special tags: {{user}}, {{char}}, <START>, etc.
 - No markdown formatting (no bold/italic).
@@ -44579,7 +44800,6 @@ function getKeroCreateFingerprint(target, item) {
         return [
             normalizeKeroCreateFingerprintPart(item.comment || item.name),
             normalizeKeroCreateFingerprintPart(item.key),
-            normalizeKeroCreateFingerprintPart(item.secondkey),
             normalizeKeroCreateFingerprintPart(item.content)
         ].join('|');
     }
@@ -44637,16 +44857,16 @@ async function createLorebookEntries(entries, options = {}) {
                 ...safe,
                 comment: recoverKeroActionDirectivesFromFieldText(safe.comment || safe.name || 'New Lore', `로어북 생성 #${index + 1} 제목`, options.deferredActions, options),
                 key: recoverKeroActionDirectivesFromFieldText(safe.key || '', `로어북 생성 #${index + 1} 키`, options.deferredActions, options),
-                secondkey: recoverKeroActionDirectivesFromFieldText(safe.secondkey || '', `로어북 생성 #${index + 1} 보조 키`, options.deferredActions, options),
+                secondkey: normalizeLorebookSecondKeyForWrite(safe.secondkey, options, safe, `로어북 생성 #${index + 1} 보조 키`),
                 content: recoverKeroActionDirectivesFromFieldText(safe.content || '', `로어북 생성 #${index + 1} 본문`, options.deferredActions, options),
                 insertorder: Number.isFinite(parsedInsertOrder) ? parsedInsertOrder : loreIndex,
                 alwaysActive: !!safe.alwaysActive,
                 selective: !!safe.selective,
-                mode: safe.mode || undefined,
+                mode: normalizeLorebookModeForWrite(safe.mode || undefined, options, safe),
                 folder: safe.folder || undefined
             };
 
-            const sanitized = sanitizeLorebookEntry(newLore, loreIndex);
+            const sanitized = sanitizeLorebookEntryForAiWrite(newLore, loreIndex, options);
             const fingerprint = getKeroCreateFingerprint('lorebook', sanitized.entry);
             if (fingerprint && fingerprints.has(fingerprint)) {
                 results.success++;
@@ -50735,7 +50955,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.16",
+        name: "SuperVibeBot v1.5.23",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -50744,7 +50964,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.16 Settings",
+        "SuperVibeBot v1.5.23 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -50787,7 +51007,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.16");
+        Logger.info("SuperVibeBot v1.5.23");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
