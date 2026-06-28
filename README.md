@@ -2,12 +2,12 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.14`
+Latest version: `1.5.15`
 
 Update URL:
 
 ```text
-https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 ```
 
 Files:
@@ -17,6 +17,11 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.15
+
+- Fixes the update metadata URL to the GitHub raw `/main/` path that RisuAI can fetch.
+- Keeps the 1.5.14 PocketRisu/WebView stability fixes intact.
 
 ## 1.5.14
 
