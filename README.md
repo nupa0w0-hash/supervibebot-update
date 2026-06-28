@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.26`
+Latest version: `1.5.27`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.27
+
+- Skips automatic sub-agent pre-consultation on PocketRisu/WebView/background runtimes unless the user explicitly asks for sub-agents, GLM, or Kimi.
+- Keeps explicit sub-agent requests working, but caps constrained runtime waits to 90 seconds and background waits to 60 seconds.
+- Adds runtime diagnostics for the auto-skip and constrained timeout policy.
 
 ## 1.5.26
 
