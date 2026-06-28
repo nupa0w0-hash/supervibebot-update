@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.12`
+Latest version: `1.5.13`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.13
+
+- Adds hard upper bounds to explicit sub-agent output overrides so WebView-safe limits cannot be bypassed accidentally.
+- Truncates oversized sub-agent responses before JSON parsing and manager-board rendering if a provider ignores `max_tokens`.
+- Forces sub-agent parallelism to 1 for payloads over 120k serialized characters, even if WebView/mobile detection misses the runtime.
+- Adds runtime diagnostics for hard output caps and response-character truncation.
 
 ## 1.5.12
 
