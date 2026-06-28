@@ -1,0 +1,65 @@
+name: Verify SuperVibeBot update channel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "SuperVibeBot.update.js"
+      - "SuperVibeBot.js"
+      - "SuperVibeBot.auto.js"
+      - ".github/workflows/verify-update-channel.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify local release files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js"
+
+          for file in SuperVibeBot.update.js SuperVibeBot.js SuperVibeBot.auto.js; do
+            test -s "$file"
+            node --check "$file"
+            grep -q '^//@name SuperVibeBot$' "$file"
+            grep -q '^//@api 3\.0$' "$file"
+            grep -q '^//@version [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' "$file"
+            grep -q "^//@update-url ${expected_url}$" "$file"
+          done
+
+          cmp -s SuperVibeBot.update.js SuperVibeBot.js
+          cmp -s SuperVibeBot.update.js SuperVibeBot.auto.js
+
+      - name: Verify public raw endpoint
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js"
+          local_version="$(sed -n 's|^//@version ||p' SuperVibeBot.update.js | head -n 1)"
+
+          for attempt in $(seq 1 12); do
+            curl -fsSL -H "Cache-Control: no-cache" "${expected_url}?check=${GITHUB_RUN_ID}-${attempt}" -o /tmp/SuperVibeBot.update.js
+            remote_version="$(sed -n 's|^//@version ||p' /tmp/SuperVibeBot.update.js | head -n 1)"
+            remote_url="$(sed -n 's|^//@update-url ||p' /tmp/SuperVibeBot.update.js | head -n 1)"
+            if [[ "$remote_version" == "$local_version" && "$remote_url" == "$expected_url" ]]; then
+              echo "Public raw endpoint is current: ${remote_version}"
+              exit 0
+            fi
+            echo "Raw endpoint not current yet: version=${remote_version:-missing} url=${remote_url:-missing}; retry ${attempt}/12"
+            sleep 20
+          done
+
+          echo "Public raw endpoint did not match local release version ${local_version}" >&2
+          exit 1
