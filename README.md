@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.27`
+Latest version: `1.5.28`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.28
+
+- Strengthens Kero chat continuity with stable message ids, read-merge-write chat storage, and target-first global history merging.
+- Prevents invalid locale timestamps from being treated as the newest recent chat turn.
+- Routes legacy `personality/scenario/성격/시나리오` targets into `desc` and strips legacy lorebook activation fields from AI write paths.
+- Makes daily mode use the same safe recent-conversation continuity block as work mode.
 
 ## 1.5.27
 
