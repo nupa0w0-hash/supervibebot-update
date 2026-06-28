@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.10`
+Latest version: `1.5.11`
 
 Update URL:
 
@@ -17,6 +17,14 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.11
+
+- Fixes the missing-action path for lorebook/regex/trigger improve requests so Kero does not only talk and then fail to save when the model omitted `@action`.
+- Unqualified part edits now target checked items or the currently open item instead of silently expanding to every item.
+- Explicit all/every/전체 requests still run as all-item jobs.
+- Blocks malformed embedded `@action` text before it can be saved into character fields or lorebook content.
+- Adds runtime self-checks for lorebook fallback, selected-item expansion, and malformed embedded action recovery.
 
 ## 1.5.10
 
