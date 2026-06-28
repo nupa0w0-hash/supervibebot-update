@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.22`
+Latest version: `1.5.23`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.23
+
+- Strengthens runtime diagnostics for unused legacy character fields.
+- Verifies full character context does not leak deprecated `personality/scenario` fields or aliases into Kero/sub-agent work context.
+- Keeps new traits, behavior, and setup work routed into `desc` instead of old compatibility fields.
 
 ## 1.5.22
 
