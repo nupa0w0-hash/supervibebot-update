@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.0
-//@version 1.5.0
+//@display-name 🐸 SuperVibeBot v1.5.1
+//@version 1.5.1
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.0는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.1는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -163,7 +163,7 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.0 Release Notes
+ * SuperVibeBot v1.5.1 Release Notes
  *
  * 🎉 Major Changes
  * - Migrated to RisuAI Plugin API 3.0
@@ -12123,25 +12123,37 @@ function countExpiredSvbSubAgentGuards(map) {
     return expired;
 }
 
+function resolveSvbRuntimeLocalFunction(localFunctions = {}, key, globalKey = key) {
+    const localValue = localFunctions && typeof localFunctions === 'object' ? localFunctions[key] : null;
+    if (typeof localValue === 'function') return localValue;
+    const runtimeValue = typeof keroRuntimeLocalOps !== 'undefined' && keroRuntimeLocalOps
+        ? keroRuntimeLocalOps[key]
+        : null;
+    if (typeof runtimeValue === 'function') return runtimeValue;
+    const globalValue = typeof globalThis !== 'undefined' ? globalThis?.[globalKey] : null;
+    return typeof globalValue === 'function' ? globalValue : null;
+}
+
 function runSvbRuntimeSelfCheck(options = {}) {
     const checks = [];
     const localFunctions = options.localFunctions || {};
+    const runtimeFunction = (key, globalKey = key) => resolveSvbRuntimeLocalFunction(localFunctions, key, globalKey);
     addSvbRuntimeFunctionCheck(checks, '작업 흐름 기록 함수 addKeroWorkstreamEvent', () => addKeroWorkstreamEvent);
-    addSvbRuntimeFunctionCheck(checks, '대화 출력 함수 addBotMessage', () => localFunctions.addBotMessage || globalThis?.addBotMessage);
-    addSvbRuntimeFunctionCheck(checks, '액션 처리 함수 handleKeroActionRequest', () => localFunctions.handleKeroActionRequest || globalThis?.handleKeroActionRequest);
+    addSvbRuntimeFunctionCheck(checks, '대화 출력 함수 addBotMessage', () => runtimeFunction('addBotMessage'));
+    addSvbRuntimeFunctionCheck(checks, '액션 처리 함수 handleKeroActionRequest', () => runtimeFunction('handleKeroActionRequest'));
     addSvbRuntimeFunctionCheck(checks, '모델 호출 함수 translateSingleChunk', () => translateSingleChunk);
     addSvbRuntimeFunctionCheck(checks, '작업 하트비트 withKeroActivityHeartbeat', () => withKeroActivityHeartbeat);
     addSvbRuntimeFunctionCheck(checks, '서브에이전트 호출 buildSubmodelConsultationBlock', () => buildSubmodelConsultationBlock);
     addSvbRuntimeFunctionCheck(checks, '캐릭터 패치 적용 applyKeroCharacterPatchAction', () => applyKeroCharacterPatchAction);
     addSvbRuntimeFunctionCheck(checks, '게이트웨이 복구 runKeroGatewayRecovery', () => runKeroGatewayRecovery);
     addSvbRuntimeFunctionCheck(checks, '로컬 복구 액션 buildKeroLocalGatewayFallbackResponse', () => buildKeroLocalGatewayFallbackResponse);
-    addSvbRuntimeFunctionCheck(checks, '대량 생성 실행 runKeroBulkCreate', () => localFunctions.runKeroBulkCreate || globalThis?.runKeroBulkCreate);
-    addSvbRuntimeFunctionCheck(checks, '대량 생성 자동 재개 autoResumeKeroBulkJobsUntilSettled', () => localFunctions.autoResumeKeroBulkJobsUntilSettled || globalThis?.autoResumeKeroBulkJobsUntilSettled);
+    addSvbRuntimeFunctionCheck(checks, '대량 생성 실행 runKeroBulkCreate', () => runtimeFunction('runKeroBulkCreate'));
+    addSvbRuntimeFunctionCheck(checks, '대량 생성 자동 재개 autoResumeKeroBulkJobsUntilSettled', () => runtimeFunction('autoResumeKeroBulkJobsUntilSettled'));
     addSvbRuntimeFunctionCheck(checks, '백그라운드 상태 renderKeroBackgroundStatus', () => renderKeroBackgroundStatus);
     addSvbRuntimeFunctionCheck(checks, '대기 요청 패널 renderKeroQueuePanel', () => renderKeroQueuePanel);
-    addSvbRuntimeFunctionCheck(checks, '작업 흐름 렌더 renderKeroWorkstream', () => localFunctions.renderKeroWorkstream || keroWorkstreamRenderer);
-    addSvbRuntimeFunctionCheck(checks, '도구 패널 열기 openKeroToolsPanel', () => localFunctions.openKeroToolsPanel || globalThis?.openKeroToolsPanel);
-    addSvbRuntimeFunctionCheck(checks, '도구 이벤트 바인딩 bindKeroToolsEvents', () => localFunctions.bindKeroToolsEvents || globalThis?.bindKeroToolsEvents);
+    addSvbRuntimeFunctionCheck(checks, '작업 흐름 렌더 renderKeroWorkstream', () => runtimeFunction('renderWorkstream') || keroWorkstreamRenderer);
+    addSvbRuntimeFunctionCheck(checks, '도구 패널 열기 openKeroToolsPanel', () => runtimeFunction('openKeroToolsPanel'));
+    addSvbRuntimeFunctionCheck(checks, '도구 이벤트 바인딩 bindKeroToolsEvents', () => runtimeFunction('bindKeroToolsEvents'));
     addSvbRuntimeActionParserSelfTest(checks);
     addSvbRuntimeSteeringQueueSelfTest(checks);
     addSvbRuntimeControlRoutingSelfTest(checks);
@@ -38162,7 +38174,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.0 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.1 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -49131,7 +49143,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.0",
+        name: "SuperVibeBot v1.5.1",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -49140,7 +49152,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.0 Settings",
+        "SuperVibeBot v1.5.1 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -49183,7 +49195,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.0");
+        Logger.info("SuperVibeBot v1.5.1");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
