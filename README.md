@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.9`
+Latest version: `1.5.10`
 
 Update URL:
 
@@ -18,9 +18,17 @@ Files:
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
 
+## 1.5.10
+
+- Reduces PocketRisu/WebView crash pressure during sub-agent work by making heartbeat-like workstream progress events in-memory only instead of persisting every progress tick.
+- Prunes stored action jobs and bulk-create jobs before pluginStorage writes, preserving active jobs while compacting/expiring completed job details.
+- Caps the runtime queued-input list as well as the persisted queue so long tasks cannot grow the queue UI indefinitely.
+- Reuses and throttles foreground status toasts so progress updates do not append many DOM nodes/timers at once.
+- Expands mobile/tablet/coarse-pointer detection so constrained devices more reliably use one sub-agent at a time.
+
 ## 1.5.9
 
-- Changes the metadata //@update-url to the efs/heads/main raw URL form so the auto-update channel is less exposed to stale GitHub raw branch-path cache.
+- Changes the metadata `//@update-url` to the `refs/heads/main` raw URL form so the auto-update channel is less exposed to stale GitHub raw branch-path cache.
 - Keeps the 1.5.8 queue/abort stability fixes intact.
 
 ## 1.5.8
