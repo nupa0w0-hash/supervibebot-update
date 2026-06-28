@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.17`
+Latest version: `1.5.18`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.18
+
+- Keeps existing lorebooks compatible while stopping new AI-generated writes from defaulting to `secondkey` or `mode:"multiple"`.
+- Scrubs legacy lorebook activation details from model context so Kero and sub-agents do not copy them back by habit.
+- Filters character `personality/scenario` alias fields out of raw extra model context.
+- Updates NPC lore wording from legacy `Personality` labels to `Traits/Behavior`.
 
 ## 1.5.17
 
