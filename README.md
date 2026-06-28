@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.24`
+Latest version: `1.5.25`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.25
+
+- Stops control-only `continue`/`retry` from re-calling the original large prompt when an interrupted mission has no saved actions, bulk jobs, or queued work.
+- Reports “no saved work to resume” for empty restored missions instead of entering a repeated timeout/output-limit loop.
+- Keeps users on a clear recovery path: either resume saved work or start a new explicit request.
 
 ## 1.5.24
 
