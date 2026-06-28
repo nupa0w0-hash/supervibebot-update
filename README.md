@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.11`
+Latest version: `1.5.12`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.12
+
+- Adds a separate output-token cap for sub-agent manager reports: 4096 on normal desktop profiles and 2048 on constrained/mobile/webview profiles.
+- Reduces WebView/PocketRisu crash pressure when GLM/Kimi/API Hub sub-agents return oversized reports.
+- Keeps explicit `subAgentMaxOutputTokens` overrides available for advanced cases.
+- Adds runtime diagnostics for sub-agent output caps.
 
 ## 1.5.11
 
