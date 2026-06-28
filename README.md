@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.5`
+Latest version: `1.5.6`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.6
+
+- Registers safe local runtime output/render ops before wake recovery so restored missions can show their recovery notice immediately.
+- Keeps action execution, queue draining, and bulk job execution registered after assistant state initialization to avoid pre-init mutation.
+- Adds a shared selected-index fallback helper so checked lorebook/regex/trigger actions keep the intended item index.
+- Adds a runtime diagnostic self-test for explicit and fallback selected indexes.
 
 ## 1.5.5
 
