@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.23`
+Latest version: `1.5.24`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.24
+
+- Flushes expired sub-agent consultation guards when runtime diagnostics run.
+- Helps recover PocketRisu/WebView sessions where background timer callbacks were delayed while a sub-agent was waiting.
+- Makes stuck sub-agent diagnostics judge the post-cleanup state instead of only reporting stale expired guards.
 
 ## 1.5.23
 
