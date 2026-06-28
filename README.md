@@ -2,12 +2,12 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.16`
+Latest version: `1.5.17`
 
 Update URL:
 
 ```text
-https://github.com/nupa0w0-hash/supervibebot-update/raw/refs/heads/main/SuperVibeBot.update.js
+https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
 ```
 
 Files:
@@ -17,6 +17,11 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.17
+
+- Moves the primary update URL to the GitHub Releases `latest/download` asset path to avoid raw branch-cache delays.
+- Keeps the 1.5.16 compatibility bridge for installs that already received the bad 1.5.14 raw URL.
 
 ## 1.5.16
 
