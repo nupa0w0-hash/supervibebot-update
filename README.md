@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.2`
+Latest version: `1.5.3`
 
 Update URL:
 
@@ -17,3 +17,10 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.3
+
+- Adds sub-agent payload budgeting to reduce browser/webview memory spikes.
+- Dynamically limits sub-agent parallel calls for large context payloads.
+- Caps workstream details and sub-agent manager board size.
+- Avoids rebuilding full module/plugin work target context while rendering the workstream panel.
