@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.25`
+Latest version: `1.5.26`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.26
+
+- Tightens practical lorebook defaults: one representative `key` per entry, with aliases kept in content unless explicitly requested.
+- Normalizes model-only `keys`/`keyVariants` arrays into a single primary `key` before AI writes are saved.
+- Strips `secondaryKey`/`secondkey`/multiple-key variants by default and keeps `personality/scenario` routed into `desc`.
 
 ## 1.5.25
 
