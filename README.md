@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.4`
+Latest version: `1.5.5`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.5
+
+- Prevents desktop RisuAI web from being downgraded to low tier solely because `navigator.deviceMemory` reports 4GB.
+- Keeps a protection path for genuinely constrained 4GB desktops when low core count, low heap limit, or high heap usage is also detected.
+- Keeps mobile, webview, and PocketRisu low-memory protections by applying the 4GB, low-core, and network-saving heuristics to mobile-like runtimes.
+- Hardens workstream rendering so background skips, render failures, and stale async completions do not drop pending updates.
 
 ## 1.5.4
 
