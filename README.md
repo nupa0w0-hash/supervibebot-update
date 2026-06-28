@@ -7,7 +7,7 @@ Latest version: `1.5.1`
 Update URL:
 
 ```text
-https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 ```
 
 Files:
