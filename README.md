@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.13`
+Latest version: `1.5.14`
 
 Update URL:
 
@@ -17,6 +17,14 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.14
+
+- Caps sub-agent consultation packets to 120k desktop, 80k constrained, and 60k background chars.
+- Releases Kero chat task locks if resume/setup storage operations fail before the main protected run.
+- Applies lorebook/regex/trigger `idx` filters instead of relying on whichever current result is open.
+- Coalesces background status DOM rendering to reduce PocketRisu/WebView progress-update pressure.
+- Treats lorebook multiple keys and `secondkey` as explicit advanced options, not defaults.
 
 ## 1.5.13
 
