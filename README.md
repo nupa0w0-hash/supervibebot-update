@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.28`
+Latest version: `1.5.29`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.29
+
+- Fixes Kero's mounted chat action parser so `personality`, `scenario`, `성격`, and `시나리오` actions apply through `desc` instead of unused legacy fields.
+- Adds diagnostics for the mounted Kero parser path, not just the outer helper path.
+- Stops recoverable gateway/hard-timeout failures from retrying the same large original request after recovery fails.
+- Saves large lorebook/regex/trigger create payloads in safe chunks and fixes completed bulk summary success counts.
 
 ## 1.5.28
 
