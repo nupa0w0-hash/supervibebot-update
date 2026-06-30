@@ -2,12 +2,12 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.29`
+Latest version: `1.5.31`
 
 Update URL:
 
 ```text
-https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 ```
 
 Files:
@@ -17,6 +17,18 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.31
+
+- Blocks character fallback/actions while editing module/plugin targets, preventing accidental character overwrite from recovery flows.
+- Suppresses completed-only recovery notices and clears mission/action/bulk recovery state when Kero chat is cleared.
+- Stabilizes the memory tool drawer height after memory deletion.
+
+## 1.5.30
+
+- Switches the plugin `//@update-url` to the RisuAI-compatible raw main URL.
+- Fixes browser/RisuAI Web update checks that can fail on GitHub Releases `latest/download` redirects because RisuAI fetches only `Range: bytes=0-512`.
+- Updates plugin creation guidance to prefer `raw.githubusercontent.com` main JS URLs for RisuAI auto-update.
 
 ## 1.5.29
 

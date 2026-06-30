@@ -1,19 +1,19 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.29
-//@version 1.5.29
+//@display-name 🐸 SuperVibeBot v1.5.31
+//@version 1.5.31
 //@api 3.0
-//@update-url https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
+//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.29는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.31는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
-const SUPER_VIBE_BOT_RELEASE_UPDATE_URL = 'https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js';
+const SUPER_VIBE_BOT_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js';
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
 const PERSONA_APPLY_DISABLED = true;
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.29 Release Notes
+ * SuperVibeBot v1.5.31 Release Notes
+ * - v1.5.31: blocks character fallback/actions while editing module/plugin targets, preventing accidental character overwrite
+ * - v1.5.31: suppresses completed-only recovery notices and clears mission/action/bulk recovery state with Kero chat clearing
+ * - v1.5.31: stabilizes the memory tool drawer height after memory deletion
+ * - v1.5.30: update URL now uses the RisuAI-compatible raw.githubusercontent.com channel for browser CORS/Range checks
  *
  * 🎉 Major Changes
  * - Kero's actual chat execution parser now routes personality/scenario/성격/시나리오 targets to desc, not legacy fields
@@ -191,8 +195,8 @@ async function safeCopyText(text, options = {}) {
  * - AI-generated lorebook writes now remove secondkey/multiple mode unless explicitly requested
  * - Model context hides legacy lorebook activation details and character personality/scenario aliases by default
  * - Runtime diagnostics now verify the legacy field policy for lorebook writes and model context
- * - Runtime diagnostics now verify SuperVibeBot uses the GitHub Releases latest update URL
- * - Plugin creation guidance now recommends GitHub Releases latest/download over raw branch URLs
+ * - Runtime diagnostics now verify SuperVibeBot uses the RisuAI-compatible raw main update URL
+ * - Plugin creation guidance now recommends raw.githubusercontent.com main URLs for RisuAI auto-update checks
  * - Plugin update-url guidance no longer uses source/raw-like Korean wording that can confuse authors
  * - Runtime diagnostics now verify full character context does not leak unused personality/scenario fields
  * - Runtime diagnostics now flush expired sub-agent consultation guards before judging stuck sub-agent state
@@ -3565,6 +3569,25 @@ async function clearKeroChat(char) {
     if (!id) return;
     await risuai.pluginStorage.removeItem(KERO_KEYS.CHAT(id));
     await risuai.pluginStorage.removeItem(KERO_KEYS.CHAT_GLOBAL());
+}
+
+async function clearKeroRecoveryState(char) {
+    const id = await getKeroCharId(char);
+    if (!id) return;
+    await Promise.all([
+        risuai.pluginStorage.removeItem(KERO_KEYS.MISSION(id)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.ACTION_JOBS(id)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.INPUT_QUEUE(id)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.WORKSTREAM(id)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.BULK_CREATE_JOBS(id)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.BULK_EDIT_STATE(id))
+    ]);
+    if (safeString(currentKeroPersistentStorageId || '') === safeString(id)) {
+        currentKeroMission = null;
+        keroQueuedUserInputs = [];
+        keroWorkstreamEvents = [];
+        keroRecoveryNoticeKey = '';
+    }
 }
 
 async function loadKeroMemory(char) {
@@ -11569,9 +11592,17 @@ function getKeroRecoverySnapshotStatus(snapshot = {}) {
 function hasKeroRecoveryAttention(snapshot = {}) {
     const action = snapshot.actionSummary || {};
     const bulk = snapshot.bulkSummary || {};
-    return !!snapshot.hasMission
-        || Number(action.total || 0) > 0
-        || Number(bulk.total || 0) > 0
+    const missionStatus = safeString(snapshot.missionStatus || snapshot.rawMissionStatus || '').toLowerCase();
+    const hasActiveMission = !!snapshot.hasMission
+        && !['done', 'verified', 'cancelled'].includes(missionStatus);
+    const hasActionAttention = Number(action.failed || 0) > 0
+        || Number(action.warning || 0) > 0
+        || Number(action.pending || 0) > 0;
+    const hasBulkAttention = Number(bulk.remaining || 0) > 0
+        || Number(bulk.failed || 0) > 0;
+    return hasActiveMission
+        || hasActionAttention
+        || hasBulkAttention
         || Number(snapshot.queuedInputCount || 0) > 0
         || Number(snapshot.processingInputCount || 0) > 0
         || Number(snapshot.attentionInputCount || 0) > 0
@@ -12610,7 +12641,9 @@ function addSvbRuntimeWorkTargetRecoverySelfTest(checks) {
             validModuleAction: hasValidWorkTargetRecoveryAction([moduleAction], 'module'),
             validPluginAction: hasValidWorkTargetRecoveryAction([pluginAction], 'plugin'),
             rejectsEmptyModule: !hasValidWorkTargetRecoveryAction([emptyModuleAction], 'module'),
-            rejectsEmptyPlugin: !hasValidWorkTargetRecoveryAction([emptyPluginAction], 'plugin')
+            rejectsEmptyPlugin: !hasValidWorkTargetRecoveryAction([emptyPluginAction], 'plugin'),
+            blocksModuleCharacterFallback: !buildKeroLocalGatewayFallbackResponse(moduleCreateRequest, { workTargetMode: 'module', allowSmallCreate: true }),
+            blocksPluginCharacterFallback: !buildKeroLocalGatewayFallbackResponse(pluginCreateRequest, { workTargetMode: 'plugin', allowSmallCreate: true })
         };
     });
     if (!result.ok) {
@@ -12626,6 +12659,8 @@ function addSvbRuntimeWorkTargetRecoverySelfTest(checks) {
     if (!value.validPluginAction) problems.push('플러그인 payload 유효성 실패');
     if (!value.rejectsEmptyModule) problems.push('빈 모듈 payload 허용');
     if (!value.rejectsEmptyPlugin) problems.push('빈 플러그인 payload 허용');
+    if (!value.blocksModuleCharacterFallback) problems.push('모듈 모드 캐릭터 fallback 차단 실패');
+    if (!value.blocksPluginCharacterFallback) problems.push('플러그인 모드 캐릭터 fallback 차단 실패');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '모듈/플러그인 복구 판정 자체 테스트',
@@ -12747,12 +12782,13 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.29',
+            '//@version 1.5.31',
             '//@api 3.0',
-            `//@update-url ${SUPER_VIBE_BOT_RELEASE_UPDATE_URL}`
+            `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
-        const superVibeUsesReleaseLatest = /^https:\/\/github\.com\/nupa0w0-hash\/supervibebot-update\/releases\/latest\/download\/SuperVibeBot\.update\.js$/i.test(SUPER_VIBE_BOT_RELEASE_UPDATE_URL);
-        const superVibeUsesLegacyRawRefs = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main|github\.com\/nupa0w0-hash\/supervibebot-update\/raw\/refs\/heads\/main/i.test(SUPER_VIBE_BOT_RELEASE_UPDATE_URL);
+        const superVibeUsesRawMain = /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/main\/SuperVibeBot\.update\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesReleaseLatest = superVibeUsesRawMain;
+        const superVibeUsesLegacyRawRefs = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main|github\.com\/nupa0w0-hash\/supervibebot-update\/raw\/refs\/heads\/main/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         return {
             autoUpdateReady: metadata.autoUpdateReady === true,
             versionByteIndex: metadata.versionByteIndex,
@@ -12766,8 +12802,9 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             storedInvalidRejected,
             storedMismatchRejected,
             stringMetadataIgnored: !stringMetadataIgnored.version && !stringMetadataIgnored.name,
-            superVibeUpdateUrl: SUPER_VIBE_BOT_RELEASE_UPDATE_URL,
+            superVibeUpdateUrl: SUPER_VIBE_BOT_UPDATE_URL,
             superVibeMetadataReady: superVibeMetadata.autoUpdateReady === true,
+            superVibeUsesRawMain,
             superVibeUsesReleaseLatest,
             superVibeUsesLegacyRawRefs
         };
@@ -12791,7 +12828,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
     if (!value.storedMismatchRejected) problems.push('script/store updateURL 불일치 허용');
     if (!value.stringMetadataIgnored) problems.push('스크립트 문자열 내부 메타데이터 오인');
     if (!value.superVibeMetadataReady) problems.push('슈바봇 release update-url 자동 업데이트 판정 실패');
-    if (!value.superVibeUsesReleaseLatest) problems.push('슈바봇 update-url이 release latest 경로가 아님');
+    if (!value.superVibeUsesReleaseLatest) problems.push('슈바봇 update-url이 raw main 경로가 아님');
     if (value.superVibeUsesLegacyRawRefs) problems.push('슈바봇 update-url이 raw refs 캐시 위험 경로임');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
@@ -18111,6 +18148,7 @@ function buildMainCSS() {
         #${CONTAINER_ID} .kero-tools-drawer-header { display: flex; align-items: center; gap: 8px; }
         #${CONTAINER_ID} .kero-tools-drawer-title { font-weight: 700; flex: 1; }
         #${CONTAINER_ID} .kero-tools-drawer-body { overflow: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+        #${CONTAINER_ID} #kero-tools-panel-memory { min-height: 260px; }
         #${CONTAINER_ID} .kero-proposals-panel { display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; }
         #${CONTAINER_ID} .kero-proposal-card { border: 2px solid #10b981; border-radius: 12px; padding: 12px; background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 100%); animation: slideIn 0.3s ease; }
         @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -26706,6 +26744,32 @@ ${currentVars || '{}'}
         return null;
     }
 
+    function filterKeroActionsForWorkTargetMode(actions = [], mode = currentWorkTargetMode, progressOptions = {}) {
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        const list = ensureArray(actions).filter((action) => action && typeof action === 'object');
+        if (!['module', 'plugin'].includes(normalizedMode)) return list;
+        const kept = [];
+        const blocked = [];
+        list.forEach((action) => {
+            const target = normalizeKeroActionTargetName(action?.target);
+            if (target === normalizedMode) kept.push(action);
+            else blocked.push(action);
+        });
+        if (blocked.length) {
+            const blockedLabels = blocked
+                .map((action) => `${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)}`)
+                .slice(0, 6)
+                .join(', ');
+            addKeroWorkstreamEvent(
+                '작업 대상 보호',
+                `${WORK_TARGET_MODES[normalizedMode]?.label || normalizedMode} 모드에서 다른 대상 액션 ${blocked.length}개를 차단했습니다.${blockedLabels ? ` (${blockedLabels})` : ''}`,
+                'warning',
+                progressOptions
+            );
+        }
+        return kept;
+    }
+
     async function handleKeroActionRequests(actions, options = {}) {
         if (!Array.isArray(actions) || actions.length === 0) return;
         const actionMissionId = safeString(options.missionId || currentKeroMission?.id || '');
@@ -26721,7 +26785,32 @@ ${currentVars || '{}'}
         keroActionQueue = keroActionQueue.catch((error) => {
             Logger.warn('Previous Kero action queue failed; continuing with next request:', error?.message || error);
         }).then(async () => {
-            const compactedActions = await compactKeroIndexedDeleteActions(actions);
+            const targetFilteredActions = filterKeroActionsForWorkTargetMode(actions, options.workTargetMode || currentWorkTargetMode, actionProgressOptions);
+            if (!targetFilteredActions.length) {
+                const detail = '현재 작업 대상과 다른 액션만 감지되어 실행하지 않았습니다. 모듈/플러그인 작업에서는 해당 대상 전용 액션만 저장할 수 있습니다.';
+                if (currentKeroMission) {
+                    const blockedStep = {
+                        id: `target-protection-${Date.now()}`,
+                        missionId: actionMissionId || currentKeroMission.id || '',
+                        title: '작업 대상 보호',
+                        target: options.workTargetMode || currentWorkTargetMode,
+                        actionType: 'blocked',
+                        status: 'blocked',
+                        detail,
+                        updatedAt: new Date().toISOString()
+                    };
+                    updateKeroMissionState({
+                        steps: [...ensureArray(currentKeroMission.steps), blockedStep].slice(0, KERO_MISSION_STEP_LIMIT)
+                    }, {
+                        title: '작업 대상 보호',
+                        detail,
+                        status: 'blocked'
+                    });
+                }
+                return;
+            }
+            const compactedActions = await compactKeroIndexedDeleteActions(targetFilteredActions);
+            if (!compactedActions.length) return;
             compactedActions.forEach((action) => {
                 if (action && typeof action === 'object') {
                     action._missionId = action._missionId || actionMissionId;
@@ -27359,7 +27448,8 @@ ${currentVars || '{}'}
                     }
                     await handleKeroActionRequests([action], {
                         missionId,
-                        storageId
+                        storageId,
+                        workTargetMode: currentWorkTargetMode
                     });
                     let job = null;
                     let jobStatus = '';
@@ -27696,7 +27786,8 @@ ${currentVars || '{}'}
                         } else {
                             await handleKeroActionRequests([actionRequest], {
                                 missionId: currentKeroMission?.id || '',
-                                storageId
+                                storageId,
+                                workTargetMode: currentWorkTargetMode
                             });
                             const jobs = await loadKeroActionJobs(storageId).catch(() => ({}));
                             const job = jobs?.[actionRequest.actionJobId];
@@ -30499,8 +30590,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const char = await getCharacterData();
             if (confirm('케로 대화 기록을 모두 삭제할까요?')) {
                 await clearKeroChat(char);
+                await clearKeroRecoveryState(char);
                 clearChatHistoryUI();
                 addWelcomeMessage();
+                await renderKeroWorkstream();
             }
         }, 'kero-clear-chat-btn');
 
@@ -31667,7 +31760,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 + (replayableWarningJobs.length ? `\n안전 재개 가능한 경고 ${replayableWarningJobs.length}개만 다시 실행합니다.` : '')
             );
         }
-        await handleKeroActionRequests(resumeActions, { missionId, storageId, progressOptions: resumeProgressOptions });
+        await handleKeroActionRequests(resumeActions, { missionId, storageId, workTargetMode: currentWorkTargetMode, progressOptions: resumeProgressOptions });
         if (!isResumeMissionCurrent()) {
             return { handled: true, resumed: true, success: false, stale: true };
         }
@@ -32374,9 +32467,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     workTargetMode: taskWorkTargetMode,
                     progressOptions: taskProgressOptions
                 };
-                const fallbackResponse = buildKeroMissingActionFallbackResponse(modelUserInput, parsed.text, fallbackOptions)
-                    || buildKeroMissingImproveFallbackResponse(modelUserInput, parsed.text, fallbackOptions)
-                    || await buildKeroMissingWorkTargetActionRecoveryResponse(modelUserInput, parsed.text, fallbackOptions);
+                const isWorkTargetActionMode = ['module', 'plugin'].includes(normalizeWorkTargetMode(taskWorkTargetMode));
+                const fallbackResponse = isWorkTargetActionMode
+                    ? await buildKeroMissingWorkTargetActionRecoveryResponse(modelUserInput, parsed.text, fallbackOptions)
+                    : (buildKeroMissingActionFallbackResponse(modelUserInput, parsed.text, fallbackOptions)
+                        || buildKeroMissingImproveFallbackResponse(modelUserInput, parsed.text, fallbackOptions));
                 if (fallbackResponse) {
                     const fallbackParsed = parseKeroAction(fallbackResponse);
                     if (fallbackParsed.actions?.length) {
@@ -32414,7 +32509,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     if (backgroundJobId) {
                         updateKeroProgress(4, 4, `${parsed.actions.length}개 작업 후보를 처리하는 중...`, taskProgressOptions);
                     }
-                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                     if (!isTaskMissionStillCurrent()) {
                         return stopStaleTaskFinalization('액션 처리 뒤 현재 미션이 바뀌어 이전 요청의 검증/완료 처리를 중단했습니다.');
                     }
@@ -32597,7 +32692,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                         if (backgroundJobId) {
                             updateKeroProgress(1, fallbackParsed.actions.length, '최종 로컬 복구 액션을 실행하는 중...', taskProgressOptions);
                         }
-                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                         if (!isTaskMissionStillCurrent()) {
                             return stopStaleTaskFinalization('최종 로컬 복구 뒤 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
                         }
@@ -33068,7 +33163,7 @@ ${metaBlock}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
-- //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 브라우저 fetch가 가능해야 한다. GitHub를 쓰는 경우 raw 브랜치 URL보다 Releases latest/download/FILENAME.js를 우선 사용한다.
+- //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch가 가능해야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com의 main 브랜치 JS URL을 우선 사용한다.
 - raw.githubusercontent.com 브랜치 경로와 GitHub raw refs 경로는 캐시/지연으로 업데이트가 안 보일 수 있으므로 자동 업데이트 기본값으로 추천하지 않는다.
 
         ### update (수정)
@@ -40347,7 +40442,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.29 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.31 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -40380,7 +40475,7 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - Recommended: \`//@display-name\`, \`//@version\`, \`//@arg\`, \`//@link\`, \`//@update-url\`
 - \`//@name\` is the stable plugin identity. Do not rename it during updates; use displayName/\`//@display-name\` for visible labels.
 - \`//@version\` is required for RisuAI update checks and should be within the first 512 bytes.
-- \`//@update-url\` must be an HTTPS JavaScript file URL that supports browser fetches. For GitHub-hosted plugins, prefer Releases \`latest/download/FILENAME.js\` over raw branch URLs.
+- \`//@update-url\` must be an HTTPS JavaScript file URL that supports browser fetches with \`Range: bytes=0-512\`. For GitHub-hosted plugins, prefer \`https://raw.githubusercontent.com/USER/REPO/main/FILENAME.js\`.
 - Avoid \`raw.githubusercontent.com\` branch URLs and GitHub raw refs URLs for default auto-update guidance because branch raw caches can stay stale.
 - When updating an existing plugin, keep \`//@name\` unchanged, bump \`//@version\`, and preserve \`//@update-url\` unless the user provides a new release URL.
 
@@ -43646,6 +43741,8 @@ function buildKeroGatewayBulkCreateUserRequest(request, concept = {}, spec = {})
 function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     if (!request) return '';
+    const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    if (['module', 'plugin'].includes(fallbackMode)) return '';
     const allowSmallCreate = options.allowSmallCreate === true;
     const isFullCharacterBuild = isKeroGatewayFullCharacterBuildRequest(request);
     const fallbackConcept = getKeroGatewayFallbackConcept(request);
@@ -43709,6 +43806,8 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
 
 function buildKeroMissingActionFallbackResponse(userText, assistantText = '', options = {}) {
     const request = safeString(options.userRequest || userText).trim();
+    const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    if (['module', 'plugin'].includes(fallbackMode)) return '';
     const fullBuild = isKeroGatewayFullCharacterBuildRequest(request);
     if (!request || (!isKeroCreateLikeRequest(request) && !fullBuild)) return '';
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
@@ -43860,10 +43959,15 @@ function summarizeKeroPayloadForRecovery(payload = {}) {
 
 function buildKeroGatewayRecoveryPrompt(userText, options = {}) {
     const summary = summarizeKeroPayloadForRecovery(options.keroContextPayload || {});
+    const workTargetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    const workTargetRule = ['module', 'plugin'].includes(workTargetMode)
+        ? `- CURRENT WORK TARGET MODE IS "${workTargetMode}". Do not output character/desc/lorebook/regex/trigger top-level actions. Output only ${workTargetMode} create/update/delete actions, or NO_ACTION if a safe payload is not possible.`
+        : '';
     return `너는 RisuAI 전문 작업 에이전트 케로다.
 직전 메인 모델 호출은 대형 요청 때문에 게이트웨이 타임아웃이 발생했다. 지금 목표는 작업을 포기하지 않고, 작은 실행 단위로 바꿔 실제 저장 액션을 시작하는 것이다.
 
 규칙:
+${workTargetRule}
 - 긴 설명이나 회의록을 쓰지 말고, 바로 실행 가능한 작은 @action을 만든다.
 - 한 응답에서 모든 로어북/코드/설정을 완성하려 하지 않는다.
 - 51개 이상 로어북/정규식/트리거 생성은 반드시 bulk_create를 사용한다.
@@ -43932,6 +44036,19 @@ async function runKeroGatewayRecovery(userText, options = {}, error = null) {
     addKeroWorkstreamEvent('장시간 작업 복구 전환', `${friendly} · 작은 실행 단위로 다시 요청합니다.`, 'retry', recoveryProgressOptions);
     markKeroGatewayRecoveryActive(`${friendly} · 작은 실행 단위로 다시 요청합니다.`);
     updateKeroProgress(1, 2, '대형 요청을 작은 실행 단위로 전환하는 중...', recoveryProgressOptions);
+    const recoveryMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    if (['module', 'plugin'].includes(recoveryMode)) {
+        const workTargetFallback = await buildKeroMissingWorkTargetActionRecoveryResponse(userText, '', {
+            ...options,
+            workTargetMode: recoveryMode,
+            progressOptions: recoveryProgressOptions
+        });
+        if (workTargetFallback) {
+            addKeroWorkstreamEvent('모듈/플러그인 복구 액션 생성', '현재 작업 대상 전용 저장 액션으로 복구했습니다.', 'action', recoveryProgressOptions);
+            return workTargetFallback;
+        }
+        addKeroWorkstreamEvent('모듈/플러그인 로컬 복구 보류', '안전한 모듈/플러그인 저장 액션을 만들 수 없어 캐릭터 fallback을 실행하지 않습니다.', 'warning', recoveryProgressOptions);
+    }
     const localFallback = buildKeroLocalGatewayFallbackResponse(userText, options);
     if (localFallback) {
         addKeroWorkstreamEvent('로컬 복구 액션 생성', '대형 요청을 저장 가능한 캐릭터 패치와 청크 작업으로 전환했습니다.', 'action', recoveryProgressOptions);
@@ -51515,7 +51632,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.29",
+        name: "SuperVibeBot v1.5.31",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -51524,7 +51641,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.29 Settings",
+        "SuperVibeBot v1.5.31 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -51567,7 +51684,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.29");
+        Logger.info("SuperVibeBot v1.5.31");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
