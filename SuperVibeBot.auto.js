@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.32
-//@version 1.5.32
+//@display-name 🐸 SuperVibeBot v1.5.33
+//@version 1.5.33
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.32는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.33는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,8 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.32 Release Notes
+ * SuperVibeBot v1.5.33 Release Notes
+ * - v1.5.33: preplans obvious large character build requests into character patch and chunked bulk actions before calling the main model
  * - v1.5.32: routes NanoGPT/transport timeouts on large character build requests into small-step recovery instead of retrying the same prompt 3 times
  * - v1.5.31: blocks character fallback/actions while editing module/plugin targets, preventing accidental character overwrite
  * - v1.5.31: suppresses completed-only recovery notices and clears mission/action/bulk recovery state with Kero chat clearing
@@ -12783,7 +12784,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.32',
+            '//@version 1.5.33',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13009,6 +13010,46 @@ function addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks) {
         problems.length === 0,
         '대형 요청 transport 복구 판정 자체 테스트',
         problems.length ? `문제: ${problems.join(' / ')}` : 'NanoGPT timeout 계열 대형 제작 요청을 같은 원문 3회 반복 대신 작은 실행 단위 복구로 전환',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
+function addSvbRuntimeLargeRequestPreplanSelfTest(checks) {
+    const result = readSvbRuntimeValue('대형 요청 선분해 자체 테스트', () => {
+        const request = '이 봇을 정통 판타지 시뮬봇으로 만들어줘. 디스크립션에는 세계관을 인물은 대표 주인공급으로 10명 정도. 다양하게 인물들끼리의 관계성도 잘 구축하고 이름도 뻔하지 않게.';
+        const response = buildKeroPreplannedLargeRequestResponse(request, {
+            keroMode: 'work',
+            workTargetMode: 'character',
+            userRequest: request
+        });
+        const parsed = parseKeroAction(response);
+        return {
+            shouldPreplan: shouldPreplanKeroLargeCharacterRequest(request, { keroMode: 'work', workTargetMode: 'character', userRequest: request }),
+            hasResponse: !!response,
+            actionCount: parsed.actions?.length || 0,
+            hasCharacterUpdate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'update' && normalizeKeroActionTargetName(action?.target) === 'character'),
+            hasBulkCreate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'bulk_create' && normalizeKeroActionTargetName(action?.target) === 'lorebook'),
+            moduleBlocked: !buildKeroPreplannedLargeRequestResponse(request, { keroMode: 'work', workTargetMode: 'module', userRequest: request }),
+            planningOnlyBlocked: !buildKeroPreplannedLargeRequestResponse(`${request}\n먼저 계획만 보여줘.`, { keroMode: 'work', workTargetMode: 'character' })
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, '대형 요청 선분해 자체 테스트', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.shouldPreplan) problems.push('선분해 대상 감지 실패');
+    if (!value.hasResponse) problems.push('선분해 응답 생성 실패');
+    if (Number(value.actionCount || 0) < 2) problems.push('액션 분해 부족');
+    if (!value.hasCharacterUpdate) problems.push('캐릭터 기본 패치 누락');
+    if (!value.hasBulkCreate) problems.push('로어북/인물 bulk_create 누락');
+    if (!value.moduleBlocked) problems.push('모듈 작업 대상에서 캐릭터 선분해 차단 실패');
+    if (!value.planningOnlyBlocked) problems.push('계획만 요청에서 선분해 차단 실패');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        '대형 요청 선분해 자체 테스트',
+        problems.length ? `문제: ${problems.join(' / ')}` : '전체 캐릭터 제작 요청을 메인 모델 호출 전 캐릭터 패치와 청크 작업으로 분해',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -14046,6 +14087,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
     addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks);
+    addSvbRuntimeLargeRequestPreplanSelfTest(checks);
     addSvbRuntimeLegacyFieldPolicySelfTest(checks);
     addSvbRuntimeContextPayloadSelfTest(checks);
     addSvbRuntimeSubAgentPayloadBudgetSelfTest(checks);
@@ -33321,6 +33363,24 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             systemPrompt += UI_DESIGN_FORMAT;
         }
 
+        const preplannedLargeRequest = buildKeroPreplannedLargeRequestResponse(userInput, {
+            ...keroContextOptions,
+            fromKero: true,
+            userRequest: userInput,
+            visibleUserInput,
+            workTargetMode: currentWorkTargetMode
+        });
+        if (preplannedLargeRequest) {
+            addKeroWorkstreamEvent(
+                '대형 요청 선분해',
+                '한 번의 대형 모델 호출로 처리하지 않고 캐릭터 기본 패치와 청크 작업으로 먼저 분해했습니다.',
+                'action',
+                requestProgressOptions
+            );
+            updateKeroProgress(5, 5, '대형 요청을 작은 실행 단위로 분해했습니다. 결과를 정리하는 중...', requestProgressOptions);
+            return preplannedLargeRequest;
+        }
+
         updateKeroProgress(4, 5, keroContextOptions.useSubmodels === true
             ? '메인 모델과 서브에이전트 검토를 호출하는 중...'
             : '메인 모델을 호출하는 중...', requestProgressOptions);
@@ -40487,7 +40547,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.32 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.33 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -43891,6 +43951,36 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
     if (!fallback) return '';
     const responseHint = safeString(assistantText).slice(0, 260).replace(/\s+/g, ' ').trim();
     return `모델 응답에 실행 가능한 @action이 없어 저장 작업을 놓치지 않도록 로컬 실행 액션으로 보강합니다.${responseHint ? `\n응답 요약: ${responseHint}` : ''}\n${fallback}`;
+}
+
+function isKeroNoApplyPlanningOnlyRequest(text = '') {
+    return /(적용하지\s*마|저장하지\s*마|제안만|보기만|예시만|계획만|분석만|검토만|먼저\s*계획|일단\s*계획|plan\s*only|no\s*(apply|save))/i.test(safeString(text));
+}
+
+function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
+    const request = safeString(options.userRequest || userText).trim();
+    if (!request) return false;
+    const mode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
+    if (mode !== 'work') return false;
+    const targetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    if (['module', 'plugin'].includes(targetMode)) return false;
+    if (options.gatewayRecovery === true || options.disableLargeRequestPreplan === true) return false;
+    if (isKeroNoApplyPlanningOnlyRequest(request)) return false;
+    if (!isKeroCreateLikeRequest(request) && !isKeroGatewayFullCharacterBuildRequest(request)) return false;
+    if (isKeroGatewayFullCharacterBuildRequest(request)) return true;
+    return inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false })
+        .some((spec) => spec?.target && Number(spec.count || 0) >= 10);
+}
+
+function buildKeroPreplannedLargeRequestResponse(userText, options = {}) {
+    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
+    return buildKeroLocalGatewayFallbackResponse(userText, {
+        ...options,
+        userRequest: safeString(options.userRequest || userText).trim(),
+        allowSmallCreate: false,
+        actionReason: 'large_request_preplan',
+        reasonText: '처음부터 한 번의 대형 호출로 처리하지 않고'
+    });
 }
 
 function isKeroWorkTargetMutationRequest(text = '', mode = currentWorkTargetMode) {
@@ -51701,7 +51791,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.32",
+        name: "SuperVibeBot v1.5.33",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -51710,7 +51800,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.32 Settings",
+        "SuperVibeBot v1.5.33 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -51753,7 +51843,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.32");
+        Logger.info("SuperVibeBot v1.5.33");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

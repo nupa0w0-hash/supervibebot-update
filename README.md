@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.32`
+Latest version: `1.5.33`
 
 Update URL:
 
@@ -17,6 +17,11 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.33
+
+- Preplans obvious large character build requests into a character patch and chunked bulk actions before calling the main model.
+- Prevents one-shot NanoGPT calls for requests that already imply full bot/world/roster construction.
 
 ## 1.5.32
 
