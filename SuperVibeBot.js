@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.31
-//@version 1.5.31
+//@display-name 🐸 SuperVibeBot v1.5.32
+//@version 1.5.32
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.31는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.32는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,8 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.31 Release Notes
+ * SuperVibeBot v1.5.32 Release Notes
+ * - v1.5.32: routes NanoGPT/transport timeouts on large character build requests into small-step recovery instead of retrying the same prompt 3 times
  * - v1.5.31: blocks character fallback/actions while editing module/plugin targets, preventing accidental character overwrite
  * - v1.5.31: suppresses completed-only recovery notices and clears mission/action/bulk recovery state with Kero chat clearing
  * - v1.5.31: stabilizes the memory tool drawer height after memory deletion
@@ -12782,7 +12783,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.31',
+            '//@version 1.5.32',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -12965,6 +12966,49 @@ function addSvbRuntimeOutputLimitDecisionSelfTest(checks) {
         problems.length === 0,
         'output limit recovery decision helper self test',
         problems.length ? `Problems: ${problems.join(' / ')}` : 'output-limit errors are routed to small-step recovery instead of repeating the same request',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
+function addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks) {
+    const result = readSvbRuntimeValue('대형 요청 transport 복구 판정 자체 테스트', () => {
+        const request = '이 봇을 정통 판타지 시뮬봇으로 만들어줘. 디스크립션에는 세계관을 넣고 인물은 대표 주인공급으로 10명 정도, 인물들끼리 관계성도 구축해줘.';
+        const error = new Error('NanoGPT request timed out while calling model');
+        const recovery = getKeroModelCallRecoveryDecision(error, {
+            keroMode: 'work',
+            fromKero: true,
+            allowGatewayRecovery: true,
+            userRequest: request
+        });
+        const normal = getKeroModelCallRecoveryDecision(error, {
+            keroMode: 'work',
+            fromKero: true,
+            allowGatewayRecovery: true,
+            userRequest: '짧게 이름 하나 추천해줘'
+        });
+        return {
+            detectsFullBuild: isKeroGatewayFullCharacterBuildRequest(request),
+            transportRetryable: isRetryableModelTransportError(error),
+            routesLargeRequestToRecovery: recovery.kind === 'gateway_timeout' && recovery.canRecover === true,
+            blocksSameRequestRetry: recovery.retrySameRequest === false,
+            leavesSmallRequestOnNormalRetry: normal.kind === 'none' && normal.retrySameRequest === true
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, '대형 요청 transport 복구 판정 자체 테스트', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.detectsFullBuild) problems.push('판타지 전체 제작 요청 감지 실패');
+    if (!value.transportRetryable) problems.push('transport timeout 감지 실패');
+    if (!value.routesLargeRequestToRecovery) problems.push('대형 요청 transport 오류가 복구로 라우팅되지 않음');
+    if (!value.blocksSameRequestRetry) problems.push('같은 대형 원문 재시도 차단 실패');
+    if (!value.leavesSmallRequestOnNormalRetry) problems.push('작은 일반 요청까지 복구로 오판정');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        '대형 요청 transport 복구 판정 자체 테스트',
+        problems.length ? `문제: ${problems.join(' / ')}` : 'NanoGPT timeout 계열 대형 제작 요청을 같은 원문 3회 반복 대신 작은 실행 단위 복구로 전환',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -14001,6 +14045,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
+    addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks);
     addSvbRuntimeLegacyFieldPolicySelfTest(checks);
     addSvbRuntimeContextPayloadSelfTest(checks);
     addSvbRuntimeSubAgentPayloadBudgetSelfTest(checks);
@@ -40442,7 +40487,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.31 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.32 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -42996,6 +43041,28 @@ function shouldAttemptKeroGatewayRecovery(options = {}) {
         && options.gatewayRecovery !== true;
 }
 
+function getKeroRecoverySourceText(options = {}) {
+    return [
+        options.userRequest,
+        options.visibleUserInput,
+        options.modelUserInput,
+        options.originalUserInput,
+        options.request,
+        options.objective,
+        options.prompt
+    ].map((value) => safeString(value).trim()).filter(Boolean).join('\n');
+}
+
+function shouldRecoverKeroLargeRequestTransportError(error, options = {}) {
+    if (!isRetryableModelTransportError(error)) return false;
+    if (isProviderGatewayTimeoutError(error) || isKeroModelHardTimeoutError(error) || isProviderOutputLimitError(error)) return false;
+    const source = getKeroRecoverySourceText(options);
+    if (!source) return false;
+    if (isKeroGatewayFullCharacterBuildRequest(source)) return true;
+    return inferKeroBulkCreateSpecsFromText(source, { allowSmallCreate: false })
+        .some((spec) => spec?.target && Number(spec.count || 0) >= 10);
+}
+
 function getKeroModelCallRecoveryDecision(error, options = {}) {
     let kind = 'none';
     if (isProviderOutputLimitError(error)) {
@@ -43003,6 +43070,8 @@ function getKeroModelCallRecoveryDecision(error, options = {}) {
     } else if (isKeroModelHardTimeoutError(error)) {
         kind = 'hard_timeout';
     } else if (isProviderGatewayTimeoutError(error)) {
+        kind = 'gateway_timeout';
+    } else if (shouldRecoverKeroLargeRequestTransportError(error, options)) {
         kind = 'gateway_timeout';
     }
     const recoverable = kind !== 'none';
@@ -51632,7 +51701,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.31",
+        name: "SuperVibeBot v1.5.32",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -51641,7 +51710,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.31 Settings",
+        "SuperVibeBot v1.5.32 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -51684,7 +51753,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.31");
+        Logger.info("SuperVibeBot v1.5.32");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
