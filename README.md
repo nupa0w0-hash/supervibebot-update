@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.33`
+Latest version: `1.5.34`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.34
+
+- Adds Kero's "수정 전 확인" toggle, deferring save actions to the approve/reject proposal panel when enabled.
+- Stops usage/question/analysis requests from being converted into lorebook, regex, or trigger save actions.
+- Parses `module_update`-style action aliases while rejecting module updates contaminated with character-only fields.
+- Recovers clear module trigger line-removal requests, such as `gse-route-label`, as module-only updates.
 
 ## 1.5.33
 

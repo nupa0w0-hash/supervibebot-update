@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.33
-//@version 1.5.33
+//@display-name 🐸 SuperVibeBot v1.5.34
+//@version 1.5.34
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.33는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.34는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.33 Release Notes
+ * SuperVibeBot v1.5.34 Release Notes
+ * - v1.5.34: adds a Kero "수정 전 확인" toggle that defers save actions to the approval/reject proposal panel
+ * - v1.5.34: stops question/usage/analysis requests from being converted into lorebook/regex/trigger save actions
+ * - v1.5.34: parses module_update-style action aliases while rejecting module updates contaminated with character-only fields
+ * - v1.5.34: locally recovers clear module trigger line-removal requests such as gse-route-label without touching character fields
  * - v1.5.33: preplans obvious large character build requests into character patch and chunked bulk actions before calling the main model
  * - v1.5.32: routes NanoGPT/transport timeouts on large character build requests into small-step recovery instead of retrying the same prompt 3 times
  * - v1.5.31: blocks character fallback/actions while editing module/plugin targets, preventing accidental character overwrite
@@ -3056,6 +3060,7 @@ const SVB_STUDIO_APPLY_BG_END = '<!-- SuperVibeStudio Managed END -->';
 const SVB_STUDIO_APPLY_REGEX_PREFIX = '[SuperVibeStudio Regex]';
 const SVB_STUDIO_APPLY_LUA_TRIGGER_COMMENT = '[SuperVibeStudio Lua Trigger]';
 const KERO_MODE_KEY = "Super_Vibe_Bot_kero_mode";
+const KERO_REQUIRE_ACTION_CONFIRMATION_KEY = "Super_Vibe_Bot_kero_require_action_confirmation_v1";
 const WORK_TARGET_MODE_KEY = "Super_Vibe_Bot_work_target_mode_v1";
 const WORK_TARGET_MODULE_ID_KEY = "Super_Vibe_Bot_work_target_module_id_v1";
 const WORK_TARGET_PLUGIN_KEY = "Super_Vibe_Bot_work_target_plugin_key_v1";
@@ -7857,6 +7862,7 @@ async function getAllCurrentSettings() {
         darkColors: { ...DEFAULT_DARK_COLORS, ...((await Storage.get(DARK_COLORS_KEY)) || {}) },
         // 케로 모드
         keroMode: (await Storage.get(KERO_MODE_KEY)) || currentKeroMode || 'daily',
+        keroRequireActionConfirmation: (await Storage.get(KERO_REQUIRE_ACTION_CONFIRMATION_KEY)) !== false,
         // GitHub Copilot 설정
         githubCopilotToken: (await Storage.get(GITHUB_COPILOT_TOKEN_KEY)) || '',
         copilotModel: (await Storage.get(GITHUB_COPILOT_MODEL_KEY)) || DEFAULT_COPILOT_MODEL,
@@ -7998,6 +8004,12 @@ async function restoreSettings(settings, options = { restoreApiKeys: true, resto
             currentKeroMode = settings.keroMode;
             await Storage.set(KERO_MODE_KEY, currentKeroMode);
             results.success.push("케로 모드");
+        }
+
+        if (typeof settings.keroRequireActionConfirmation === 'boolean') {
+            keroRequireActionConfirmation = settings.keroRequireActionConfirmation !== false;
+            await Storage.set(KERO_REQUIRE_ACTION_CONFIRMATION_KEY, keroRequireActionConfirmation);
+            results.success.push("케로 수정 전 확인");
         }
 
         // GitHub Copilot 설정 복원 (API 키 복원 옵션이 켜져 있을 때만)
@@ -9628,7 +9640,89 @@ function findKeroActionJsonEnd(text, startIndex) {
     return -1;
 }
 
+function inferKeroActionTypeTargetFromAlias(value = '') {
+    const raw = safeString(value).trim();
+    if (!raw) return { type: '', target: '' };
+    const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
+    const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+    const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'module', 'plugin']);
+    for (let index = 0; index < parts.length; index += 1) {
+        const first = parts[index];
+        const second = parts[index + 1] || '';
+        const firstType = normalizeKeroActionTypeName(first);
+        const firstTarget = normalizeKeroActionTargetName(first);
+        const secondType = normalizeKeroActionTypeName(second);
+        const secondTarget = normalizeKeroActionTargetName(second);
+        if (validTargets.has(firstTarget) && validTypes.has(secondType)) return { type: secondType, target: firstTarget };
+        if (validTypes.has(firstType) && validTargets.has(secondTarget)) return { type: firstType, target: secondTarget };
+    }
+    const compact = raw.toLowerCase().replace(/[\s_-]+/g, '');
+    for (const target of validTargets) {
+        const targetKey = target.toLowerCase().replace(/[\s_-]+/g, '');
+        for (const type of validTypes) {
+            const typeKey = type.toLowerCase().replace(/[\s_-]+/g, '');
+            if (compact === `${targetKey}${typeKey}`) return { type, target };
+            if (compact === `${typeKey}${targetKey}`) return { type, target };
+        }
+    }
+    return { type: '', target: '' };
+}
+
+function copyKeroTopLevelPayloadField(source, payload, key, outKey = key) {
+    if (!source || typeof source !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(source, key)) payload[outKey] = source[key];
+}
+
+function hasKeroAnyOwnField(source, fields = []) {
+    if (!source || typeof source !== 'object') return false;
+    return ensureArray(fields).some((field) => Object.prototype.hasOwnProperty.call(source, field));
+}
+
+function normalizeKeroRawActionShape(entry) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    const normalized = { ...entry };
+    const alias = safeString(entry['@action'] || entry.action || entry.actionType || entry.action_type || entry.command || '').trim();
+    if (alias) {
+        const inferred = inferKeroActionTypeTargetFromAlias(alias);
+        if (!safeString(normalized.type).trim() && inferred.type) normalized.type = inferred.type;
+        if (!safeString(normalized.target).trim() && inferred.target) normalized.target = inferred.target;
+    }
+    const type = normalizeKeroActionTypeName(normalized.type);
+    const target = normalizeKeroActionTargetName(normalized.target);
+    if (!normalized.payload && type && target && alias) {
+        const payload = {};
+        if (target === 'character') {
+            ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+        } else if (target === 'module') {
+            const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
+            const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
+            if (!hasCharacterOnlyFields) copyKeroTopLevelPayloadField(entry, payload, 'name');
+            ['description', 'namespace', 'lorebook', 'regex', 'trigger', 'cjs', 'assets', 'backgroundEmbedding', 'customModuleToggle', 'hideIcon', 'lowLevelAccess'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+        } else if (target === 'plugin') {
+            if (type === 'create') copyKeroTopLevelPayloadField(entry, payload, 'name');
+            ['displayName', 'script', 'enabled', 'allowedIPC', 'customLink', 'arguments'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+        } else if (['lorebook', 'regex', 'trigger'].includes(target)) {
+            const metaKeys = new Set(['@action', 'action', 'actionType', 'action_type', 'command', 'type', 'target', 'id', 'idx', 'indexes', 'indices', 'idxList', 'count', 'total', 'totalCount', 'amount', 'requestedCount', 'chunkSize', 'batchSize', 'itemCharLimit', 'chunkCharLimit', 'userRequest', 'request', 'reason', 'stepId', 'planId', 'jobId', 'actionJobId', 'dependsOn', 'depends_on', 'after', 'autoApply']);
+            Object.keys(entry).forEach((key) => {
+                if (!metaKeys.has(key)) payload[key] = entry[key];
+            });
+        }
+        if (Object.keys(payload).length) normalized.payload = payload;
+    }
+    return normalized;
+}
+
+function isKeroModuleActionPayloadContaminatedByCharacterFields(action = {}) {
+    const payload = action?.payload && typeof action.payload === 'object' && !Array.isArray(action.payload) ? action.payload : {};
+    const characterOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
+    const moduleFields = ['description', 'namespace', 'lorebook', 'regex', 'trigger', 'cjs', 'assets', 'backgroundEmbedding', 'customModuleToggle', 'hideIcon', 'lowLevelAccess'];
+    const hasCharacterOnly = hasKeroAnyOwnField(action, characterOnlyFields) || hasKeroAnyOwnField(payload, characterOnlyFields);
+    const hasModuleField = hasKeroAnyOwnField(action, moduleFields) || hasKeroAnyOwnField(payload, moduleFields);
+    return hasCharacterOnly && !hasModuleField;
+}
+
 function isKeroActionShapedObject(entry) {
+    entry = normalizeKeroRawActionShape(entry);
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
     const type = normalizeKeroActionTypeName(entry.type);
     const target = normalizeKeroActionTargetName(entry.target);
@@ -9711,6 +9805,7 @@ function buildKeroGlobalSingleFieldPatchPayload(action, target) {
 }
 
 function normalizeKeroParsedActionForExecution(action) {
+    action = normalizeKeroRawActionShape(action);
     if (!action || typeof action !== 'object' || Array.isArray(action)) return null;
     const type = normalizeKeroActionTypeName(action.type);
     const target = normalizeKeroActionTargetName(action.target);
@@ -9746,6 +9841,7 @@ function normalizeKeroParsedActionForExecution(action) {
         return null;
     }
     if (['module', 'plugin'].includes(target)) {
+        if (target === 'module' && isKeroModuleActionPayloadContaminatedByCharacterFields(normalized)) return null;
         if (['create', 'update', 'delete'].includes(type)) return normalized;
         return null;
     }
@@ -9787,6 +9883,7 @@ function getKeroDeclaredCreateCount(req = {}, payloadCount = 0) {
 }
 
 function buildKeroCreateCountCoverageActions(userInput, actions = [], options = {}) {
+    if (!hasKeroExplicitMutationIntent(userInput) || isKeroQuestionOnlyRequest(userInput)) return [];
     const added = [];
     const adaptiveLimits = getSvbAdaptiveRuntimeLimits();
     ensureArray(actions).forEach((action, index) => {
@@ -10163,6 +10260,15 @@ function makeKeroPersistableAction(action = {}) {
     delete clone._keroActionAbortController;
     delete clone._keroActionTimedOut;
     delete clone._keroActionTimeoutDetail;
+    return clone;
+}
+
+function makeKeroComparableAction(action = {}) {
+    const clone = makeKeroPersistableAction(action || {});
+    if (!clone || typeof clone !== 'object') return clone || {};
+    ['stepId', 'actionJobId', 'jobId', 'planId', 'bulkJobId', '_missionId', 'missionId'].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(clone, key)) delete clone[key];
+    });
     return clone;
 }
 
@@ -10747,7 +10853,7 @@ function isKeroActionJobTerminalSuccess(job) {
 
 function isSameKeroPersistedAction(left = {}, right = {}) {
     try {
-        return JSON.stringify(makeKeroPersistableAction(left || {})) === JSON.stringify(makeKeroPersistableAction(right || {}));
+        return JSON.stringify(makeKeroComparableAction(left || {})) === JSON.stringify(makeKeroComparableAction(right || {}));
     } catch (_) {
         return false;
     }
@@ -11882,6 +11988,20 @@ function addSvbRuntimeActionParserSelfTest(checks) {
         const taggedParsed = parseKeroAction(tagged);
         const inlineParsed = parseKeroAction(inlineTagged);
         const bareParsed = parseKeroAction(JSON.stringify(actionSource));
+        const aliasParsed = parseKeroAction(JSON.stringify([
+            {
+                '@action': 'module_update',
+                id: 'diagnostic-module',
+                cjs: 'module.exports = { fixed: true };'
+            },
+            {
+                '@action': 'module_update',
+                id: 'diagnostic-module',
+                name: 'Story Seed',
+                desc: '캐릭터 설명이 모듈 update에 섞인 잘못된 payload',
+                firstMessage: '잘못된 첫 메시지'
+            }
+        ]));
         const underfilledCreateAction = {
             type: 'create',
             target: 'lorebook',
@@ -11952,9 +12072,17 @@ function addSvbRuntimeActionParserSelfTest(checks) {
             tagged: summarize(taggedParsed),
             inline: summarize(inlineParsed),
             bare: summarize(bareParsed),
+            alias: summarize(aliasParsed),
             taggedInvalid: ensureArray(taggedParsed?.invalidActions).length,
             inlineInvalid: ensureArray(inlineParsed?.invalidActions).length,
             bareInvalid: ensureArray(bareParsed?.invalidActions).length,
+            aliasInvalid: ensureArray(aliasParsed?.invalidActions).length,
+            aliasModuleCjs: safeString(ensureArray(aliasParsed?.actions)[0]?.payload?.cjs),
+            aliasRejectedCharacterModulePayload: ensureArray(aliasParsed?.invalidActions).some((action) =>
+                safeString(action?.['@action']) === 'module_update'
+                && safeString(action?.name) === 'Story Seed'
+                && safeString(action?.desc).includes('캐릭터 설명')
+            ),
             taggedCleanText: safeString(taggedParsed?.text || '').trim(),
             inlineCleanText: safeString(inlineParsed?.text || '').trim(),
             bareCleanText: safeString(bareParsed?.text || '').trim(),
@@ -11989,9 +12117,11 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     const taggedKeys = toKeySet(value.tagged);
     const inlineKeys = toKeySet(value.inline);
     const bareKeys = toKeySet(value.bare);
+    const aliasKeys = toKeySet(value.alias);
     const missingTagged = required.filter((key) => !taggedKeys.has(key));
     const missingInline = ['bulk_create:lorebook'].filter((key) => !inlineKeys.has(key));
     const missingBare = required.filter((key) => !bareKeys.has(key));
+    const missingAlias = ['update:module'].filter((key) => !aliasKeys.has(key));
     const badTaggedPayload = ensureArray(value.tagged).filter((row) => (
         row?.hasCharacterPayload === false
         || row?.hasBulkPayload === false
@@ -12008,11 +12138,15 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     if (missingTagged.length) problems.push(`@action 누락 ${missingTagged.join(', ')}`);
     if (missingInline.length) problems.push(`inline @action 누락 ${missingInline.join(', ')}`);
     if (missingBare.length) problems.push(`순수 JSON 누락 ${missingBare.join(', ')}`);
+    if (missingAlias.length) problems.push(`alias JSON 누락 ${missingAlias.join(', ')}`);
     if (badTaggedPayload.length) problems.push(`@action payload 손실 ${badTaggedPayload.map((row) => `${row.type}:${row.target}`).join(', ')}`);
     if (badBarePayload.length) problems.push(`순수 JSON payload 손실 ${badBarePayload.map((row) => `${row.type}:${row.target}`).join(', ')}`);
     if (Number(value.taggedInvalid || 0) > 0) problems.push(`@action invalid ${value.taggedInvalid}`);
     if (Number(value.inlineInvalid || 0) > 0) problems.push(`inline @action invalid ${value.inlineInvalid}`);
     if (Number(value.bareInvalid || 0) > 0) problems.push(`순수 JSON invalid ${value.bareInvalid}`);
+    if (Number(value.aliasInvalid || 0) < 1) problems.push('오염된 module_update alias를 invalid로 분리하지 못함');
+    if (!safeString(value.aliasModuleCjs).includes('fixed: true')) problems.push('module_update alias payload cjs 보존 실패');
+    if (!value.aliasRejectedCharacterModulePayload) problems.push('캐릭터 필드가 섞인 module_update 차단 실패');
     if (Number(value.koreanCount || 0) !== 3) problems.push(`한글 숫자 count 실패 ${value.koreanCount}`);
     if (Number(value.underfilledCoverageCount || 0) !== 1
         || value.underfilledCoverageType !== 'bulk_create'
@@ -12036,7 +12170,7 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '작업 액션 파서 자체 테스트',
-        `@action ${ensureArray(value.tagged).length}개 · inline ${ensureArray(value.inline).length}개 · 순수 JSON ${ensureArray(value.bare).length}개 · 한글 count ${value.koreanCount || 0} · 필드분리 ${value.recoveredFieldActions || 0}개${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
+        `@action ${ensureArray(value.tagged).length}개 · inline ${ensureArray(value.inline).length}개 · 순수 JSON ${ensureArray(value.bare).length}개 · alias ${ensureArray(value.alias).length}개/${value.aliasInvalid || 0} invalid · 한글 count ${value.koreanCount || 0} · 필드분리 ${value.recoveredFieldActions || 0}개${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -12173,6 +12307,11 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
         const allLoreRequest = '전체 로어북을 더 자연스럽게 개선해줘';
         const allLoreActions = parseKeroAction(buildKeroMissingImproveFallbackResponse(allLoreRequest, '', { userRequest: allLoreRequest })).actions || [];
         const allLoreAction = allLoreActions.find((action) => normalizeKeroActionTargetName(action?.target) === 'lorebook');
+        const usageQuestion = '정규식 스크립트 사용법 알려줘. 지금 저장하지 말고 설명만 해줘.';
+        const usageQuestionFallback = [
+            buildKeroMissingActionFallbackResponse(usageQuestion, '정규식 사용법 답변', { userRequest: usageQuestion }),
+            buildKeroMissingImproveFallbackResponse(usageQuestion, '정규식 사용법 답변', { userRequest: usageQuestion })
+        ].filter(Boolean).join('\n');
         let malformedFieldActionBlocked = false;
         try {
             recoverKeroActionDirectivesFromFieldText('본문\n@action { broken', 'self test field', [], { silentRecoveryEvent: true });
@@ -12188,6 +12327,9 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             loreDefaultsToSelected: loreAction?.selected === true && loreAction?.all !== true,
             lorePrefersCurrent: loreAction?.preferCurrent === true,
             explicitAllStillAll: allLoreAction?.all === true,
+            usageQuestionIsQuestionOnly: isKeroQuestionOnlyRequest(usageQuestion) === true,
+            usageQuestionNoMutationIntent: hasKeroExplicitMutationIntent(usageQuestion) === false,
+            usageQuestionNoFallback: !usageQuestionFallback,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
             fullBuildProbeType: typeof fullBuildProbe === 'boolean'
@@ -12206,13 +12348,16 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.loreDefaultsToSelected) problems.push('unqualified lorebook fallback did not default to selected/current');
     if (!value.lorePrefersCurrent) problems.push('unqualified lorebook fallback does not prefer current item');
     if (!value.explicitAllStillAll) problems.push('explicit all lorebook fallback did not preserve all:true');
+    if (!value.usageQuestionIsQuestionOnly) problems.push('usage question was not detected as question-only');
+    if (!value.usageQuestionNoMutationIntent) problems.push('usage question was misdetected as mutation intent');
+    if (!value.usageQuestionNoFallback) problems.push('usage question created missing-action fallback');
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
     if (!value.fullBuildProbeType) problems.push('gateway full-build probe did not return boolean');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
-        problems.length ? `Problems: ${problems.join(' / ')}` : 'description and lorebook improve fallback create safe actions; malformed embedded @action is blocked',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'description/lorebook improve fallback create safe actions; usage questions do not create actions; malformed embedded @action is blocked',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -12636,6 +12781,33 @@ function addSvbRuntimeWorkTargetRecoverySelfTest(checks) {
         };
         const emptyModuleAction = { type: 'update', target: 'module', payload: {} };
         const emptyPluginAction = { type: 'update', target: 'plugin', payload: {} };
+        const localLineRemovalAction = buildKeroLocalModuleLineRemovalRecoveryAction(
+            '모듈 game-state-engine을 수정해 줘',
+            "buildHtml 함수에서 gse-route-label div 한 줄만 제거",
+            {
+                selected: true,
+                targetId: 'game-state-engine',
+                module: {
+                    id: 'game-state-engine',
+                    name: 'game-state-engine',
+                    trigger: [
+                        {
+                            comment: 'status trigger',
+                            effect: [
+                                {
+                                    type: 'script',
+                                    code: [
+                                        "ins('<div class=\"gse-title\">상태</div>')",
+                                        "ins('<div class=\"gse-route-label\">루트: ' .. escText(routeTheme) .. '</div>')",
+                                        "ins('<div class=\"gse-footer\">끝</div>')"
+                                    ].join('\n')
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        );
         return {
             moduleMutation: isKeroWorkTargetMutationRequest(moduleCreateRequest, 'module'),
             pluginMutation: isKeroWorkTargetMutationRequest(pluginCreateRequest, 'plugin'),
@@ -12644,6 +12816,11 @@ function addSvbRuntimeWorkTargetRecoverySelfTest(checks) {
             validPluginAction: hasValidWorkTargetRecoveryAction([pluginAction], 'plugin'),
             rejectsEmptyModule: !hasValidWorkTargetRecoveryAction([emptyModuleAction], 'module'),
             rejectsEmptyPlugin: !hasValidWorkTargetRecoveryAction([emptyPluginAction], 'plugin'),
+            localLineRemovalValid: hasValidWorkTargetRecoveryAction([localLineRemovalAction], 'module'),
+            localLineRemovalKeepsTrigger: ensureArray(localLineRemovalAction?.payload?.trigger).length === 1,
+            localLineRemovalRemovesLabel: !safeString(localLineRemovalAction?.payload?.trigger?.[0]?.effect?.[0]?.code).includes('gse-route-label'),
+            localLineRemovalKeepsOtherLines: safeString(localLineRemovalAction?.payload?.trigger?.[0]?.effect?.[0]?.code).includes('gse-title')
+                && safeString(localLineRemovalAction?.payload?.trigger?.[0]?.effect?.[0]?.code).includes('gse-footer'),
             blocksModuleCharacterFallback: !buildKeroLocalGatewayFallbackResponse(moduleCreateRequest, { workTargetMode: 'module', allowSmallCreate: true }),
             blocksPluginCharacterFallback: !buildKeroLocalGatewayFallbackResponse(pluginCreateRequest, { workTargetMode: 'plugin', allowSmallCreate: true })
         };
@@ -12661,6 +12838,10 @@ function addSvbRuntimeWorkTargetRecoverySelfTest(checks) {
     if (!value.validPluginAction) problems.push('플러그인 payload 유효성 실패');
     if (!value.rejectsEmptyModule) problems.push('빈 모듈 payload 허용');
     if (!value.rejectsEmptyPlugin) problems.push('빈 플러그인 payload 허용');
+    if (!value.localLineRemovalValid) problems.push('모듈 라인 제거 로컬 복구 액션 유효성 실패');
+    if (!value.localLineRemovalKeepsTrigger) problems.push('모듈 라인 제거 trigger payload 생성 실패');
+    if (!value.localLineRemovalRemovesLabel) problems.push('gse-route-label 라인 제거 실패');
+    if (!value.localLineRemovalKeepsOtherLines) problems.push('gse-route-label 제거 중 주변 코드 손상');
     if (!value.blocksModuleCharacterFallback) problems.push('모듈 모드 캐릭터 fallback 차단 실패');
     if (!value.blocksPluginCharacterFallback) problems.push('플러그인 모드 캐릭터 fallback 차단 실패');
     checks.push(makeSvbRuntimeCheck(
@@ -12784,7 +12965,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.33',
+            '//@version 1.5.34',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15111,6 +15292,7 @@ let imageGenerationPresets = [];
 let activeImageGenerationPresetId = DEFAULT_IMAGE_GENERATION_PRESET_ID;
 let lastImageApiTestResult = null;
 let currentKeroMode = "daily";
+let keroRequireActionConfirmation = true;
 let chunkModeEnabled = false; // 청크 분할 모드 (기본: 비활성화)
 let chunkSize = DEFAULT_CHUNK_SIZE; // 청크 크기 (기본: 3000자)
 
@@ -15594,6 +15776,7 @@ async function loadStoredState() {
     const storedChunkSize = await Storage.get(CHUNK_SIZE_KEY);
     chunkSize = Number(storedChunkSize) || DEFAULT_CHUNK_SIZE;
     currentKeroMode = (await Storage.get(KERO_MODE_KEY)) === "work" ? "work" : "daily";
+    keroRequireActionConfirmation = (await Storage.get(KERO_REQUIRE_ACTION_CONFIRMATION_KEY)) !== false;
     lastCharacterId = (await Storage.get('SuperVibeBot_lastCharacterId')) || null;
     manualSelectedCharId = (await Storage.get(MANUAL_CHARACTER_ID_KEY)) || null;
     multiSelectedCharIds = normalizeCharacterIdList(await Storage.get(MANUAL_CHARACTER_MULTI_IDS_KEY));
@@ -22523,6 +22706,7 @@ async function createTransUI() {
     const keroToolsIconBar = el("div", { class: "kero-tools-iconbar" }, [
 
         el("button", { class: currentKeroMode === "work" ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-work-mode-toggle", title: "일상/작업 모드 전환", text: currentKeroMode === "work" ? "작업" : "일상" }),
+        el("button", { class: keroRequireActionConfirmation ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-action-confirm-toggle", title: keroRequireActionConfirmation ? "수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행" : "자동 실행 ON: 저장 액션을 바로 실행", text: keroRequireActionConfirmation ? "확인" : "자동" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-workstream", title: "🧭 작업 흐름", text: "🧭" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-proposals", title: "제안 작업", text: "✓" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-scope", title: "🎯 범위 설정", text: "🎯" }),
@@ -25562,7 +25746,89 @@ ${currentVars || '{}'}
         return -1;
     }
 
+    function inferKeroActionTypeTargetFromAlias(value = '') {
+        const raw = safeString(value).trim();
+        if (!raw) return { type: '', target: '' };
+        const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
+        const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+        const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'module', 'plugin']);
+        for (let index = 0; index < parts.length; index += 1) {
+            const first = parts[index];
+            const second = parts[index + 1] || '';
+            const firstType = normalizeKeroActionTypeName(first);
+            const firstTarget = normalizeKeroActionTargetName(first);
+            const secondType = normalizeKeroActionTypeName(second);
+            const secondTarget = normalizeKeroActionTargetName(second);
+            if (validTargets.has(firstTarget) && validTypes.has(secondType)) return { type: secondType, target: firstTarget };
+            if (validTypes.has(firstType) && validTargets.has(secondTarget)) return { type: firstType, target: secondTarget };
+        }
+        const compact = raw.toLowerCase().replace(/[\s_-]+/g, '');
+        for (const target of validTargets) {
+            const targetKey = target.toLowerCase().replace(/[\s_-]+/g, '');
+            for (const type of validTypes) {
+                const typeKey = type.toLowerCase().replace(/[\s_-]+/g, '');
+                if (compact === `${targetKey}${typeKey}`) return { type, target };
+                if (compact === `${typeKey}${targetKey}`) return { type, target };
+            }
+        }
+        return { type: '', target: '' };
+    }
+
+    function copyKeroTopLevelPayloadField(source, payload, key, outKey = key) {
+        if (!source || typeof source !== 'object') return;
+        if (Object.prototype.hasOwnProperty.call(source, key)) payload[outKey] = source[key];
+    }
+
+    function hasKeroAnyOwnField(source, fields = []) {
+        if (!source || typeof source !== 'object') return false;
+        return ensureArray(fields).some((field) => Object.prototype.hasOwnProperty.call(source, field));
+    }
+
+    function normalizeKeroRawActionShape(entry) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+        const normalized = { ...entry };
+        const alias = safeString(entry['@action'] || entry.action || entry.actionType || entry.action_type || entry.command || '').trim();
+        if (alias) {
+            const inferred = inferKeroActionTypeTargetFromAlias(alias);
+            if (!safeString(normalized.type).trim() && inferred.type) normalized.type = inferred.type;
+            if (!safeString(normalized.target).trim() && inferred.target) normalized.target = inferred.target;
+        }
+        const type = normalizeKeroActionTypeName(normalized.type);
+        const target = normalizeKeroActionTargetName(normalized.target);
+        if (!normalized.payload && type && target && alias) {
+            const payload = {};
+            if (target === 'character') {
+                ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            } else if (target === 'module') {
+                const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
+                const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
+                if (!hasCharacterOnlyFields) copyKeroTopLevelPayloadField(entry, payload, 'name');
+                ['description', 'namespace', 'lorebook', 'regex', 'trigger', 'cjs', 'assets', 'backgroundEmbedding', 'customModuleToggle', 'hideIcon', 'lowLevelAccess'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            } else if (target === 'plugin') {
+                if (type === 'create') copyKeroTopLevelPayloadField(entry, payload, 'name');
+                ['displayName', 'script', 'enabled', 'allowedIPC', 'customLink', 'arguments'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            } else if (['lorebook', 'regex', 'trigger'].includes(target)) {
+                const metaKeys = new Set(['@action', 'action', 'actionType', 'action_type', 'command', 'type', 'target', 'id', 'idx', 'indexes', 'indices', 'idxList', 'count', 'total', 'totalCount', 'amount', 'requestedCount', 'chunkSize', 'batchSize', 'itemCharLimit', 'chunkCharLimit', 'userRequest', 'request', 'reason', 'stepId', 'planId', 'jobId', 'actionJobId', 'dependsOn', 'depends_on', 'after', 'autoApply']);
+                Object.keys(entry).forEach((key) => {
+                    if (!metaKeys.has(key)) payload[key] = entry[key];
+                });
+            }
+            if (Object.keys(payload).length) normalized.payload = payload;
+        }
+        return normalized;
+    }
+
+    function isKeroModuleActionPayloadContaminatedByCharacterFields(action = {}) {
+        const payload = action?.payload && typeof action.payload === 'object' && !Array.isArray(action.payload) ? action.payload : {};
+        const characterOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
+        const moduleFields = ['description', 'namespace', 'lorebook', 'regex', 'trigger', 'cjs', 'assets', 'backgroundEmbedding', 'customModuleToggle', 'hideIcon', 'lowLevelAccess'];
+        const hasCharacterOnly = hasKeroAnyOwnField(action, characterOnlyFields) || hasKeroAnyOwnField(payload, characterOnlyFields);
+        const hasModuleField = hasKeroAnyOwnField(action, moduleFields) || hasKeroAnyOwnField(payload, moduleFields);
+        return hasCharacterOnly && !hasModuleField;
+    }
+
     function isKeroActionShapedObject(entry) {
+        entry = normalizeKeroRawActionShape(entry);
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
         const type = normalizeKeroActionTypeName(entry.type);
         const target = normalizeKeroActionTargetName(entry.target);
@@ -25864,6 +26130,7 @@ ${currentVars || '{}'}
     }
 
     function normalizeKeroParsedActionForExecution(action) {
+        action = normalizeKeroRawActionShape(action);
         if (!action || typeof action !== 'object' || Array.isArray(action)) return null;
         const type = normalizeKeroActionTypeName(action.type);
         const target = normalizeKeroActionTargetName(action.target);
@@ -25897,6 +26164,7 @@ ${currentVars || '{}'}
             return null;
         }
         if (['module', 'plugin'].includes(target)) {
+            if (target === 'module' && isKeroModuleActionPayloadContaminatedByCharacterFields(normalized)) return null;
             if (['create', 'update', 'delete'].includes(type)) return normalized;
             return null;
         }
@@ -26098,6 +26366,7 @@ ${currentVars || '{}'}
 
     function buildKeroCreateCountCoverageActions(userInput, actions = [], options = {}) {
         const request = safeString(userInput).trim();
+        if (!hasKeroExplicitMutationIntent(request) || isKeroQuestionOnlyRequest(request)) return [];
         if (!request || !isKeroCreateLikeRequest(request) && !isKeroFullCharacterBuildRequest(request)) return [];
         const fullBuild = options.fullBuild === true || isKeroFullCharacterBuildRequest(request);
         const specs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
@@ -26910,6 +27179,15 @@ ${currentVars || '{}'}
                 await markKeroActionsStale(compactedActions, actionMissionId, actionStorageIdAtRequest, detail);
                 return;
             }
+            if (shouldDeferKeroActionsForUserConfirmation(compactedActions, options)) {
+                await deferKeroActionsForUserConfirmation(compactedActions, {
+                    ...options,
+                    missionId: actionMissionId,
+                    storageId: actionStorageIdAtRequest,
+                    progressOptions: actionProgressOptions
+                });
+                return;
+            }
             attachKeroActionPlanToMission(compactedActions);
             addKeroWorkstreamEvent('액션 실행 대기열', `${compactedActions.length}개 작업을 순서대로 실행합니다.`, 'queued', actionProgressOptions);
             const actionStorageId = actionStorageIdAtRequest || currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
@@ -27499,6 +27777,79 @@ ${currentVars || '{}'}
         return entry;
     }
 
+    function shouldDeferKeroActionForUserConfirmation(action = {}) {
+        const type = safeString(action?.type);
+        const target = normalizeKeroActionTargetName(action?.target);
+        if (!type || !target) return false;
+        if (['create', 'bulk_create', 'update', 'patch', 'delete', 'apply'].includes(type)) return true;
+        if (type === 'improve') return action?.autoApply !== false || ['lorebook', 'regex', 'trigger', 'desc', 'globalNote', 'background', 'vars'].includes(target);
+        return false;
+    }
+
+    function shouldDeferKeroActionsForUserConfirmation(actions = [], options = {}) {
+        if (options.skipActionConfirmation === true || options.forceActionExecution === true) return false;
+        if (keroRequireActionConfirmation !== true) return false;
+        return ensureArray(actions).some(shouldDeferKeroActionForUserConfirmation);
+    }
+
+    async function deferKeroActionsForUserConfirmation(actions = [], options = {}) {
+        const list = ensureArray(actions).filter((action) => action && typeof action === 'object');
+        if (!list.length) return { deferred: false, count: 0 };
+        const char = await getCharacterData().catch(() => null);
+        const deferred = [];
+        for (let index = 0; index < list.length; index += 1) {
+            const sourceAction = list[index];
+            const action = makeCloneableData(sourceAction);
+            const actionId = safeString(action.actionJobId || action.jobId || action.stepId || action.planId || `proposal-action-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`);
+            action.stepId = action.stepId || actionId;
+            action.actionJobId = action.actionJobId || actionId;
+            action.jobId = action.jobId || actionId;
+            action._missionId = action._missionId || options.missionId || currentKeroMission?.id || '';
+            action.missionId = action.missionId || options.missionId || currentKeroMission?.id || '';
+            const target = normalizeKeroActionTargetName(action.target);
+            const preview = ['module', 'plugin'].includes(target)
+                ? getWorkTargetActionPreview(action)
+                : await getActionPreview(action, char);
+            const proposal = addKeroProposal({
+                target,
+                type: safeString(action.type),
+                idx: action.idx,
+                preview,
+                action
+            });
+            deferred.push(proposal);
+        }
+        if (currentKeroMission) {
+            const detail = `수정 전 확인이 켜져 있어 저장 액션 ${deferred.length}개를 제안함에 보류했습니다. 승인하면 실행하고 거부하면 저장하지 않습니다.`;
+            const step = {
+                id: `approval-required-${Date.now()}`,
+                missionId: options.missionId || currentKeroMission.id || '',
+                title: '수정 전 확인 대기',
+                target: 'proposal',
+                actionType: 'approval_required',
+                status: 'blocked',
+                detail,
+                updatedAt: new Date().toISOString()
+            };
+            updateKeroMissionState({
+                steps: [...ensureArray(currentKeroMission.steps), step].slice(0, KERO_MISSION_STEP_LIMIT)
+            }, {
+                title: '수정 전 확인 대기',
+                detail,
+                status: 'blocked'
+            });
+        }
+        addKeroWorkstreamEvent(
+            '수정 전 확인 대기',
+            `저장 액션 ${deferred.length}개를 바로 실행하지 않고 제안함에 넣었습니다.`,
+            'blocked',
+            resolveKeroActionProgressOptions(options)
+        );
+        await addBotMessage(`수정 전 확인이 켜져 있어 작업 ${deferred.length}개를 제안함에 넣었어. 승인하면 실행하고, 거부하면 저장하지 않을게.`);
+        openKeroToolsPanel('proposals');
+        return { deferred: true, count: deferred.length };
+    }
+
     function removeKeroProposal(proposalId) {
         pendingKeroProposals = pendingKeroProposals.filter((proposal) => proposal.id !== proposalId);
         renderKeroProposals();
@@ -27536,7 +27887,8 @@ ${currentVars || '{}'}
                     await handleKeroActionRequests([action], {
                         missionId,
                         storageId,
-                        workTargetMode: currentWorkTargetMode
+                        workTargetMode: currentWorkTargetMode,
+                        skipActionConfirmation: true
                     });
                     let job = null;
                     let jobStatus = '';
@@ -30588,7 +30940,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         });
 
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle)').forEach(btn => {
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => {
             btn.classList.toggle('active', btn.id === `kero-open-${which}`);
         });
 
@@ -30605,7 +30957,17 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     function closeKeroToolsDrawer() {
         const drawer = document.getElementById('kero-tools-drawer');
         if (drawer) drawer.style.display = 'none';
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle)').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => btn.classList.remove('active'));
+    }
+
+    function updateKeroActionConfirmToggle() {
+        const btn = document.getElementById('kero-action-confirm-toggle');
+        if (!btn) return;
+        btn.textContent = keroRequireActionConfirmation ? '확인' : '자동';
+        btn.classList.toggle('active', keroRequireActionConfirmation === true);
+        btn.title = keroRequireActionConfirmation
+            ? '수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행'
+            : '자동 실행 ON: 저장 액션을 바로 실행';
     }
 
     function bindKeroToolsEvents() {
@@ -30707,6 +31069,19 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 ? '작업모드 켰어. 이제 수정/검토 요청은 더 엄격하게 처리할게.'
                 : '일상모드로 돌아왔어. 편하게 말 걸어줘, 주인님~');
         }, 'kero-work-mode-toggle');
+        bindSafeClick(document.getElementById('kero-action-confirm-toggle'), async () => {
+            if (keroChatTaskRunning || keroProcessingQueuedInput) {
+                await addBotMessage('지금 처리 중인 작업에는 현재 확인 설정을 유지할게. 끝난 뒤에 다시 바꿔줘.');
+                addKeroWorkstreamEvent('수정 전 확인 전환 보류', '작업 중 확인/자동 전환 요청을 현재 실행 보호를 위해 보류했습니다.', 'queued');
+                return;
+            }
+            keroRequireActionConfirmation = !keroRequireActionConfirmation;
+            await Storage.set(KERO_REQUIRE_ACTION_CONFIRMATION_KEY, keroRequireActionConfirmation);
+            updateKeroActionConfirmToggle();
+            await addBotMessage(keroRequireActionConfirmation
+                ? '수정 전 확인을 켰어. 이제 저장 액션은 제안함에 넣고 승인 후 실행할게.'
+                : '자동 실행을 켰어. 이제 작업모드 저장 액션은 바로 실행할게.');
+        }, 'kero-action-confirm-toggle');
         bindSafeClick(document.getElementById('kero-tools-close'), closeKeroToolsDrawer, 'kero-tools-close');
 
         bindSafeClick(document.getElementById('kero-workstream-clear-btn'), async () => {
@@ -32548,7 +32923,18 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
             removeLoadingMessage();
             const parsed = parseKeroAction(response || '');
-            if (isWorkMode && (!parsed.actions || parsed.actions.length === 0)) {
+            const shouldRunMutationFromRequest = isWorkMode && shouldAttemptKeroMissingActionFallback(modelVisibleUserInput || modelUserInput, { userRequest: modelVisibleUserInput || modelUserInput });
+            if (isWorkMode && parsed.actions?.length && !shouldRunMutationFromRequest && isKeroQuestionOnlyRequest(modelVisibleUserInput || modelUserInput)) {
+                addKeroWorkstreamEvent(
+                    '질문 응답 액션 차단',
+                    '사용자 입력이 질문/검토 성격이라 모델이 만든 저장 액션을 실행하지 않았습니다.',
+                    'warning',
+                    taskProgressOptions
+                );
+                parsed.invalidActions = [...ensureArray(parsed.invalidActions), ...ensureArray(parsed.actions).map((action) => makeCloneableData(action))];
+                parsed.actions = [];
+            }
+            if (isWorkMode && shouldRunMutationFromRequest && (!parsed.actions || parsed.actions.length === 0)) {
                 const fallbackOptions = {
                     userRequest: modelVisibleUserInput,
                     workTargetMode: taskWorkTargetMode,
@@ -32951,7 +33337,8 @@ ${catchDetail}
 ## 일상모드 규칙
 - 주인님과 편하게 대화한다. 밝고 귀엽게, 케로답게 말한다.
 - 사용자가 명시적으로 RisuAI 작업, 수정, 분석, 생성, 삭제, 적용을 요청해도 실제 작업 흐름으로 들어가지 않는다.
-- 작업이 필요한 요청이면 "작업모드로 바꾸면 진행할게"라고 짧게 안내한다.
+- 로어북, 정규식, 트리거, 모듈, 플러그인에 대한 사용법/개념/오류 원인 질문은 일반 지식 범위에서 답한다. 질문이라는 이유만으로 "일상모드라서 못한다"고 거절하지 않는다.
+- 실제 저장, 삭제, 적용, 현재 캐릭터/모듈/플러그인 데이터 분석처럼 작업 데이터 접근이 필요한 요청일 때만 "작업모드로 바꾸면 진행할게"라고 짧게 안내한다.
 - CONTEXT_PAYLOAD, 작업 대상, 액션 프로토콜, 서브에이전트 회의록, 코드 분석 전제를 꺼내지 않는다.
 - @action을 절대 출력하지 않는다.
 - 마크다운 볼드 표기 ** 는 쓰지 않는다.
@@ -33120,6 +33507,7 @@ const workTargetBlock = `## 🎯 현재 작업 대상
             : `## 🌿 현재 모드: 일상모드
 - 평소의 케로답게 밝고 귀엽게 대화한다. 개굴, 슈퍼 바이브 같은 말투를 자연스럽게 쓴다.
 - 사용자가 분석/아이디어/가벼운 질문을 하면 편하게 답한다.
+- 로어북/정규식/트리거/모듈/플러그인 사용법과 일반적인 오류 원인 질문은 답할 수 있다.
 - 실제 캐릭터 데이터 수정, 삭제, 적용 액션은 하지 않는다. 필요하면 "작업모드로 바꾸면 진행할게"라고 안내한다.
 - 일상모드에서는 @action을 출력하지 않는다.`;
 
@@ -33206,6 +33594,8 @@ ${metaBlock}
 사용자가 **명시적으로** 수정/개선/변경 등을 요청할 때만 @action을 출력해야 한다!
 ⚠️ 중요: 케로가 먼저 수정을 제안하거나 강요하지 마! 사용자가 직접 "수정해줘", "개선해줘" 등을 말해야만 @action 출력!
 ⚠️ 질문이나 분석 요청은 @action 없이 설명만 해주면 돼!
+⚠️ 로어북/정규식/트리거/모듈/플러그인이라는 단어가 있어도 "사용법", "왜", "어떻게", "가능?", "확인", "검토", "의견", "문제 원인"처럼 묻는 요청이면 답변만 하고 저장 액션을 만들지 않는다.
+⚠️ 질문 답변을 로어북/정규식/트리거 항목으로 저장하지 않는다. "응답", "정규식 스크립트 사용법" 같은 이름의 항목을 만들어 답변을 넣는 것은 실패다.
 
 ### 🚨 액션 트리거 단어 (사용자가 명시적으로 이런 말을 할 때만 @action 출력!)
 - "수정해줘", "고쳐줘", "바꿔줘", "개선해줘", "변경해줘"
@@ -33237,7 +33627,7 @@ ${metaBlock}
 - @action {"type":"apply","target":"desc"}
 
 ### create (생성)
-- 생성은 사용자가 "만들어줘/추가해줘/생성해줘"라고 명시한 작업이므로 별도 승인 없이 바로 실행된다.
+- 생성은 사용자가 "만들어줘/추가해줘/생성해줘"라고 명시한 작업일 때만 사용한다. 실제 실행은 시스템의 수정 전 확인 설정을 따른다.
 - 단일 생성: @action {"type":"create","target":"lorebook|regex|trigger","payload":{...}}
 - 2~50개 생성: 하나의 create @action 안에 payload 배열로 전부 담아라.
 - 51~1000개 생성: 모델 최대 응답 한계를 피하기 위해 절대 payload 배열을 한 번에 출력하지 말고 bulk_create를 사용한다.
@@ -33254,7 +33644,7 @@ ${metaBlock}
 - raw.githubusercontent.com 브랜치 경로와 GitHub raw refs 경로는 캐시/지연으로 업데이트가 안 보일 수 있으므로 자동 업데이트 기본값으로 추천하지 않는다.
 
         ### update (수정)
-        - 사용자가 명시적으로 수정/업데이트를 요청하면 별도 승인 없이 바로 실행된다.
+        - 사용자가 명시적으로 수정/업데이트를 요청할 때만 사용한다. 실제 실행은 시스템의 수정 전 확인 설정을 따른다.
         - 캐릭터 전체 수정: @action {"type":"update","target":"character","payload":{"name":"새 이름","desc":"디스크립션 전체","firstMessage":"첫 메시지","globalNote":"공통 지시","backgroundHTML":"<style>...</style><div>...</div>","lorebooks":[{"comment":"세계관","key":"world","content":"...","mode":"normal"}],"regexScripts":[{"comment":"상태창 표시","in":"\\\\[status:([^\\\\]]+)\\\\]","out":"<div class=\\"fantasy-status\\">$1</div>","type":"editdisplay"}],"triggers":[]}}
         - character update payload에 없는 필드는 시스템이 보존한다. lorebooks/regexScripts/triggers는 기본적으로 기존 항목 뒤에 추가된다.
         - character update payload에 personality, scenario, 성격, 시나리오 필드를 넣지 않는다. 필요한 성격/상황 정보는 desc에 포함한다.
@@ -33265,7 +33655,7 @@ ${metaBlock}
 - 플러그인 업데이트 작업에서는 //@name을 유지하고 //@version만 올린다. //@update-url이 이미 있으면 보존하며, URL 교체는 사용자가 새 배포 URL을 명시한 경우에만 한다.
 
         ### delete (삭제)
-        - 사용자가 명시적으로 삭제를 요청하면 백업/복구 스냅샷을 남긴 뒤 바로 실행한다. 삭제할 때마다 사용자에게 하나씩 물어보지 말고 필요한 delete @action들을 출력한다.
+        - 사용자가 명시적으로 삭제를 요청할 때만 사용한다. 실제 실행은 시스템의 수정 전 확인 설정과 백업/복구 스냅샷 절차를 따른다.
         - 예외: 모듈 삭제와 플러그인 삭제는 중요 작업이므로 시스템이 최종 확인을 한 번 표시한다.
         - 로어북/정규식/트리거 여러 항목 삭제는 가능하면 하나의 @action에 idx 배열로 묶는다. 예: @action {"type":"delete","target":"lorebook","idx":[0,2,5]}
         - 같은 작업 응답 안에 삭제가 여러 개 있으면 delete @action들을 연속으로 출력하거나 delete 전용 JSON 배열로 묶는다. 시스템은 같은 대상의 연속 삭제를 저장 1회로 자동 병합한다.
@@ -33284,8 +33674,8 @@ ${metaBlock}
 - 모듈/플러그인의 알 수 없는 필드는 보존하고, 요청받은 필드만 작게 수정한다.
 - 모듈 lowLevelAccess, cjs, trigger, regex, 플러그인 script/enabled/allowedIPC/customLink/addProvider/registerMCP는 위험 필드라 변경 이유와 위험을 짧게 설명한다.
 - 장문 plugin/module create/update payload가 모델 응답 한계를 넘길 것 같으면 @action을 강행하지 않는다. 먼저 단계 계획을 답하고, 다음 응답에서 작은 블록 단위로 이어서 작업한다.
-- 사용자가 작업을 요청하면 설명만 하지 말고 반드시 @action 출력! 단, 장문 plugin/module처럼 한 번의 payload가 모델 응답 한계를 넘길 위험이 큰 경우에는 단계 계획을 먼저 답하고 다음 단계에서 작은 적용 단위의 @action으로 진행한다.
-- 질문만 하는 경우에만 @action 생략.
+- 사용자가 저장/수정/생성/삭제/적용을 명확히 요청하면 설명만 하지 말고 @action을 출력한다. 단, 장문 plugin/module처럼 한 번의 payload가 모델 응답 한계를 넘길 위험이 큰 경우에는 단계 계획을 먼저 답하고 다음 단계에서 작은 적용 단위의 @action으로 진행한다.
+- 질문, 사용법 문의, 원인 분석, 검토/의견 요청은 @action을 생략하고 답변만 한다.
 
 ### 🔄 복합 작업 자동 분해 규칙 (중요!)
 - 사용자가 여러 작업을 한 번에 말하면 케로가 알아서 작업 단위로 분해하고 순서대로 실행한다. 사용자가 "1번부터 해", "다음은 이거 해"처럼 AI 편의에 맞춰 다시 쪼개 지시하게 만들지 않는다.
@@ -40547,7 +40937,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.33 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.34 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -43305,6 +43695,28 @@ function isKeroImproveLikeRequest(text = '') {
     return /(수정|고쳐|개선|다듬|보완|업데이트|최신화|바꿔|변경|정리|리메이크|improve|fix|edit|revise|update|rewrite)/i.test(safeString(text));
 }
 
+function hasKeroExplicitMutationIntent(text = '') {
+    const source = safeString(text);
+    if (!source.trim()) return false;
+    if (isKeroNoApplyPlanningOnlyRequest(source)) return false;
+    return /(수정해|수정\s*해|고쳐줘|고쳐\s*줘|고쳐봐|고쳐\s*봐|개선해|개선\s*해|다듬어줘|보완해|업데이트해|최신화해|바꿔줘|변경해|정리해줘|정리\s*해|리메이크해|추가해|삭제해|만들어줘|만들어\s*줘|생성해|작성해|제작해|구성해|세팅해|완성해|저장해|적용해|반영해|실행해|진행해|작업\s*진행|create|add|generate|make|build|improve|enhance|update|patch|fix|edit|revise|rewrite|delete|remove|apply|save)/i.test(source);
+}
+
+function isKeroQuestionOnlyRequest(text = '') {
+    const source = safeString(text);
+    if (!source.trim()) return false;
+    if (hasKeroExplicitMutationIntent(source)) return false;
+    if (isKeroNoApplyPlanningOnlyRequest(source)) return true;
+    return /(왜|원인|무슨|뭐가|무엇|어떻게|가능|될까|인가|확인|분석|검토|문제|오류|에러|버그|사용법|방법|의견|생각|알려줘|설명해|체크해|봐줘|봐|what|why|how|can|could|should)/i.test(source);
+}
+
+function shouldAttemptKeroMissingActionFallback(userText = '', options = {}) {
+    const request = safeString(options.userRequest || userText).trim();
+    if (!request) return false;
+    if (isKeroQuestionOnlyRequest(request)) return false;
+    return hasKeroExplicitMutationIntent(request) || isKeroGatewayFullCharacterBuildRequest(request);
+}
+
 function hasKeroGatewayLargeCharacterLorebookSignal(text = '') {
     const source = safeString(text);
     if (!/(캐릭터|봇|bot|시뮬봇|sim|이\s*봇|this\s*bot)/i.test(source)) return false;
@@ -43381,6 +43793,7 @@ function shouldKeroImproveSelectedPartsFromText(text = '') {
 
 function buildKeroMissingImproveFallbackResponse(userText, assistantText = '', options = {}) {
     const request = safeString(options.userRequest || userText).trim();
+    if (!shouldAttemptKeroMissingActionFallback(request, options)) return '';
     if (!request || !isKeroImproveLikeRequest(request)) return '';
     if (isKeroGatewayFullCharacterBuildRequest(request)) return '';
     if (/적용하지\s*마|저장하지\s*마|제안만|보기만|예시만/i.test(request)) return '';
@@ -43414,8 +43827,7 @@ function buildKeroMissingImproveFallbackResponse(userText, assistantText = '', o
         return action;
     });
     const actionText = actions.length === 1 ? JSON.stringify(actions[0]) : JSON.stringify(actions);
-    const responseHint = safeString(assistantText).slice(0, 260).replace(/\s+/g, ' ').trim();
-    return `모델 응답에 실행 가능한 @action이 없어, 말만 하고 끝나지 않도록 수정 작업을 로컬 실행 액션으로 보강합니다.${responseHint ? `\n응답 요약: ${responseHint}` : ''}\n@action ${actionText}`;
+    return `모델 응답에 실행 가능한 @action이 없어, 말만 하고 끝나지 않도록 수정 작업을 로컬 실행 액션으로 보강합니다.\n@action ${actionText}`;
 }
 
 function isKeroGatewayFullCharacterBuildRequest(text = '') {
@@ -43937,6 +44349,7 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
     const request = safeString(options.userRequest || userText).trim();
     const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     if (['module', 'plugin'].includes(fallbackMode)) return '';
+    if (!shouldAttemptKeroMissingActionFallback(request, options)) return '';
     const fullBuild = isKeroGatewayFullCharacterBuildRequest(request);
     if (!request || (!isKeroCreateLikeRequest(request) && !fullBuild)) return '';
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
@@ -43949,12 +44362,11 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
         reasonText: '모델 응답에 실행 액션이 없어 저장을 놓치지 않도록'
     });
     if (!fallback) return '';
-    const responseHint = safeString(assistantText).slice(0, 260).replace(/\s+/g, ' ').trim();
-    return `모델 응답에 실행 가능한 @action이 없어 저장 작업을 놓치지 않도록 로컬 실행 액션으로 보강합니다.${responseHint ? `\n응답 요약: ${responseHint}` : ''}\n${fallback}`;
+    return `모델 응답에 실행 가능한 @action이 없어 저장 작업을 놓치지 않도록 로컬 실행 액션으로 보강합니다.\n${fallback}`;
 }
 
 function isKeroNoApplyPlanningOnlyRequest(text = '') {
-    return /(적용하지\s*마|저장하지\s*마|제안만|보기만|예시만|계획만|분석만|검토만|먼저\s*계획|일단\s*계획|plan\s*only|no\s*(apply|save))/i.test(safeString(text));
+    return /(적용하지\s*(?:마|말고)|저장하지\s*(?:마|말고)|반영하지\s*(?:마|말고)|제안만|보기만|예시만|설명만|계획만|분석만|검토만|먼저\s*계획|일단\s*계획|plan\s*only|no\s*(apply|save))/i.test(safeString(text));
 }
 
 function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
@@ -43966,6 +44378,7 @@ function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
     if (['module', 'plugin'].includes(targetMode)) return false;
     if (options.gatewayRecovery === true || options.disableLargeRequestPreplan === true) return false;
     if (isKeroNoApplyPlanningOnlyRequest(request)) return false;
+    if (isKeroQuestionOnlyRequest(request)) return false;
     if (!isKeroCreateLikeRequest(request) && !isKeroGatewayFullCharacterBuildRequest(request)) return false;
     if (isKeroGatewayFullCharacterBuildRequest(request)) return true;
     return inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false })
@@ -43989,10 +44402,7 @@ function isKeroWorkTargetMutationRequest(text = '', mode = currentWorkTargetMode
     if (!['module', 'plugin'].includes(normalizedMode)) return false;
     if (!source.trim()) return false;
     if (/(적용하지\s*마|저장하지\s*마|제안만|보기만|예시만|분석만|검토만)/i.test(source)) return false;
-    const mutationSignal = /(만들|생성|추가|작성|제작|구성|수정|고쳐|개선|보완|업데이트|최신화|바꿔|변경|정리|리메이크|저장|적용|create|add|make|generate|fix|edit|update|patch|rewrite)/i.test(source);
-    const questionOnly = /(왜|원인|무슨|어떻게|가능|될까|인가|확인|분석|검토|문제|오류|에러|버그)[^\n]{0,40}(설명|알려|파악|체크|봐)/i.test(source)
-        && !/(수정해|고쳐줘|개선해|적용|저장|바꿔줘|변경해|만들어|생성|추가)/i.test(source);
-    return mutationSignal && !questionOnly;
+    return hasKeroExplicitMutationIntent(source) && !isKeroQuestionOnlyRequest(source);
 }
 
 function hasValidWorkTargetRecoveryAction(actions = [], mode = currentWorkTargetMode) {
@@ -44004,10 +44414,55 @@ function hasValidWorkTargetRecoveryAction(actions = [], mode = currentWorkTarget
         if (action.type === 'delete') return true;
         const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
         if (normalizedMode === 'plugin') {
-            return Boolean(payload.script || payload.displayName || payload.name || action.name || action.pluginName);
+            return Boolean(payload.script || payload.displayName || payload.name || Object.prototype.hasOwnProperty.call(payload, 'enabled') || payload.allowedIPC || payload.customLink || payload.arguments);
         }
-        return Boolean(payload.cjs || payload.name || payload.description || payload.lorebook || payload.regex || payload.trigger || payload.id || action.id || action.moduleId);
+        return Boolean(payload.cjs || payload.name || payload.description || payload.namespace || payload.lorebook || payload.regex || payload.trigger || payload.assets || payload.backgroundEmbedding || payload.customModuleToggle || Object.prototype.hasOwnProperty.call(payload, 'hideIcon') || Object.prototype.hasOwnProperty.call(payload, 'lowLevelAccess'));
     });
+}
+
+function buildKeroLocalModuleLineRemovalRecoveryAction(userText = '', assistantText = '', workTargetContext = null) {
+    const source = `${safeString(userText)}\n${safeString(assistantText)}`;
+    if (!/gse-route-label|루트\s*:/i.test(source)) return null;
+    const module = workTargetContext?.module || null;
+    const triggers = ensureArray(module?.trigger);
+    if (!triggers.length) return null;
+    let changed = false;
+    const nextTriggers = triggers.map((trigger) => {
+        const next = makeCloneableData(trigger || {});
+        delete next.index;
+        const updateCode = (code) => {
+            const original = safeString(code);
+            if (!/gse-route-label/.test(original)) return original;
+            const replaced = original.replace(/^.*gse-route-label.*(?:\r?\n|$)/gm, '');
+            if (replaced !== original) changed = true;
+            return replaced;
+        };
+        if (Array.isArray(next.effect)) {
+            next.effect = next.effect.map((effect) => {
+                const nextEffect = makeCloneableData(effect || {});
+                if (Object.prototype.hasOwnProperty.call(nextEffect, 'code')) {
+                    nextEffect.code = updateCode(nextEffect.code);
+                }
+                return nextEffect;
+            });
+        }
+        if (Object.prototype.hasOwnProperty.call(next, 'code')) {
+            next.code = updateCode(next.code);
+        }
+        return next;
+    });
+    if (!changed) return null;
+    return {
+        type: 'update',
+        target: 'module',
+        id: workTargetContext?.targetId || module?.id || manualSelectedModuleId,
+        payload: {
+            id: workTargetContext?.targetId || module?.id || manualSelectedModuleId,
+            trigger: nextTriggers
+        },
+        reason: 'missing_work_target_action_local_line_removal',
+        stepId: `local-module-line-removal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    };
 }
 
 async function buildKeroMissingWorkTargetActionRecoveryResponse(userText, assistantText = '', options = {}) {
@@ -44025,6 +44480,13 @@ async function buildKeroMissingWorkTargetActionRecoveryResponse(userText, assist
         }
     }
     const selected = workTargetContext?.selected === true;
+    if (mode === 'module' && selected) {
+        const localAction = buildKeroLocalModuleLineRemovalRecoveryAction(request, assistantText, workTargetContext);
+        if (localAction && hasValidWorkTargetRecoveryAction([localAction], mode)) {
+            addKeroWorkstreamEvent('모듈 액션 로컬 복구', '명확한 trigger 코드 한 줄 제거를 module update 액션으로 변환했습니다.', 'action', progressOptions);
+            return `모듈 응답을 저장 액션으로 로컬 복구했습니다.\n@action ${JSON.stringify(localAction)}`;
+        }
+    }
     const systemPrompt = `너는 RisuAI ${mode === 'plugin' ? '플러그인' : '모듈'} 작업 복구기다.
 직전 케로 응답이 작업 완료처럼 보였지만 실행 가능한 @action이 없었다.
 이 응답을 실제 저장 가능한 @action으로 복구하라.
@@ -51791,7 +52253,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.33",
+        name: "SuperVibeBot v1.5.34",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -51800,7 +52262,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.33 Settings",
+        "SuperVibeBot v1.5.34 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -51843,7 +52305,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.33");
+        Logger.info("SuperVibeBot v1.5.34");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
