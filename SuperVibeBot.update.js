@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.35
-//@version 1.5.35
+//@display-name 🐸 SuperVibeBot v1.5.36
+//@version 1.5.36
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.35는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.36는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.35 Release Notes
+ * SuperVibeBot v1.5.36 Release Notes
+ * - v1.5.36: adds Asset Studio quick-start controls for Wellspring selection, default preset recovery, and common emotion/standing image preset creation
+ * - v1.5.36: shows the active image profile/preset connection summary before generation
+ * - v1.5.36: lets Asset Studio prompt for a missing Wellspring ws-key when enabling the Wellspring profile
  * - v1.5.35: adds a Wellspring NAI image provider preset for https://wellspring.encrypt.gay/v1/images/nai/generate-image
  * - v1.5.35: verifies Wellspring ws-key/profile access through /v1/images/profile instead of a generic HEAD check
  * - v1.5.35: treats Wellspring NAI and generic NAI presets as compatible in Asset Studio generation
@@ -13013,7 +13016,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.35',
+            '//@version 1.5.36',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -34937,6 +34940,10 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             apiKey: existing?.apiKey || "",
             endpoint: existing?.endpoint || WELLSPRING_IMAGE_API_ENDPOINT
         });
+        if (!profile.apiKey) {
+            const key = safeString(prompt('Wellspring ws-key를 입력하세요. 비워두면 나중에 설정 > 이미지 API 설정에서 입력할 수 있습니다.', '')).trim();
+            if (key) profile.apiKey = key;
+        }
         upsertImageApiProfile(profile);
         await saveImageApiSettings();
         syncImageApiSettingsToUI(profile);
@@ -41101,7 +41108,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.35 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.36 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -49635,6 +49642,24 @@ async function svbGenerateVibeLogHtmlWithAI(chats, userRequest, pastedText, meta
 const SVB_ASSET_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'svg']);
 const SVB_ASSET_EXTRA_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif', 'svg', 'mp4', 'webm', 'mp3', 'ogg', 'wav', 'm4a', 'ttf', 'otf', 'woff', 'woff2', 'css', 'json', 'txt']);
 const SVB_EMOTION_PRESETS = ['기본', '미소', '웃음', '슬픔', '분노', '당황', '놀람', '수줍음', '울음', '무표정'];
+const SVB_ASSET_QUICK_IMAGE_PRESETS = Object.freeze({
+    "core-emotions": {
+        label: "감정 8종",
+        name: "감정 기본 8종",
+        provider: "wellspring-nai",
+        prompt: "best quality, character sprite, {{character}}, {{emotion}}, standing pose, clean composition",
+        negative: "text, logo, watermark, low quality, bad anatomy, extra fingers, cropped face",
+        emotions: ["기본", "미소", "웃음", "슬픔", "분노", "놀람", "당황", "수줍음"]
+    },
+    "core-standing": {
+        label: "스탠딩 5종",
+        name: "스탠딩 표정 5종",
+        provider: "wellspring-nai",
+        prompt: "best quality, full body character standing sprite, {{character}}, {{emotion}}, clean silhouette",
+        negative: "text, logo, watermark, low quality, bad anatomy, extra fingers, cut off, cropped",
+        emotions: ["기본", "미소", "슬픔", "분노", "놀람"]
+    }
+});
 
 function svbEscapeRegExp(text) {
     return safeString(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -50016,6 +50041,7 @@ async function openAssetStudio() {
         if (presetPath && !presetPath.value) presetPath.value = preset.path || '';
         if (presetMethod && !presetMethod.value) presetMethod.value = preset.method || 'POST';
         if (presetHeaders && !presetHeaders.value) presetHeaders.value = preset.headersTemplate || '';
+        renderGenerationConnectionSummary();
         renderGenerationPartList();
     }
 
@@ -50053,7 +50079,137 @@ async function openAssetStudio() {
             ? `선택한 연결 프로필(${getImageApiProviderLabel(profile.provider)})과 프리셋(${getImageApiProviderLabel(normalized.provider)}) 공급자가 다릅니다. 프리셋 기준으로 호출합니다.`
             : `${normalized.name} 프리셋을 적용했습니다.`;
         renderGenerationPartList();
+        renderGenerationConnectionSummary();
         setStatus(warning, providersCompatible ? 'info' : 'error');
+    }
+
+    function renderGenerationConnectionSummary() {
+        const summary = document.getElementById('svb-as-gen-connection-summary');
+        if (!summary) return;
+        const profile = normalizeImageApiProfile(getSelectedImageProfile());
+        const preset = normalizeImageGenerationPreset(getSelectedImagePreset());
+        const runtimeProvider = resolveImageGenerationProvider(profile.provider, preset.provider);
+        const parts = normalizeImagePresetParts(preset);
+        const providerLabel = getImageApiProviderLabel(runtimeProvider);
+        const remoteNote = isWellspringImageProvider(runtimeProvider)
+            ? 'Wellspring 프로필의 체크포인트·LoRA·워크플로우를 사용'
+            : `${providerLabel} 호출`;
+        summary.innerHTML = `
+            <strong>${escapeHtml(profile.name)}</strong>
+            <span>${escapeHtml(preset.name)} · 파트 ${parts.length}개 · ${escapeHtml(remoteNote)}</span>
+        `;
+    }
+
+    function preserveGenerationPresetOutputs(nextPreset, previousPreset) {
+        const previousParts = normalizeImagePresetParts(previousPreset);
+        const previousMap = new Map(previousParts.map((part) => {
+            const key = [
+                safeString(part.assetType),
+                safeString(part.emotionTarget || part.slotName || part.label).toLowerCase()
+            ].join('|');
+            return [key, ensureArray(part.outputs)];
+        }));
+        nextPreset.parts = ensureArray(nextPreset.parts).map((part) => {
+            const key = [
+                safeString(part.assetType),
+                safeString(part.emotionTarget || part.slotName || part.label).toLowerCase()
+            ].join('|');
+            const outputs = previousMap.get(key);
+            return outputs?.length ? { ...part, outputs } : part;
+        });
+        return nextPreset;
+    }
+
+    function buildQuickGenerationPreset(kind) {
+        const def = SVB_ASSET_QUICK_IMAGE_PRESETS[kind] || SVB_ASSET_QUICK_IMAGE_PRESETS["core-emotions"];
+        const profile = normalizeImageApiProfile(getSelectedImageProfile());
+        const provider = isWellspringImageProvider(profile.provider) ? "wellspring-nai" : (profile.provider || def.provider || "nai-compatible");
+        const presetId = `quick-${kind}`;
+        const parts = ensureArray(def.emotions).map((emotion, index) => normalizeImagePresetPart({
+            id: `${presetId}-${svbHashText(emotion).slice(0, 8)}`,
+            label: emotion,
+            assetType: "emotion",
+            emotionTarget: emotion,
+            prompt: def.prompt,
+            negative: def.negative,
+            ratioId: "13:19",
+            steps: 26,
+            count: 1,
+            outputs: []
+        }, index, { prompt: def.prompt, negative: def.negative, ratioId: "13:19", steps: 26 }));
+        const previous = imageGenerationPresets.find((item) => item.id === presetId);
+        return preserveGenerationPresetOutputs(normalizeImageGenerationPreset({
+            id: presetId,
+            name: def.name,
+            provider,
+            model: "",
+            prompt: def.prompt,
+            negative: def.negative,
+            ratioId: "13:19",
+            steps: 26,
+            workflow: "",
+            requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
+            responseParser: "auto",
+            jsonPath: "",
+            allowEmptyParts: true,
+            parts,
+            notes: "Asset Studio 빠른 시작 프리셋입니다. 파트별 프롬프트를 수정한 뒤 프리셋 저장을 누르면 그대로 유지됩니다."
+        }), previous);
+    }
+
+    async function restoreDefaultGenerationPresetsFromStudio() {
+        let added = 0;
+        for (const preset of DEFAULT_IMAGE_GENERATION_PRESETS) {
+            if (imageGenerationPresets.some((item) => item.id === preset.id)) continue;
+            imageGenerationPresets.push(normalizeImageGenerationPreset(preset));
+            added += 1;
+        }
+        await saveImageGenerationPresets();
+        renderGenerationControls();
+        renderGenerationConnectionSummary();
+        setStatus(added ? `기본 이미지 프리셋 ${added}개를 복구했습니다.` : '복구할 기본 프리셋이 없습니다.', added ? 'success' : 'info');
+    }
+
+    async function activateWellspringFromStudio() {
+        const existing = imageApiProfiles.find((item) => (
+            item.id === WELLSPRING_IMAGE_API_PROFILE_ID
+            || isWellspringImageProvider(item.provider)
+            || safeString(item.endpoint).includes("wellspring.encrypt.gay")
+        ));
+        const profile = createDefaultImageApiProfile({
+            ...WELLSPRING_IMAGE_API_PROFILE,
+            id: existing?.id || WELLSPRING_IMAGE_API_PROFILE_ID,
+            apiKey: existing?.apiKey || "",
+            endpoint: existing?.endpoint || WELLSPRING_IMAGE_API_ENDPOINT
+        });
+        upsertImageApiProfile(profile);
+        await saveImageApiSettings();
+        const preset = imageGenerationPresets.find((item) => item.id === WELLSPRING_IMAGE_GENERATION_PRESET_ID)
+            || upsertImageGenerationPreset(DEFAULT_IMAGE_GENERATION_PRESETS.find((item) => item.id === WELLSPRING_IMAGE_GENERATION_PRESET_ID));
+        activeImageApiProfileId = profile.id;
+        activeImageGenerationPresetId = preset.id;
+        await saveImageGenerationPresets();
+        renderGenerationControls();
+        const profileSelect = document.getElementById('svb-as-gen-profile');
+        const presetSelect = document.getElementById('svb-as-gen-preset');
+        if (profileSelect) profileSelect.value = profile.id;
+        if (presetSelect) presetSelect.value = preset.id;
+        applyGenerationPresetToUI(preset);
+        renderGenerationConnectionSummary();
+        setStatus(profile.apiKey ? 'Wellspring 프로필과 기본 프리셋을 선택했습니다.' : 'Wellspring 프로필과 기본 프리셋을 선택했습니다. ws-key는 설정 > 이미지 API 설정에서 입력하세요.', 'success');
+    }
+
+    async function applyQuickGenerationPreset(kind) {
+        const preset = buildQuickGenerationPreset(kind);
+        const saved = upsertImageGenerationPreset(preset);
+        activeImageGenerationPresetId = saved.id;
+        await saveImageGenerationPresets();
+        renderGenerationControls();
+        const select = document.getElementById('svb-as-gen-preset');
+        if (select) select.value = saved.id;
+        applyGenerationPresetToUI(saved);
+        renderGenerationConnectionSummary();
+        setStatus(`${saved.name} 프리셋을 준비했습니다. 파트 프롬프트를 확인한 뒤 선택 생성 또는 전체 생성을 누르세요.`, 'success');
     }
 
     function readGenerationPartsFromUI(base = getSelectedImagePreset()) {
@@ -51064,6 +51220,10 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-lightbox-close{position:absolute;top:16px;right:16px;width:36px;height:36px;border:0;border-radius:8px;background:#fff;color:#111827;font-size:22px;cursor:pointer}
             #svb-asset-studio-window .svb-as-lightbox-caption{color:#fff;font-size:12px;text-align:center;word-break:break-all;max-width:80vw;line-height:1.5}
             #svb-asset-studio-window .svb-as-preset-row{display:flex;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-quick-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+            #svb-asset-studio-window .svb-as-connection-summary{border:1px solid #dbeafe;border-radius:9px;background:#eff6ff;color:#1e3a8a;padding:9px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+            #svb-asset-studio-window .svb-as-connection-summary strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-connection-summary span{font-size:11px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             #svb-asset-studio-window .svb-as-generate-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
             #svb-asset-studio-window .svb-as-generate-actions.compact{grid-template-columns:auto auto auto;align-items:center}
             #svb-asset-studio-window .svb-as-preset-actions{display:flex;gap:6px;flex-wrap:wrap}
@@ -51103,6 +51263,7 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-actions{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}
                 #svb-asset-studio-window .svb-as-body{display:flex}
                 #svb-asset-studio-window .svb-as-grid,#svb-asset-studio-window .svb-as-grid.three{grid-template-columns:1fr}
+                #svb-asset-studio-window .svb-as-quick-row{grid-template-columns:1fr 1fr}
                 #svb-asset-studio-window .svb-as-generate-actions{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-generate-actions.compact{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-batch-head{align-items:stretch;flex-direction:column}
@@ -51184,6 +51345,15 @@ async function openAssetStudio() {
                         <div class="svb-as-panel" id="svb-as-generate-panel" style="display:none">
                             <div class="svb-as-form">
                                 <div class="svb-as-form-title">이미지 생성</div>
+                                <div class="svb-as-quick-row">
+                                    <button class="svb-as-btn primary" id="svb-as-use-wellspring" type="button">Wellspring 선택</button>
+                                    ${Object.entries(SVB_ASSET_QUICK_IMAGE_PRESETS).map(([key, preset]) => `<button class="svb-as-btn" data-quick-image-preset="${escapeHtml(key)}" type="button">${escapeHtml(preset.label)}</button>`).join('')}
+                                    <button class="svb-as-btn" id="svb-as-restore-default-presets" type="button">기본 복구</button>
+                                </div>
+                                <div class="svb-as-connection-summary" id="svb-as-gen-connection-summary">
+                                    <strong>연결을 불러오는 중...</strong>
+                                    <span>프로필과 프리셋을 선택하세요.</span>
+                                </div>
                                 <div class="svb-as-grid">
                                     <select class="svb-as-input" id="svb-as-gen-profile"></select>
                                     <select class="svb-as-input" id="svb-as-gen-preset"></select>
@@ -51288,6 +51458,7 @@ async function openAssetStudio() {
         const preset = getSelectedImagePreset();
         if (ratio) ratio.value = preset.ratioId || profile.ratioId || '1:1';
         if (steps) steps.value = String(preset.steps || profile.steps || 26);
+        renderGenerationConnectionSummary();
         setStatus(`${profile.name} 프로필을 선택했습니다.`, 'info');
     });
     addLocal(document.getElementById('svb-as-gen-preset'), 'change', async event => {
@@ -51303,6 +51474,11 @@ async function openAssetStudio() {
     addLocal(document.getElementById('svb-as-preset-import-file'), 'change', async event => {
         await importGenerationPresetJson(event.target.files?.[0]);
         event.target.value = '';
+    });
+    addLocal(document.getElementById('svb-as-use-wellspring'), 'click', activateWellspringFromStudio);
+    addLocal(document.getElementById('svb-as-restore-default-presets'), 'click', restoreDefaultGenerationPresetsFromStudio);
+    studioWindow.querySelectorAll('[data-quick-image-preset]').forEach(btn => {
+        addLocal(btn, 'click', () => applyQuickGenerationPreset(btn.dataset.quickImagePreset));
     });
     addLocal(document.getElementById('svb-as-part-add'), 'click', addGenerationPresetPart);
     addLocal(document.getElementById('svb-as-gen-selected'), 'click', () => generatePresetPartsFromStudio(true));
@@ -52418,7 +52594,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.35",
+        name: "SuperVibeBot v1.5.36",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -52427,7 +52603,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.35 Settings",
+        "SuperVibeBot v1.5.36 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -52470,7 +52646,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.35");
+        Logger.info("SuperVibeBot v1.5.36");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

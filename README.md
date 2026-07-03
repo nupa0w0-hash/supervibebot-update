@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.35`
+Latest version: `1.5.36`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.36
+
+- Adds Asset Studio quick-start controls for Wellspring selection, default preset recovery, and common emotion/standing image presets.
+- Shows the active image profile and preset summary before generation.
+- Prompts for a missing Wellspring ws-key from Asset Studio when enabling Wellspring.
 
 ## 1.5.35
 
