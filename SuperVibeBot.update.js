@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.53
-//@version 1.5.53
+//@display-name 🐸 SuperVibeBot v1.5.54
+//@version 1.5.54
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.53는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.54는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,10 +164,12 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.53 Release Notes
+ * SuperVibeBot v1.5.54 Release Notes
+ * - v1.5.54: removes local duplicate/fingerprint gates from lorebook, regex, trigger, and character patch append saves
+ * - v1.5.54: stops pruning stored action/bulk jobs and bulk edit state by local expiration time
  * - v1.5.53: raises auto/unknown/router output fallbacks to 128K and removes lingering low default caps
  * - v1.5.53: keeps enabled sub-agents parallel across bulk chunks instead of shrinking to one on large/mobile payloads
- * - v1.5.53: preserves large bulk counts with resume-from-completed ranges and treats duplicate generated lorebook items as retryable failures, not completed work
+ * - v1.5.53: preserves large bulk counts with resume-from-completed ranges
  * - v1.5.52: removes 8K hard caps from Kero preplan/recovery calls so model-specific output budgets are used
  * - v1.5.52: treats bulk_create item limits as split budgets, not content-shrink caps; rich lorebook entries keep larger model budgets and split into more calls when needed
  * - v1.5.52: prevents "요약 없이/no summary" from being misread as compression, and preserves explicit sub-agent requests such as "노예" into bulk chunk generation
@@ -3139,25 +3141,20 @@ const KERO_ASSET_STYLE_PRESETS = Object.freeze({
 const KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT = 3;
 const KERO_BULK_NO_PROGRESS_RETRY_LIMIT = 3;
 const KERO_GATEWAY_RECOVERY_USER_TEXT_LIMIT = 4000;
-const KERO_BULK_EDIT_STATE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KERO_WORK_MODEL_CALL_TIMEOUT_MS = 20 * 60 * 1000;
 const KERO_BULK_CHUNK_MODEL_TIMEOUT_MS = 15 * 60 * 1000;
 const KERO_ACTION_EXECUTION_TIMEOUT_MS = 90 * 60 * 1000;
 const KERO_HEARTBEAT_WORKSTREAM_INTERVAL_MS = 5 * 60 * 1000;
-const KERO_HEARTBEAT_SUPPRESSION_TTL_MS = 10 * 60 * 1000;
 const KERO_ACTION_JOB_PERSIST_RETRY_DELAYS = [0, 250, 900];
 const KERO_MISSION_PERSIST_RETRY_DELAYS = KERO_ACTION_JOB_PERSIST_RETRY_DELAYS;
 const KERO_WAKE_ACTION_ZOMBIE_MS = KERO_ACTION_EXECUTION_TIMEOUT_MS + 5 * 60 * 1000;
 const KERO_ACTION_JOB_STORAGE_LIMIT = 200;
-const KERO_ACTION_JOB_DONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KERO_ACTION_JOB_DETAIL_CHAR_LIMIT = 1200;
 const KERO_BULK_JOB_STORAGE_LIMIT = 80;
-const KERO_BULK_JOB_DONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KERO_BULK_JOB_CHUNK_LIMIT = 20000;
 const KERO_BULK_JOB_RANGE_LIMIT = 20000;
 const KERO_BULK_JOB_TEXT_CHAR_LIMIT = 800;
 const KERO_RUNTIME_WAKE_RECOVERY_DEBOUNCE_MS = 350;
-const KERO_RELEASED_ZOMBIE_JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const KERO_BULK_AUTO_RESUME_DELAY_MS = 1500;
 const KERO_QUEUE_DRAIN_AFTER_TIMEOUT_DELAY_MS = 1500;
 const KERO_BULK_AUTO_RESUME_MAX_ROUNDS = 100000;
@@ -3835,14 +3832,8 @@ function sanitizeKeroActionJobForStorage(job = {}) {
 }
 
 function pruneKeroActionJobsForStorage(jobs = {}) {
-    const now = Date.now();
     const entries = Object.entries(jobs || {})
         .map(([id, job]) => [id, sanitizeKeroActionJobForStorage({ ...(job || {}), id: job?.id || id })])
-        .filter(([, job]) => {
-            if (isKeroActiveStoredJob(job)) return true;
-            const timestamp = getKeroJobTimestampMs(job);
-            return !timestamp || now - timestamp <= KERO_ACTION_JOB_DONE_TTL_MS;
-        })
         .sort((a, b) => {
             const aActive = isKeroActiveStoredJob(a[1]) ? 1 : 0;
             const bActive = isKeroActiveStoredJob(b[1]) ? 1 : 0;
@@ -4005,14 +3996,8 @@ function sanitizeKeroBulkJobForStorage(job = {}) {
 }
 
 function pruneKeroBulkCreateJobsForStorage(jobs = {}) {
-    const now = Date.now();
     const entries = Object.entries(jobs || {})
         .map(([id, job]) => [id, sanitizeKeroBulkJobForStorage({ ...(job || {}), id: job?.id || id })])
-        .filter(([, job]) => {
-            if (isKeroActiveStoredJob(job)) return true;
-            const timestamp = getKeroJobTimestampMs(job);
-            return !timestamp || now - timestamp <= KERO_BULK_JOB_DONE_TTL_MS;
-        })
         .sort((a, b) => {
             const aActive = isKeroActiveStoredJob(a[1]) ? 1 : 0;
             const bActive = isKeroActiveStoredJob(b[1]) ? 1 : 0;
@@ -4038,7 +4023,7 @@ function normalizeKeroBulkEditStateRecord(target, state) {
     if (!isPersistableKeroBulkEditTarget(target) || !state || typeof state !== 'object') return null;
     const createdAt = Number(state.createdAt || Date.now());
     const updatedAt = Number(state.updatedAt || createdAt);
-    if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > KERO_BULK_EDIT_STATE_TTL_MS) return null;
+    if (!Number.isFinite(updatedAt)) return null;
     const original = Array.isArray(state.original) ? state.original : [];
     const result = Array.isArray(state.result) ? state.result : [];
     if (!original.length && !result.length) return null;
@@ -8950,33 +8935,19 @@ const keroPendingApply = {
     vars: false
 };
 
-function pruneKeroSuppressedHeartbeatJobs(now = Date.now()) {
-    try {
-        keroSuppressedHeartbeatJobMeta.forEach((meta, jobId) => {
-            const expiresAt = Number(meta?.expiresAt || 0);
-            if (expiresAt && now > expiresAt) {
-                keroSuppressedHeartbeatJobMeta.delete(jobId);
-            }
-        });
-    } catch (_) {}
-}
-
-function suppressKeroHeartbeatForJob(jobId, reason = 'settled', ttlMs = KERO_HEARTBEAT_SUPPRESSION_TTL_MS) {
+function suppressKeroHeartbeatForJob(jobId, reason = 'settled') {
     const id = safeString(jobId || '');
     if (!id) return;
     const now = Date.now();
-    pruneKeroSuppressedHeartbeatJobs(now);
     keroSuppressedHeartbeatJobMeta.set(id, {
         reason: safeString(reason || 'settled'),
-        at: now,
-        expiresAt: now + Math.max(30000, Number(ttlMs) || KERO_HEARTBEAT_SUPPRESSION_TTL_MS)
+        at: now
     });
 }
 
 function isKeroHeartbeatSuppressed(jobId) {
     const id = safeString(jobId || '');
     if (!id) return false;
-    pruneKeroSuppressedHeartbeatJobs();
     return keroSuppressedHeartbeatJobMeta.has(id);
 }
 
@@ -13202,7 +13173,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.53',
+            '//@version 1.5.54',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15124,10 +15095,10 @@ function isKeroSubAgentWaitLikelyZombie(now = Date.now()) {
     }
 }
 
-function pruneKeroReleasedZombieJobIds(now = Date.now()) {
+function pruneKeroReleasedZombieJobIds() {
     for (const [jobId, meta] of keroReleasedZombieJobMeta.entries()) {
         const releasedAt = Number(meta?.releasedAt || 0);
-        if (!releasedAt || now - releasedAt > KERO_RELEASED_ZOMBIE_JOB_TTL_MS) {
+        if (!releasedAt) {
             keroReleasedZombieJobMeta.delete(jobId);
             keroReleasedZombieJobIds.delete(jobId);
         }
@@ -15410,7 +15381,7 @@ async function recoverKeroRuntimeStateOnWake(reason = 'app_wake') {
     keroWakeRecoveryRunning = true;
     keroWakeRecoveryLastAt = now;
     try {
-        pruneKeroReleasedZombieJobIds(now);
+        pruneKeroReleasedZombieJobIds();
         try {
             if (typeof flushExpiredSubAgentConsultationGuards === 'function') {
                 flushExpiredSubAgentConsultationGuards(reason);
@@ -29813,12 +29784,7 @@ ${currentVars || '{}'}
             if (itemResult) {
                 const status = safeString(itemResult.status).toLowerCase();
                 if (status === 'skipped' || status === 'duplicate') {
-                    const reason = safeString(itemResult.reason || status);
-                    if (/duplicate/i.test(reason)) {
-                        appendRange('failed', i, { reason: reason || 'duplicate_generated' });
-                    } else {
-                        appendRange('completed', i, { created: false, skipped: true });
-                    }
+                    appendRange('completed', i, { created: false, skipped: true });
                 } else if (status === 'created' || status === 'success' || status === 'processed') {
                     appendRange('completed', i, {
                         created: status === 'created' || itemResult.created === true,
@@ -41202,21 +41168,17 @@ function setCharacterPatchConfiguredField(nextChar, sources, fieldKey, changes, 
     return true;
 }
 
-function appendCharacterPatchList(nextChar, sources, keys, fieldName, label, changes, normalizer, replaceKeys = [], fingerprintTarget = '', options = {}) {
+function appendCharacterPatchList(nextChar, sources, keys, fieldName, label, changes, normalizer, replaceKeys = [], options = {}) {
     const match = getFirstPatchValue(sources, keys);
     if (!match.found) return 0;
     const replaceMatch = getFirstPatchValue(sources, replaceKeys);
     const replace = replaceMatch.found && replaceMatch.value === true;
     const current = replace ? [] : ensureArray(getCharacterField(nextChar, fieldName)).slice();
-    const fingerprints = !replace && fingerprintTarget ? buildKeroCreateFingerprintSet(fingerprintTarget, current) : new Set();
     let added = 0;
     normalizeCharacterPatchArray(match.value).forEach((entry, index) => {
         const normalized = normalizer(entry, current.length + index, options);
         if (!normalized) return;
-        const fingerprint = fingerprintTarget ? getKeroCreateFingerprint(fingerprintTarget, normalized) : '';
-        if (!replace && fingerprint && fingerprints.has(fingerprint)) return;
         current.push(normalized);
-        if (fingerprint) fingerprints.add(fingerprint);
         added += 1;
     });
     if (!added && !replace) return 0;
@@ -41344,9 +41306,9 @@ async function applyKeroCharacterPatchAction(action, char, options = {}) {
         }
     }
 
-    appendCharacterPatchList(nextChar, sources, ['lorebooks', 'lorebook', 'globalLore', 'lorebookEntries', 'lorebookAppend'], 'globalLore', '로어북', changes, normalizeCharacterPatchLore, ['replaceLorebook', 'replaceLorebooks'], 'lorebook', patchFieldOptions);
-    appendCharacterPatchList(nextChar, sources, ['regexScripts', 'regex', 'customscript', 'regexAppend'], 'customscript', '정규식', changes, normalizeCharacterPatchRegex, ['replaceRegex', 'replaceRegexScripts'], 'regex', patchFieldOptions);
-    appendCharacterPatchList(nextChar, sources, ['triggers', 'trigger', 'triggerscript', 'triggerScripts', 'triggerAppend'], 'triggerscript', '트리거', changes, normalizeCharacterPatchTrigger, ['replaceTrigger', 'replaceTriggers'], 'trigger', patchFieldOptions);
+    appendCharacterPatchList(nextChar, sources, ['lorebooks', 'lorebook', 'globalLore', 'lorebookEntries', 'lorebookAppend'], 'globalLore', '로어북', changes, normalizeCharacterPatchLore, ['replaceLorebook', 'replaceLorebooks'], patchFieldOptions);
+    appendCharacterPatchList(nextChar, sources, ['regexScripts', 'regex', 'customscript', 'regexAppend'], 'customscript', '정규식', changes, normalizeCharacterPatchRegex, ['replaceRegex', 'replaceRegexScripts'], patchFieldOptions);
+    appendCharacterPatchList(nextChar, sources, ['triggers', 'trigger', 'triggerscript', 'triggerScripts', 'triggerAppend'], 'triggerscript', '트리거', changes, normalizeCharacterPatchTrigger, ['replaceTrigger', 'replaceTriggers'], patchFieldOptions);
 
     if (!changes.length) {
         if (deferredActions.length) {
@@ -42843,7 +42805,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.53 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.54 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -48205,80 +48167,6 @@ async function createLorebookEntry(entry) {
     return result.success > 0;
 }
 
-function normalizeKeroCreateFingerprintPart(value) {
-    return safeString(value).replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function stableStringifyKeroCreateValue(value) {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
-    if (Array.isArray(value)) return `[${value.map((item) => stableStringifyKeroCreateValue(item)).join(',')}]`;
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringifyKeroCreateValue(value[key])}`).join(',')}}`;
-}
-
-function getKeroCreateFingerprint(target, item) {
-    if (!item || typeof item !== 'object') return '';
-    if (target === 'lorebook') {
-        return [
-            normalizeKeroCreateFingerprintPart(item.comment || item.name),
-            normalizeKeroCreateFingerprintPart(item.key),
-            normalizeKeroCreateFingerprintPart(item.content)
-        ].join('|');
-    }
-    if (target === 'regex') {
-        return [
-            normalizeKeroCreateFingerprintPart(item.comment || item.name),
-            normalizeKeroCreateFingerprintPart(item.in),
-            normalizeKeroCreateFingerprintPart(item.out),
-            normalizeKeroCreateFingerprintPart(item.type || item.flag || item.ableFlag)
-        ].join('|');
-    }
-    if (target === 'trigger') {
-        return [
-            normalizeKeroCreateFingerprintPart(item.comment || item.name),
-            normalizeKeroCreateFingerprintPart(estimateKeroPayloadChars(item.conditions) ? stableStringifyKeroCreateValue(item.conditions || []) : ''),
-            normalizeKeroCreateFingerprintPart(estimateKeroPayloadChars(item.effect) ? stableStringifyKeroCreateValue(item.effect || []) : '')
-        ].join('|');
-    }
-    return normalizeKeroCreateFingerprintPart(stableStringifyKeroCreateValue(item));
-}
-
-function buildKeroCreateFingerprintSet(target, items) {
-    const set = new Set();
-    ensureArray(items).forEach((item) => {
-        const fingerprint = getKeroCreateFingerprint(target, item);
-        if (fingerprint.replace(/\|/g, '').trim()) set.add(fingerprint);
-    });
-    return set;
-}
-
-function getKeroCreateIdentityFingerprint(target, item) {
-    if (!item || typeof item !== 'object') return '';
-    if (target === 'lorebook') {
-        const key = normalizeKeroCreateFingerprintPart(item.key);
-        const comment = normalizeKeroCreateFingerprintPart(item.comment || item.name);
-        return key || comment;
-    }
-    if (target === 'regex') {
-        return [
-            normalizeKeroCreateFingerprintPart(item.comment || item.name),
-            normalizeKeroCreateFingerprintPart(item.in)
-        ].filter(Boolean).join('|');
-    }
-    if (target === 'trigger') {
-        return normalizeKeroCreateFingerprintPart(item.comment || item.name);
-    }
-    return '';
-}
-
-function buildKeroCreateIdentityFingerprintSet(target, items) {
-    const set = new Set();
-    ensureArray(items).forEach((item) => {
-        const fingerprint = getKeroCreateIdentityFingerprint(target, item);
-        if (fingerprint) set.add(fingerprint);
-    });
-    return set;
-}
-
 async function createLorebookEntries(entries, options = {}) {
     const char = await getCharacterData();
     if (!char) {
@@ -48288,8 +48176,6 @@ async function createLorebookEntries(entries, options = {}) {
 
     const payloads = Array.isArray(entries) ? entries : [entries];
     const lorebooks = ensureArray(getCharacterField(char, 'globalLore')).slice();
-    const fingerprints = buildKeroCreateFingerprintSet('lorebook', lorebooks);
-    const identityFingerprints = buildKeroCreateIdentityFingerprintSet('lorebook', lorebooks);
     const results = { requested: payloads.length, success: 0, created: 0, failed: 0, skipped: 0, itemResults: [] };
 
     payloads.forEach((entry, index) => {
@@ -48317,16 +48203,7 @@ async function createLorebookEntries(entries, options = {}) {
             };
 
             const sanitized = sanitizeLorebookEntryForAiWrite(newLore, loreIndex, options);
-            const fingerprint = getKeroCreateFingerprint('lorebook', sanitized.entry);
-            const identityFingerprint = getKeroCreateIdentityFingerprint('lorebook', sanitized.entry);
-            if ((fingerprint && fingerprints.has(fingerprint)) || (identityFingerprint && identityFingerprints.has(identityFingerprint))) {
-                results.failed++;
-                results.itemResults.push({ index, status: 'failed', reason: 'duplicate_generated', fingerprint, identityFingerprint });
-                return;
-            }
             lorebooks.push(sanitized.entry);
-            if (fingerprint) fingerprints.add(fingerprint);
-            if (identityFingerprint) identityFingerprints.add(identityFingerprint);
             results.success++;
             results.created++;
             results.itemResults.push({ index, status: 'created' });
@@ -48371,7 +48248,6 @@ async function createRegexScripts(entries, options = {}) {
 
     const payloads = Array.isArray(entries) ? entries : [entries];
     const scripts = ensureArray(getCharacterField(char, 'customscript')).slice();
-    const fingerprints = buildKeroCreateFingerprintSet('regex', scripts);
     const results = { requested: payloads.length, success: 0, created: 0, failed: 0, skipped: 0, itemResults: [] };
 
     payloads.forEach((script, index) => {
@@ -48391,14 +48267,7 @@ async function createRegexScripts(entries, options = {}) {
                 out: recoverKeroActionDirectivesFromFieldText(safe.out || '', `정규식 생성 #${index + 1} 출력`, options.deferredActions, options)
             };
 
-            const fingerprint = getKeroCreateFingerprint('regex', newScript);
-            if (fingerprint && fingerprints.has(fingerprint)) {
-                results.failed++;
-                results.itemResults.push({ index, status: 'failed', reason: 'duplicate_generated', fingerprint });
-                return;
-            }
             scripts.push(newScript);
-            if (fingerprint) fingerprints.add(fingerprint);
             results.success++;
             results.created++;
             results.itemResults.push({ index, status: 'created' });
@@ -48443,7 +48312,6 @@ async function createTriggerScripts(entries, options = {}) {
 
     const payloads = Array.isArray(entries) ? entries : [entries];
     const scripts = ensureArray(getCharacterField(char, 'triggerscript')).slice();
-    const fingerprints = buildKeroCreateFingerprintSet('trigger', scripts);
     const results = { requested: payloads.length, success: 0, created: 0, failed: 0, skipped: 0, itemResults: [] };
 
     payloads.forEach((trigger, index) => {
@@ -48473,14 +48341,7 @@ async function createTriggerScripts(entries, options = {}) {
                 effect
             };
 
-            const fingerprint = getKeroCreateFingerprint('trigger', newTrigger);
-            if (fingerprint && fingerprints.has(fingerprint)) {
-                results.failed++;
-                results.itemResults.push({ index, status: 'failed', reason: 'duplicate_generated', fingerprint });
-                return;
-            }
             scripts.push(newTrigger);
-            if (fingerprint) fingerprints.add(fingerprint);
             results.success++;
             results.created++;
             results.itemResults.push({ index, status: 'created' });
@@ -55655,7 +55516,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.53",
+        name: "SuperVibeBot v1.5.54",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -55664,7 +55525,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.53 Settings",
+        "SuperVibeBot v1.5.54 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -55707,7 +55568,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.53");
+        Logger.info("SuperVibeBot v1.5.54");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

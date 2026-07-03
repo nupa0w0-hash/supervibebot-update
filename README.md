@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.53`
+Latest version: `1.5.54`
 
 Update URL:
 
@@ -18,11 +18,16 @@ Files:
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
 
+## 1.5.54
+
+- Removes local duplicate/fingerprint gates from lorebook, regex, trigger, and character patch append saves.
+- Stops pruning stored action jobs, bulk jobs, and bulk edit state by local expiration time.
+
 ## 1.5.53
 
 - Raises auto/unknown/router model output fallbacks to 128K instead of silently falling back to 8192.
 - Keeps enabled sub-agents parallel across bulk chunks instead of shrinking to one worker on large/mobile payloads.
-- Removes fixed 50/1000 bulk-count behavior, preserves requested counts for resume, and treats duplicate generated items as retryable failures rather than completed work.
+- Removes fixed 50/1000 bulk-count behavior and preserves requested counts for resume.
 - Removes the local short-content quality gate so the LLM output is not rejected just because local heuristics dislike the length.
 
 ## 1.5.52
