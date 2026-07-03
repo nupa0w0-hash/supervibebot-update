@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.36`
+Latest version: `1.5.47`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.47
+
+- Adds a "복합 작업" checkbox to the work-target/reference selection dialog.
+- Allows checked reference characters, modules, and plugins to be writable only when the checkbox is on.
+- Blocks mixed write actions whose character id, module id, or plugin name is not the current target or a checked reference target.
 
 ## 1.5.36
 

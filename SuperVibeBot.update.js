@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.46
-//@version 1.5.46
+//@display-name 🐸 SuperVibeBot v1.5.47
+//@version 1.5.47
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.46는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.47는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.46 Release Notes
+ * SuperVibeBot v1.5.47 Release Notes
+ * - v1.5.47: adds a work-target selection checkbox for mixed character/module/plugin writes
+ * - v1.5.47: restricts mixed writes to the current target plus checked reference targets by id/name
  * - v1.5.46: prevents explicit desc-only edit requests from escalating into full character updates or lorebook bulk creation
  * - v1.5.46: recovers module/plugin work when model output only contains wrong-target actions, with explicit mixed-target consent support
  * - v1.5.45: adds Wellspring reference-image locking for consistent character asset batches
@@ -3150,6 +3152,7 @@ const KERO_REQUIRE_ACTION_CONFIRMATION_KEY = "Super_Vibe_Bot_kero_require_action
 const WORK_TARGET_MODE_KEY = "Super_Vibe_Bot_work_target_mode_v1";
 const WORK_TARGET_MODULE_ID_KEY = "Super_Vibe_Bot_work_target_module_id_v1";
 const WORK_TARGET_PLUGIN_KEY = "Super_Vibe_Bot_work_target_plugin_key_v1";
+const WORK_TARGET_MIXED_ENABLED_KEY = "Super_Vibe_Bot_work_target_mixed_enabled_v1";
 const WORK_TARGET_BACKUP_KEY = "Super_Vibe_Bot_work_target_backups_v1";
 const WORK_TARGET_FAILURE_ARTIFACT_KEY = "Super_Vibe_Bot_work_target_failure_artifacts_v1";
 const WORK_TARGET_BACKUP_LIMIT = 20;
@@ -8649,6 +8652,7 @@ let multiSelectedPluginKeys = [];
 let currentWorkTargetMode = "character";
 let manualSelectedModuleId = "";
 let manualSelectedPluginKey = "";
+let keroMixedWorkTargetsEnabled = false;
 let characterListPrefetched = false;
 let keroWorkstreamEvents = [];
 const keroBackgroundJobs = new Map();
@@ -13196,7 +13200,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.46',
+            '//@version 1.5.47',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -14467,29 +14471,94 @@ function addSvbRuntimeLocalActionParserSelfTest(checks, localFunctions = {}) {
 function addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions = {}) {
     const result = readSvbRuntimeValue('work target mixed filter self test', () => {
         const localFilter = resolveSvbRuntimeLocalFunction(localFunctions, 'getKeroWorkTargetActionFilterResult');
-        const localMixedIntent = resolveSvbRuntimeLocalFunction(localFunctions, 'shouldAllowKeroMixedWorkTargets');
-        if (typeof localFilter !== 'function' || typeof localMixedIntent !== 'function') {
+        const localCheckboxMixed = resolveSvbRuntimeLocalFunction(localFunctions, 'isKeroMixedWorkTargetsEnabledForRequest');
+        if (typeof localFilter !== 'function') {
             return { skipped: true };
         }
-        const moduleAction = {
-            type: 'update',
-            target: 'module',
-            payload: { id: 'diagnostic-module', description: 'module update' }
+        const previous = {
+            currentWorkTargetMode,
+            manualSelectedCharId,
+            manualSelectedModuleId,
+            manualSelectedPluginKey,
+            multiSelectedCharIds: [...ensureArray(multiSelectedCharIds)],
+            multiSelectedModuleIds: [...ensureArray(multiSelectedModuleIds)],
+            multiSelectedPluginKeys: [...ensureArray(multiSelectedPluginKeys)],
+            keroMixedWorkTargetsEnabled
         };
-        const characterAction = {
-            type: 'improve',
-            target: 'desc',
-            userRequest: 'diagnostic desc update'
-        };
-        const normal = localFilter([characterAction], 'module', { allowMixedWorkTargets: false });
-        const mixed = localFilter([moduleAction, characterAction], 'module', { allowMixedWorkTargets: true });
-        return {
-            skipped: false,
-            detectsExplicitMixed: localMixedIntent('캐릭터와 모듈 복합 작업 허용하고 둘 다 수정해줘') === true,
-            rejectsNegativeMixed: localMixedIntent('캐릭터는 건드리지 말고 모듈만 수정해줘') === false,
-            normalBlocksCharacter: normal.kept.length === 0 && normal.blocked.length === 1,
-            mixedKeepsBoth: mixed.kept.length === 2 && mixed.blocked.length === 0
-        };
+        try {
+            currentWorkTargetMode = 'module';
+            manualSelectedCharId = '';
+            manualSelectedModuleId = 'diagnostic-module';
+            manualSelectedPluginKey = '';
+            multiSelectedCharIds = ['diagnostic-char'];
+            multiSelectedModuleIds = ['reference-module'];
+            multiSelectedPluginKeys = ['reference-plugin'];
+            keroMixedWorkTargetsEnabled = false;
+
+            const currentModuleAction = {
+                type: 'update',
+                target: 'module',
+                payload: { id: 'diagnostic-module', description: 'current module update' }
+            };
+            const otherModuleAction = {
+                type: 'update',
+                target: 'module',
+                payload: { id: 'unselected-module', description: 'wrong module update' }
+            };
+            const referenceModuleAction = {
+                type: 'update',
+                target: 'module',
+                payload: { id: 'reference-module', description: 'reference module update' }
+            };
+            const referenceCharacterAction = {
+                type: 'update',
+                target: 'desc',
+                targetCharacterId: 'diagnostic-char',
+                payload: { desc: 'reference character update' }
+            };
+            const referencePluginAction = {
+                type: 'update',
+                target: 'plugin',
+                payload: { name: 'reference-plugin', enabled: true }
+            };
+            const unselectedPluginAction = {
+                type: 'update',
+                target: 'plugin',
+                payload: { name: 'unselected-plugin', enabled: true }
+            };
+
+            const normal = localFilter(
+                [currentModuleAction, otherModuleAction, referenceCharacterAction],
+                'module',
+                { allowMixedWorkTargets: false }
+            );
+            const mixed = localFilter(
+                [referenceModuleAction, referenceCharacterAction, referencePluginAction, unselectedPluginAction],
+                'module',
+                { allowMixedWorkTargets: true }
+            );
+            return {
+                skipped: false,
+                explicitPhraseDoesNotEnableMixed: typeof localCheckboxMixed === 'function'
+                    ? localCheckboxMixed('캐릭터와 모듈 복합 작업 허용하고 둘 다 수정해줘') === false
+                    : true,
+                normalKeepsOnlyCurrentModule: normal.kept.length === 1
+                    && normal.kept[0]?.payload?.id === 'diagnostic-module'
+                    && normal.blocked.length === 2,
+                mixedKeepsSelectedReferences: mixed.kept.length === 3
+                    && mixed.blocked.length === 1
+                    && mixed.blocked[0]?.payload?.name === 'unselected-plugin'
+            };
+        } finally {
+            currentWorkTargetMode = previous.currentWorkTargetMode;
+            manualSelectedCharId = previous.manualSelectedCharId;
+            manualSelectedModuleId = previous.manualSelectedModuleId;
+            manualSelectedPluginKey = previous.manualSelectedPluginKey;
+            multiSelectedCharIds = previous.multiSelectedCharIds;
+            multiSelectedModuleIds = previous.multiSelectedModuleIds;
+            multiSelectedPluginKeys = previous.multiSelectedPluginKeys;
+            keroMixedWorkTargetsEnabled = previous.keroMixedWorkTargetsEnabled;
+        }
     });
     if (!result.ok) {
         checks.push(makeSvbRuntimeCheck(false, 'work target mixed filter self test', result.error, 'error'));
@@ -14501,14 +14570,13 @@ function addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions = {}) {
         return;
     }
     const problems = [];
-    if (!value.detectsExplicitMixed) problems.push('explicit mixed target consent was not detected');
-    if (!value.rejectsNegativeMixed) problems.push('negative character mention allowed mixed target');
-    if (!value.normalBlocksCharacter) problems.push('module mode did not block character action by default');
-    if (!value.mixedKeepsBoth) problems.push('explicit mixed mode did not keep module and character actions');
+    if (!value.explicitPhraseDoesNotEnableMixed) problems.push('explicit phrase enabled mixed target without checkbox');
+    if (!value.normalKeepsOnlyCurrentModule) problems.push('default mode did not restrict writes to the current target id');
+    if (!value.mixedKeepsSelectedReferences) problems.push('mixed mode did not keep only selected reference targets');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'work target mixed filter self test',
-        problems.length ? `Problems: ${problems.join(' / ')}` : 'module/plugin work target protection remains strict by default and explicit mixed consent keeps character-scoped actions',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'work target writes require the current target or checkbox-selected mixed targets',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -16066,6 +16134,7 @@ async function loadStoredState() {
     currentWorkTargetMode = normalizeWorkTargetMode(await Storage.get(WORK_TARGET_MODE_KEY));
     manualSelectedModuleId = safeString(await Storage.get(WORK_TARGET_MODULE_ID_KEY)).trim();
     manualSelectedPluginKey = safeString(await Storage.get(WORK_TARGET_PLUGIN_KEY)).trim();
+    keroMixedWorkTargetsEnabled = await Storage.get(WORK_TARGET_MIXED_ENABLED_KEY) === true;
     const storedVertex = await Storage.get(VERTEX_SETTINGS_KEY);
     if (storedVertex && typeof storedVertex === 'object') {
         vertexSettings = { ...vertexSettings, ...storedVertex };
@@ -19040,6 +19109,39 @@ function buildMainCSS() {
             color: #047857;
             font-size: 11px;
             line-height: 1.45;
+        }
+
+        #${CONTAINER_ID} .work-target-mixed-box {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 9px 10px;
+            border: 1px solid var(--rt-border);
+            border-radius: 8px;
+            background: var(--rt-bg-primary);
+        }
+
+        #${CONTAINER_ID} .work-target-mixed-box input {
+            margin-top: 2px;
+        }
+
+        #${CONTAINER_ID} .work-target-mixed-main {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        #${CONTAINER_ID} .work-target-mixed-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--rt-text-primary);
+        }
+
+        #${CONTAINER_ID} .work-target-mixed-desc {
+            font-size: 11px;
+            line-height: 1.35;
+            color: var(--rt-text-secondary);
         }
 
         #${CONTAINER_ID} .char-info-box {
@@ -23388,6 +23490,17 @@ async function createTransUI() {
                     id: "work-target-help",
                     text: "작업 대상을 바꿔도 참고 캐릭터/모듈/플러그인은 함께 사용할 수 있습니다. 모듈/플러그인을 고르지 않으면 새 작업물 제작 모드로 시작합니다."
                 }),
+                el("label", { class: "work-target-mixed-box" }, [
+                    el("input", { type: "checkbox", id: "work-target-mixed-checkbox", checked: keroMixedWorkTargetsEnabled }),
+                    el("span", { class: "work-target-mixed-main" }, [
+                        el("span", { class: "work-target-mixed-title", text: "복합 작업" }),
+                        el("span", {
+                            class: "work-target-mixed-desc",
+                            id: "work-target-mixed-desc",
+                            text: "꺼짐: 참고 캐릭터/모듈/플러그인은 읽기 전용입니다. 켜짐: 체크한 참고 대상도 저장/수정 대상에 포함합니다."
+                        })
+                    ])
+                ]),
                 el("select", {
                     class: "char-select-dropdown",
                     id: "modal-char-select-dropdown"
@@ -23403,7 +23516,7 @@ async function createTransUI() {
                         el("span", { class: "char-multi-arrow", text: "⌄" })
                     ]),
                     el("div", { class: "char-multi-content" }, [
-                        el("div", { class: "char-multi-help", text: "여러 캐릭터의 설정을 AI 참고 범위에 넣어 조합/병합 작업에 사용합니다. 저장 대상은 위의 작업 대상 하나입니다." }),
+                        el("div", { class: "char-multi-help", text: "여러 캐릭터의 설정을 AI 참고 범위에 넣어 조합/병합 작업에 사용합니다. 복합 작업을 켜면 체크한 캐릭터도 저장/수정 대상에 포함됩니다." }),
                         el("div", { class: "char-multi-list", id: "modal-multi-char-list" })
                     ])
                 ]),
@@ -23413,7 +23526,7 @@ async function createTransUI() {
                         el("span", { class: "char-multi-arrow", text: "⌄" })
                     ]),
                     el("div", { class: "char-multi-content" }, [
-                        el("div", { class: "char-multi-help", text: "모듈의 로어북, 정규식, 트리거, CJS 구조를 참고 자료로 사용합니다. 저장 대상은 위의 작업 대상 하나입니다." }),
+                        el("div", { class: "char-multi-help", text: "모듈의 로어북, 정규식, 트리거, CJS 구조를 참고 자료로 사용합니다. 복합 작업을 켜면 체크한 모듈도 저장/수정 대상에 포함됩니다." }),
                         el("div", { class: "char-multi-list", id: "modal-multi-module-list" })
                     ])
                 ]),
@@ -23423,7 +23536,7 @@ async function createTransUI() {
                         el("span", { class: "char-multi-arrow", text: "⌄" })
                     ]),
                     el("div", { class: "char-multi-content" }, [
-                        el("div", { class: "char-multi-help", text: "플러그인 설정과 스크립트를 참고 자료로 사용합니다. 직접 수정/삭제 대상은 위에서 고른 작업 대상뿐입니다." }),
+                        el("div", { class: "char-multi-help", text: "플러그인 설정과 스크립트를 참고 자료로 사용합니다. 복합 작업을 켜면 체크한 플러그인도 저장/수정 대상에 포함됩니다." }),
                         el("div", { class: "char-multi-list", id: "modal-multi-plugin-list" })
                     ])
                 ]),
@@ -27778,30 +27891,169 @@ ${currentVars || '{}'}
         ]).has(normalizeKeroActionTargetName(target));
     }
 
-    function shouldAllowKeroMixedWorkTargets(userInput = '') {
-        const source = safeString(userInput);
-        if (!source.trim()) return false;
-        if (/(캐릭터|character)[^\n]{0,36}(건드리지|수정하지|바꾸지|제외|빼고|말고)|(?:건드리지|수정하지|바꾸지|제외|빼고|말고)[^\n]{0,36}(캐릭터|character)/i.test(source)) {
-            return false;
+    function isKeroMixedWorkTargetsEnabledForRequest(userInput = '') {
+        return keroMixedWorkTargetsEnabled === true;
+    }
+
+    function getKeroPrimaryWorkTargetIds(mode = currentWorkTargetMode) {
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        return {
+            characters: normalizedMode === 'character'
+                ? normalizeCharacterIdList([manualSelectedCharId || lastCharacterId || ''])
+                : [],
+            modules: normalizedMode === 'module'
+                ? normalizeReferenceIdList([manualSelectedModuleId || ''])
+                : [],
+            plugins: normalizedMode === 'plugin'
+                ? normalizeReferenceIdList([manualSelectedPluginKey || ''])
+                : []
+        };
+    }
+
+    function getKeroMixedWorkTargetIds(options = {}) {
+        const mode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+        const primaryCharId = safeString(options.primaryCharId || manualSelectedCharId || (mode === 'character' ? lastCharacterId : '') || '').trim();
+        const characters = normalizeCharacterIdList([
+            ...(primaryCharId ? [primaryCharId] : []),
+            ...normalizeCharacterIdList(multiSelectedCharIds)
+        ]);
+        const primaryModuleId = safeString(options.primaryModuleId || (mode === 'module' ? manualSelectedModuleId : '') || '').trim();
+        const modules = normalizeReferenceIdList([
+            ...(primaryModuleId ? [primaryModuleId] : []),
+            ...normalizeReferenceIdList(multiSelectedModuleIds)
+        ]);
+        const primaryPluginKey = safeString(options.primaryPluginKey || (mode === 'plugin' ? manualSelectedPluginKey : '') || '').trim();
+        const plugins = normalizeReferenceIdList([
+            ...(primaryPluginKey ? [primaryPluginKey] : []),
+            ...normalizeReferenceIdList(multiSelectedPluginKeys)
+        ]);
+        return { characters, modules, plugins };
+    }
+
+    function getKeroActionTargetIdentity(action = {}, kind = '') {
+        const payload = action?.payload && typeof action.payload === 'object' ? action.payload : {};
+        if (kind === 'character') {
+            return safeString(
+                action.targetCharacterId || action.characterId || action.charId || action.targetCharId || action.targetId ||
+                payload.targetCharacterId || payload.characterId || payload.charId || payload.chaId || payload.targetId || ''
+            ).trim();
         }
-        const pairSignal = /(?:캐릭터|character)\s*(?:와|과|랑|하고|및|\+|\/)\s*(?:모듈|module)|(?:모듈|module)\s*(?:와|과|랑|하고|및|\+|\/)\s*(?:캐릭터|character)/i.test(source);
-        const mixedSignal = /복합\s*작업|양쪽\s*(?:작업|수정)|둘\s*다\s*(?:작업|수정|건드|허용|진행)|동시에\s*(?:작업|수정)|mixed\s*(?:target|work)|allow\s*mixed/i.test(source);
-        const consentSignal = /허용|진행|작업|수정|동시에|같이|함께|둘\s*다|양쪽|both|mixed|allow/i.test(source);
-        return (pairSignal || mixedSignal) && consentSignal;
+        if (kind === 'module') {
+            return safeString(action.id || action.moduleId || action.targetId || payload.id || payload.moduleId || '').trim();
+        }
+        if (kind === 'plugin') {
+            return safeString(action.name || action.pluginName || action.targetId || payload.name || payload.pluginName || '').trim();
+        }
+        return '';
+    }
+
+    function getKeroCharacterScopedActionTargetId(action = {}, allowedIds = getKeroMixedWorkTargetIds().characters) {
+        const allowed = normalizeCharacterIdList(allowedIds);
+        const explicit = getKeroActionTargetIdentity(action, 'character');
+        if (explicit) return allowed.includes(explicit) ? explicit : '';
+        return allowed.length === 1 ? allowed[0] : '';
+    }
+
+    function prepareKeroActionForMixedWorkTargets(action = {}, mode = currentWorkTargetMode, options = {}) {
+        if (!action || typeof action !== 'object' || options.allowMixedWorkTargets !== true) return action;
+        const normalizedTarget = normalizeKeroActionTargetName(action.target);
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        const allowed = getKeroMixedWorkTargetIds({ workTargetMode: normalizedMode });
+
+        if (isKeroCharacterScopedActionTarget(normalizedTarget)) {
+            const targetCharId = getKeroCharacterScopedActionTargetId(action, allowed.characters);
+            if (targetCharId) {
+                action._targetCharacterId = action._targetCharacterId || targetCharId;
+                action.targetCharacterId = action.targetCharacterId || targetCharId;
+            }
+            return action;
+        }
+
+        if (normalizedTarget === 'module') {
+            const explicit = getKeroActionTargetIdentity(action, 'module');
+            if (!explicit && allowed.modules.length === 1 && safeString(action.type) !== 'create') {
+                action.id = action.id || allowed.modules[0];
+                if (action.payload && typeof action.payload === 'object' && !action.payload.id) action.payload.id = allowed.modules[0];
+            }
+            return action;
+        }
+
+        if (normalizedTarget === 'plugin') {
+            const explicit = getKeroActionTargetIdentity(action, 'plugin');
+            if (!explicit && allowed.plugins.length === 1 && safeString(action.type) !== 'create') {
+                action.name = action.name || allowed.plugins[0];
+                if (action.payload && typeof action.payload === 'object' && !action.payload.name) action.payload.name = allowed.plugins[0];
+            }
+            return action;
+        }
+
+        return action;
+    }
+
+    function isKeroActionAllowedByMixedWorkTargets(action = {}, mode = currentWorkTargetMode, options = {}) {
+        if (!action || typeof action !== 'object' || options.allowMixedWorkTargets !== true) return false;
+        const normalizedTarget = normalizeKeroActionTargetName(action.target);
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        const allowed = getKeroMixedWorkTargetIds({ workTargetMode: normalizedMode });
+        const type = safeString(action.type);
+
+        if (isKeroCharacterScopedActionTarget(normalizedTarget)) {
+            return Boolean(getKeroCharacterScopedActionTargetId(action, allowed.characters));
+        }
+        if (normalizedTarget === 'module') {
+            if (type === 'create') return false;
+            const id = getKeroActionTargetIdentity(action, 'module');
+            return Boolean(id && allowed.modules.includes(id));
+        }
+        if (normalizedTarget === 'plugin') {
+            if (type === 'create') return false;
+            const key = getKeroActionTargetIdentity(action, 'plugin');
+            return Boolean(key && allowed.plugins.includes(key));
+        }
+        return false;
+    }
+
+    function isKeroActionAllowedByCurrentWorkTarget(action = {}, mode = currentWorkTargetMode) {
+        if (!action || typeof action !== 'object') return false;
+        const normalizedTarget = normalizeKeroActionTargetName(action.target);
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        const current = getKeroPrimaryWorkTargetIds(normalizedMode);
+        const type = safeString(action.type);
+
+        if (normalizedMode === 'character' && isKeroCharacterScopedActionTarget(normalizedTarget)) {
+            const explicit = getKeroActionTargetIdentity(action, 'character');
+            if (!explicit) return true;
+            return current.characters.length > 0 && current.characters.includes(explicit);
+        }
+
+        if (normalizedMode === 'module' && normalizedTarget === 'module') {
+            if (type === 'create') return true;
+            const explicit = getKeroActionTargetIdentity(action, 'module');
+            if (!explicit) return true;
+            return current.modules.length > 0 && current.modules.includes(explicit);
+        }
+
+        if (normalizedMode === 'plugin' && normalizedTarget === 'plugin') {
+            if (type === 'create') return true;
+            const explicit = getKeroActionTargetIdentity(action, 'plugin');
+            if (!explicit) return true;
+            return current.plugins.length > 0 && current.plugins.includes(explicit);
+        }
+
+        return false;
     }
 
     function getKeroWorkTargetActionFilterResult(actions = [], mode = currentWorkTargetMode, options = {}) {
         const normalizedMode = normalizeWorkTargetMode(mode);
-        const list = ensureArray(actions).filter((action) => action && typeof action === 'object');
-        if (!['module', 'plugin'].includes(normalizedMode)) return { kept: list, blocked: [] };
+        const list = ensureArray(actions)
+            .filter((action) => action && typeof action === 'object')
+            .map((action) => prepareKeroActionForMixedWorkTargets(action, normalizedMode, options));
         const allowMixedWorkTargets = options.allowMixedWorkTargets === true;
         const kept = [];
         const blocked = [];
         list.forEach((action) => {
-            const target = normalizeKeroActionTargetName(action?.target);
-            const actionAllowsMixed = allowMixedWorkTargets || action?._allowMixedWorkTargets === true || action?.allowMixedWorkTargets === true;
-            if (target === normalizedMode) kept.push(action);
-            else if (actionAllowsMixed && isKeroCharacterScopedActionTarget(target)) kept.push(action);
+            if (isKeroActionAllowedByCurrentWorkTarget(action, normalizedMode)) kept.push(action);
+            else if (allowMixedWorkTargets && isKeroActionAllowedByMixedWorkTargets(action, normalizedMode, { allowMixedWorkTargets: true })) kept.push(action);
             else blocked.push(action);
         });
         return { kept, blocked };
@@ -27810,7 +28062,6 @@ ${currentVars || '{}'}
     function filterKeroActionsForWorkTargetMode(actions = [], mode = currentWorkTargetMode, progressOptions = {}, options = {}) {
         const normalizedMode = normalizeWorkTargetMode(mode);
         const { kept, blocked } = getKeroWorkTargetActionFilterResult(actions, mode, options);
-        if (!['module', 'plugin'].includes(normalizedMode)) return kept;
         if (blocked.length) {
             const blockedLabels = blocked
                 .map((action) => `${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)}`)
@@ -27841,16 +28092,11 @@ ${currentVars || '{}'}
         keroActionQueue = keroActionQueue.catch((error) => {
             Logger.warn('Previous Kero action queue failed; continuing with next request:', error?.message || error);
         }).then(async () => {
-            if (options.allowMixedWorkTargets === true) {
-                ensureArray(actions).forEach((action) => {
-                    if (action && typeof action === 'object') action._allowMixedWorkTargets = true;
-                });
-            }
             const targetFilteredActions = filterKeroActionsForWorkTargetMode(actions, options.workTargetMode || currentWorkTargetMode, actionProgressOptions, {
                 allowMixedWorkTargets: options.allowMixedWorkTargets === true
             });
             if (!targetFilteredActions.length) {
-                const detail = '현재 작업 대상과 다른 액션만 감지되어 실행하지 않았습니다. 모듈/플러그인 작업에서는 기본적으로 해당 대상 전용 액션만 저장합니다. 캐릭터까지 함께 수정하려면 "캐릭터+모듈 복합 작업 허용"처럼 명시해 주세요.';
+                const detail = '현재 작업 대상과 복합 작업 허용 목록 밖의 액션만 감지되어 실행하지 않았습니다. 선택창의 "복합 작업"을 켜고 참고 캐릭터/모듈/플러그인을 체크해야 여러 대상을 함께 저장할 수 있습니다.';
                 if (currentKeroMission) {
                     const blockedStep = {
                         id: `target-protection-${Date.now()}`,
@@ -31387,6 +31633,13 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const target = action?.target;
         const type = action?.type;
         if (!target || !type) return { success: false, detail: 'target/type 누락' };
+        const normalizedTarget = normalizeKeroActionTargetName(target);
+        const retargetCharacterId = safeString(action?._targetCharacterId || action?.targetCharacterId || '').trim();
+        if (retargetCharacterId && isKeroCharacterScopedActionTarget(normalizedTarget) && options._mixedCharacterRetargeted !== true) {
+            return await withKeroTemporaryCharacterTarget(retargetCharacterId, async () =>
+                executeKeroAction(action, { ...options, _mixedCharacterRetargeted: true, targetCharacterId: retargetCharacterId })
+            );
+        }
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
         const expectedActionMissionId = safeString(options.missionId || action?._missionId || action?.missionId || '');
         const expectedActionStorageId = safeString(options.storageId || '');
@@ -32493,7 +32746,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             parseKeroAction,
             normalizeKeroActionTargetName,
             getKeroWorkTargetActionFilterResult,
-            shouldAllowKeroMixedWorkTargets
+            isKeroMixedWorkTargetsEnabledForRequest
         });
 
         bindSafeClick(document.getElementById('kero-runtime-diagnostics-btn'), async () => {
@@ -34320,7 +34573,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const parsed = parseKeroAction(response || '');
             const taskRequestText = modelVisibleUserInput || modelUserInput;
             const isWorkTargetActionMode = ['module', 'plugin'].includes(normalizeWorkTargetMode(taskWorkTargetMode));
-            const allowMixedWorkTargets = isWorkMode && shouldAllowKeroMixedWorkTargets(taskRequestText);
+            const allowMixedWorkTargets = isWorkMode && isKeroMixedWorkTargetsEnabledForRequest(taskRequestText);
             const shouldRunMutationFromRequest = isWorkMode && shouldAttemptKeroMissingActionFallback(taskRequestText, { userRequest: taskRequestText });
             if (isWorkMode && parsed.actions?.length && !shouldRunMutationFromRequest && isKeroQuestionOnlyRequest(taskRequestText)) {
                 addKeroWorkstreamEvent(
@@ -34918,11 +35171,18 @@ ${chatContinuity.block}
         const lorebookCountSuffix = effectiveContextPayload.partSelections?.lorebook ? ' (체크된 작업 대상)' : '';
         const regexCountSuffix = effectiveContextPayload.partSelections?.regex ? ' (체크된 작업 대상)' : '';
 
+        const workTargetWritePolicy = workTargetContext.mixedWorkTargetsEnabled
+            ? `- 복합 작업: ON
+- 허용 저장 대상: 현재 작업 대상 + CONTEXT_PAYLOAD.workTarget.mixedWriteTargets에 있는 체크된 참고 대상
+- 필수: module action은 id, plugin action은 name, character/desc/lorebook/regex/trigger/asset action은 targetCharacterId 또는 characterId를 명시한다. 대상이 모호하면 @action을 만들지 말고 어떤 대상을 고를지 물어본다.`
+            : `- 복합 작업: OFF
+- 주의: 참고 캐릭터/모듈/플러그인은 자료로만 사용하고, 저장 대상은 현재 작업 대상 하나다.`;
+
 const workTargetBlock = `## 🎯 현재 작업 대상
 - 작업 모드: ${workTargetContext.modeLabel}
 - 대상: ${workTargetContext.targetName || workTargetContext.targetId || '새 작업'}
 - 선택 상태: ${workTargetContext.selected ? '기존 항목 선택됨' : '새 작업/자동 감지'}
-- 주의: 참고 캐릭터/모듈/플러그인은 자료로만 사용하고, 저장 대상은 현재 작업 대상 하나다.`;
+${workTargetWritePolicy}`;
 
         const wantsUIDesign = isUIDesignRequest(userInput);
         const modeBlock = requestKeroMode === 'work'
@@ -35133,6 +35393,8 @@ ${metaBlock}
 - 플러그인 메타데이터(//@name, //@display-name, //@version, //@api 3.0)는 스크립트 맨 위 주석 블록에 둔다.
 - 모듈/플러그인의 알 수 없는 필드는 보존하고, 요청받은 필드만 작게 수정한다.
 - 모듈 lowLevelAccess, cjs, trigger, regex, 플러그인 script/enabled/allowedIPC/customLink/addProvider/registerMCP는 위험 필드라 변경 이유와 위험을 짧게 설명한다.
+- 복합 작업 ON일 때 참고 캐릭터를 수정하는 character/desc/lorebook/regex/trigger/asset 액션에는 반드시 targetCharacterId 또는 characterId를 넣는다. 참고 모듈은 id, 참고 플러그인은 name을 넣는다.
+- 복합 작업 ON이어도 CONTEXT_PAYLOAD.workTarget.mixedWriteTargets에 없는 캐릭터/모듈/플러그인은 수정하지 않는다.
 - 장문 plugin/module create/update payload가 모델 응답 한계를 넘길 것 같으면 @action을 강행하지 않는다. 먼저 단계 계획을 답하고, 다음 응답에서 작은 블록 단위로 이어서 작업한다.
 - 사용자가 저장/수정/생성/삭제/적용을 명확히 요청하면 설명만 하지 말고 @action을 출력한다. 단, 장문 plugin/module처럼 한 번의 payload가 모델 응답 한계를 넘길 위험이 큰 경우에는 단계 계획을 먼저 답하고 다음 단계에서 작은 적용 단위의 @action으로 진행한다.
 - 질문, 사용법 문의, 원인 분석, 검토/의견 요청은 @action을 생략하고 답변만 한다.
@@ -35565,6 +35827,22 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             await initializeKeroAssistantState();
         });
     });
+
+    const mixedWorkTargetCheckbox = document.getElementById('work-target-mixed-checkbox');
+    if (mixedWorkTargetCheckbox) {
+        mixedWorkTargetCheckbox.addEventListener('change', async () => {
+            keroMixedWorkTargetsEnabled = mixedWorkTargetCheckbox.checked === true;
+            await Storage.set(WORK_TARGET_MIXED_ENABLED_KEY, keroMixedWorkTargetsEnabled);
+            updateWorkTargetModeUI();
+            await refreshCharacterList();
+            if (keroChatTaskRunning || keroProcessingQueuedInput) {
+                addKeroWorkstreamEvent('복합 작업 설정 변경', keroMixedWorkTargetsEnabled ? '복합 작업 ON · 다음 작업부터 반영' : '복합 작업 OFF · 다음 작업부터 반영', 'queued');
+            } else {
+                await initializeKeroAssistantState();
+                addKeroWorkstreamEvent('복합 작업 설정 변경', keroMixedWorkTargetsEnabled ? '복합 작업 ON' : '복합 작업 OFF', 'info');
+            }
+        });
+    }
 
     document.querySelectorAll('#char-select-modal .char-multi-title').forEach((btn) => {
         btn.addEventListener('click', (event) => {
@@ -38781,6 +39059,18 @@ async function getCharacterData() {
     return null;
 }
 
+async function withKeroTemporaryCharacterTarget(charId = '', task) {
+    const targetId = safeString(charId).trim();
+    if (!targetId || typeof task !== 'function') return typeof task === 'function' ? await task() : null;
+    const previousManualSelectedCharId = manualSelectedCharId;
+    manualSelectedCharId = targetId;
+    try {
+        return await task();
+    } finally {
+        manualSelectedCharId = previousManualSelectedCharId;
+    }
+}
+
 /**
  * 캐릭터 ID로 캐릭터 찾기 (chaId 또는 id 필드 모두 체크)
  */
@@ -38845,7 +39135,8 @@ function formatReferenceSelectionSummary(options = {}) {
     if (counts.characters) parts.push(`캐릭터 ${counts.characters}`);
     if (counts.modules) parts.push(`모듈 ${counts.modules}`);
     if (counts.plugins) parts.push(`플러그인 ${counts.plugins}`);
-    return `참고 자료 ${counts.total}개 (${parts.join(', ')})`;
+    const mixedSuffix = keroMixedWorkTargetsEnabled ? ' · 복합 작업 ON' : '';
+    return `참고 자료 ${counts.total}개 (${parts.join(', ')})${mixedSuffix}`;
 }
 
 function formatReferencePayloadSummary(payload = {}) {
@@ -39292,9 +39583,29 @@ function createEmptyCharacterContext(name = '캐릭터 미선택') {
 async function buildWorkTargetContext(scope = {}, primaryChar = null, options = {}) {
     const mode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     const meta = getWorkTargetModeMeta(mode);
+    const primaryCharId = getCharacterId(primaryChar) || manualSelectedCharId || (mode === 'character' ? lastCharacterId : '') || '';
+    const mixedWriteTargets = {
+        characters: normalizeCharacterIdList([
+            ...(primaryCharId ? [primaryCharId] : []),
+            ...normalizeCharacterIdList(multiSelectedCharIds)
+        ]),
+        modules: normalizeReferenceIdList([
+            ...(mode === 'module' && manualSelectedModuleId ? [manualSelectedModuleId] : []),
+            ...normalizeReferenceIdList(multiSelectedModuleIds)
+        ]),
+        plugins: normalizeReferenceIdList([
+            ...(mode === 'plugin' && manualSelectedPluginKey ? [manualSelectedPluginKey] : []),
+            ...normalizeReferenceIdList(multiSelectedPluginKeys)
+        ])
+    };
     const result = {
         mode,
         modeLabel: meta.label,
+        mixedWorkTargetsEnabled: keroMixedWorkTargetsEnabled === true,
+        mixedWriteTargets: keroMixedWorkTargetsEnabled ? mixedWriteTargets : { characters: [], modules: [], plugins: [] },
+        writeTargetPolicy: keroMixedWorkTargetsEnabled
+            ? '복합 작업 ON: 현재 작업 대상과 mixedWriteTargets에 들어 있는 체크된 참고 캐릭터/모듈/플러그인만 저장/수정 대상이다. module action에는 id, plugin action에는 name, character/desc/lorebook/regex/trigger/asset action에는 targetCharacterId 또는 characterId를 명시한다.'
+            : '복합 작업 OFF: 참고 캐릭터/모듈/플러그인은 읽기 전용이며 저장/수정 대상은 현재 작업 대상 하나다.',
         writableKeys: ['characters', 'modules', 'enabledModules', 'moduleIntergration', 'plugins', 'pluginCustomStorage'],
         guardrails: [
             '전역 mainPrompt/jailbreak/promptTemplate은 플러그인 API로 직접 저장하지 않는다.',
@@ -39304,7 +39615,7 @@ async function buildWorkTargetContext(scope = {}, primaryChar = null, options = 
     };
 
     if (mode === "character") {
-        result.targetId = getCharacterId(primaryChar) || manualSelectedCharId || '';
+        result.targetId = primaryCharId;
         result.targetName = primaryChar ? getCharacterDisplayName(primaryChar) : WORK_TARGET_MODES.character.emptyLabel;
         result.selected = Boolean(primaryChar);
         return result;
@@ -40267,6 +40578,15 @@ function updateWorkTargetModeUI() {
         } else {
             help.textContent = '플러그인을 고르면 해당 플러그인 코드를 분석/수정하고, 고르지 않으면 새 플러그인을 맨땅부터 설계합니다. 참고 자료는 읽기 전용이며 위험 작업은 확인 후 진행합니다.';
         }
+    }
+    const mixedCheckbox = document.getElementById('work-target-mixed-checkbox');
+    if (mixedCheckbox) mixedCheckbox.checked = keroMixedWorkTargetsEnabled === true;
+    const mixedDesc = document.getElementById('work-target-mixed-desc');
+    if (mixedDesc) {
+        const counts = getReferenceSelectionCounts();
+        mixedDesc.textContent = keroMixedWorkTargetsEnabled
+            ? `켜짐: 현재 작업 대상과 체크한 참고 대상 ${counts.total}개를 저장/수정 후보로 허용합니다. 대상 id/name이 모호한 액션은 차단합니다.`
+            : '꺼짐: 참고 캐릭터/모듈/플러그인은 읽기 전용입니다. 저장 대상은 위 작업 대상 하나입니다.';
     }
     updateWorkTargetButtonLabel();
 }
@@ -42422,7 +42742,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.46 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.47 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -46242,7 +46562,9 @@ function summarizeKeroPayloadForRecovery(payload = {}) {
         workTarget: payload.workTarget ? {
             mode: payload.workTarget.mode || payload.workTarget.modeLabel || "",
             name: payload.workTarget.targetName || payload.workTarget.targetId || "",
-            id: payload.workTarget.targetId || ""
+            id: payload.workTarget.targetId || "",
+            mixedWorkTargetsEnabled: payload.workTarget.mixedWorkTargetsEnabled === true,
+            mixedWriteTargets: payload.workTarget.mixedWriteTargets || {}
         } : null,
         basic: payload.basic || {},
         descriptions: payload.descriptions ? {
@@ -46268,7 +46590,10 @@ function summarizeKeroPayloadForRecovery(payload = {}) {
 function buildKeroGatewayRecoveryPrompt(userText, options = {}) {
     const summary = summarizeKeroPayloadForRecovery(options.keroContextPayload || {});
     const workTargetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
-    const workTargetRule = ['module', 'plugin'].includes(workTargetMode)
+    const mixedRecoveryEnabled = keroMixedWorkTargetsEnabled === true;
+    const workTargetRule = mixedRecoveryEnabled
+        ? `- MIXED WORK TARGETS ARE ENABLED. Output actions only for the current work target or selected mixedWriteTargets. Module actions need id, plugin actions need name, and character-scoped actions need targetCharacterId/characterId. If no safe selected target exists, output NO_ACTION.`
+        : ['module', 'plugin'].includes(workTargetMode)
         ? `- CURRENT WORK TARGET MODE IS "${workTargetMode}". Do not output character/desc/lorebook/regex/trigger top-level actions. Output only ${workTargetMode} create/update/delete actions, or NO_ACTION if a safe payload is not possible.`
         : '';
     return `너는 RisuAI 전문 작업 에이전트 케로다.
@@ -55191,7 +55516,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.46",
+        name: "SuperVibeBot v1.5.47",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -55200,7 +55525,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.46 Settings",
+        "SuperVibeBot v1.5.47 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -55243,7 +55568,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.46");
+        Logger.info("SuperVibeBot v1.5.47");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
