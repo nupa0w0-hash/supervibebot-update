@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.49`
+Latest version: `1.5.50`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.50
+
+- Removes local character/world generation fallback so local code cannot invent names, descriptions, first messages, HTML, or starter lorebooks.
+- Converts large remake/empty-bot recovery into LLM bulk-create chunk queues only, preserving reference digests without embedded world anchors.
+- Disables local image asset prompt fallback so image prompts must come from the LLM action or Asset Studio controls.
 
 ## 1.5.49
 
