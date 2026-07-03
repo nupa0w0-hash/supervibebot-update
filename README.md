@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.51`
+Latest version: `1.5.52`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.52
+
+- Removes 8K hard caps from Kero preplan/recovery calls so model-specific output budgets are used.
+- Treats bulk-create item limits as split budgets instead of content-shrink caps, allowing rich lorebook entries to use larger model budgets and more calls.
+- Prevents "no summary / 요약 없이" from being misread as compression and preserves explicit sub-agent requests into bulk chunk generation.
 
 ## 1.5.51
 
