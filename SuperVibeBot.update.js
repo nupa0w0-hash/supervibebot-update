@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.48
-//@version 1.5.48
+//@display-name 🐸 SuperVibeBot v1.5.49
+//@version 1.5.49
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.48는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.49는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.48 Release Notes
+ * SuperVibeBot v1.5.49 Release Notes
+ * - v1.5.49: prevents local large-request preplanning from overwriting characters with canned fallback worlds
+ * - v1.5.49: uses a compact model-assisted first chunk for remake/empty-bot jobs, then queues bulk_create follow-up work
+ * - v1.5.49: removes fallback world anchors from safe bulk_create preplan requests
  * - v1.5.48: routes broad remake/rebuild/empty-bot project requests into immediate character patch + bulk_create execution
  * - v1.5.48: carries compact reference digests into preplanned chunk jobs instead of asking the user to restate large work
  * - v1.5.48: treats short "start/go/do it" follow-ups as execution of the previous mission objective
@@ -13203,7 +13206,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.48',
+            '//@version 1.5.49',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13466,10 +13469,12 @@ function addSvbRuntimeLargeRequestPreplanSelfTest(checks) {
             actionCount: parsed.actions?.length || 0,
             hasCharacterUpdate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'update' && normalizeKeroActionTargetName(action?.target) === 'character'),
             hasBulkCreate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'bulk_create' && normalizeKeroActionTargetName(action?.target) === 'lorebook'),
+            hasUnsafeFallbackFingerprint: hasKeroUnsafeLocalFallbackFingerprint(response),
             remakeShouldPreplan: shouldPreplanKeroLargeCharacterRequest(remakeRequest, { keroMode: 'work', workTargetMode: 'character', userRequest: remakeRequest }),
             remakeHasCharacterUpdate: ensureArray(remakeParsed.actions).some((action) => safeString(action?.type) === 'update' && normalizeKeroActionTargetName(action?.target) === 'character'),
             remakeHasBulkCreate: ensureArray(remakeParsed.actions).some((action) => safeString(action?.type) === 'bulk_create' && normalizeKeroActionTargetName(action?.target) === 'lorebook'),
             remakeCarriesReferenceDigest: /Aethelgard|세계의 약속|아퀼라 제국/.test(remakeResponse),
+            remakeHasUnsafeFallbackFingerprint: hasKeroUnsafeLocalFallbackFingerprint(remakeResponse),
             startNowFollowupDetected: isKeroStartNowFollowupRequest('하라고') === true && isKeroStartNowFollowupRequest('알아서 뚝딱뚝딱 해') === true,
             moduleBlocked: !buildKeroPreplannedLargeRequestResponse(request, { keroMode: 'work', workTargetMode: 'module', userRequest: request }),
             planningOnlyBlocked: !buildKeroPreplannedLargeRequestResponse(`${request}\n먼저 계획만 보여줘.`, { keroMode: 'work', workTargetMode: 'character' })
@@ -13483,20 +13488,22 @@ function addSvbRuntimeLargeRequestPreplanSelfTest(checks) {
     const problems = [];
     if (!value.shouldPreplan) problems.push('선분해 대상 감지 실패');
     if (!value.hasResponse) problems.push('선분해 응답 생성 실패');
-    if (Number(value.actionCount || 0) < 2) problems.push('액션 분해 부족');
-    if (!value.hasCharacterUpdate) problems.push('캐릭터 기본 패치 누락');
+    if (Number(value.actionCount || 0) < 1) problems.push('액션 분해 부족');
+    if (value.hasCharacterUpdate) problems.push('로컬 선분해가 캐릭터 전체 패치를 직접 생성함');
     if (!value.hasBulkCreate) problems.push('로어북/인물 bulk_create 누락');
+    if (value.hasUnsafeFallbackFingerprint) problems.push('로컬 fallback 고정 템플릿명 노출');
     if (!value.remakeShouldPreplan) problems.push('리메이크/빈 봇 프로젝트 요청 선분해 감지 실패');
-    if (!value.remakeHasCharacterUpdate) problems.push('리메이크 요청 캐릭터 기본 패치 누락');
+    if (value.remakeHasCharacterUpdate) problems.push('리메이크 로컬 선분해가 캐릭터 전체 패치를 직접 생성함');
     if (!value.remakeHasBulkCreate) problems.push('리메이크 요청 bulk_create 누락');
     if (!value.remakeCarriesReferenceDigest) problems.push('리메이크 선분해 액션에 참고 자료 다이제스트 누락');
+    if (value.remakeHasUnsafeFallbackFingerprint) problems.push('리메이크 선분해에 고정 판타지 fallback 템플릿명 노출');
     if (!value.startNowFollowupDetected) problems.push('시작/하라고 후속 실행 지시 감지 실패');
     if (!value.moduleBlocked) problems.push('모듈 작업 대상에서 캐릭터 선분해 차단 실패');
     if (!value.planningOnlyBlocked) problems.push('계획만 요청에서 선분해 차단 실패');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '대형 요청 선분해 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : '전체 캐릭터 제작 요청을 메인 모델 호출 전 캐릭터 패치와 청크 작업으로 분해',
+        problems.length ? `문제: ${problems.join(' / ')}` : '로컬 선분해는 임의 캐릭터 전체 덮어쓰기 없이 bulk_create 청크 작업만 구성',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -35525,7 +35532,7 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             systemPrompt += UI_DESIGN_FORMAT;
         }
 
-        const preplannedLargeRequest = buildKeroPreplannedLargeRequestResponse(userInput, {
+        const preplannedLargeRequest = await buildKeroPreplannedLargeRequestExecutionResponse(userInput, {
             ...keroContextOptions,
             fromKero: true,
             userRequest: userInput,
@@ -35535,7 +35542,7 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
         if (preplannedLargeRequest) {
             addKeroWorkstreamEvent(
                 '대형 요청 선분해',
-                '한 번의 대형 모델 호출로 처리하지 않고 캐릭터 기본 패치와 청크 작업으로 먼저 분해했습니다.',
+                '거대 컨텍스트를 직접 던지지 않고 작은 모델 생성 단위와 청크 작업으로 먼저 분해했습니다.',
                 'action',
                 requestProgressOptions
             );
@@ -42790,7 +42797,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.48 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.49 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -45533,7 +45540,7 @@ function inferKeroBulkCreateSpecsFromText(text, options = {}) {
     const existingLorebookSpec = specs.get('lorebook');
     if ((!existingLorebookSpec || existingLorebookSpec.reason === 'small_create')
         && isFullCharacterBuild
-        && /로어북|lorebook|설정집|세계관|세계|worldbuilding|setting|lore|history|story|인물|등장인물|characters?|npc|지역|장소|세력|factions?|관계|relationships?/i.test(source)) {
+        && (hasKeroGatewayGenreBuildSignal(source) || /로어북|lorebook|설정집|세계관|세계|worldbuilding|setting|lore|history|story|인물|등장인물|characters?|npc|지역|장소|세력|factions?|관계|relationships?/i.test(source))) {
         add('lorebook', generalCount || 50, 'full_build_default_lorebook');
     }
 
@@ -46335,14 +46342,27 @@ function compactKeroGatewayFallbackSourceRequest(request = '', limit = 5200) {
 function buildKeroGatewayBulkCreateUserRequest(request, concept = {}, spec = {}, options = {}) {
     const source = compactKeroGatewayFallbackSourceRequest(request, spec?.target === 'lorebook' ? 5200 : 3600);
     const referenceDigest = compactKeroExecutionText(options.referenceDigest || concept.referenceDigest || '', 4200);
+    const targetLabel = spec?.target === 'regex'
+        ? '정규식'
+        : (spec?.target === 'trigger' ? '트리거' : '로어북');
+    if (options.disableFallbackWorldAnchor === true) {
+        return [
+            source,
+            referenceDigest ? `[참고 자료 다이제스트]\n${referenceDigest}` : '',
+            '',
+            `[이번 ${targetLabel} 생성 기준]`,
+            '사용자 요청과 참고 자료 다이제스트를 우선한다.',
+            '로컬 fallback 세계관명/예시명/템플릿 앵커를 사용하지 않는다.',
+            spec?.target === 'lorebook'
+                ? '세계관/역사/인물/관계 항목은 서로 다른 기능과 갈등을 가진 완성 설정으로 작성한다. 기존 참고작품의 큰 축은 보존하되 이름, 명칭, 문장은 새로 만든다.'
+                : '생성 항목은 실제 RisuAI 사용성을 기준으로 작성한다.'
+        ].filter((line) => line !== '').join('\n');
+    }
     if (safeString(concept.genre) !== 'fantasy') {
         return [source, referenceDigest ? `[참고 자료 다이제스트]\n${referenceDigest}` : ''].filter(Boolean).join('\n\n');
     }
     const factions = ensureArray(concept.factions).filter(Boolean).join(', ');
     const constraints = concept.constraints || {};
-    const targetLabel = spec?.target === 'regex'
-        ? '정규식'
-        : (spec?.target === 'trigger' ? '트리거' : '로어북');
     return [
         source,
         '',
@@ -46390,7 +46410,9 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
         : (target === 'trigger' ? '트리거' : '로어북');
     const actions = [];
     let characterAction = null;
-    if (isFullCharacterBuild) {
+    const skipCharacterPatch = options.skipCharacterPatch === true;
+    const disableFallbackWorldAnchor = options.disableFallbackWorldAnchor === true || skipCharacterPatch;
+    if (isFullCharacterBuild && !skipCharacterPatch) {
         characterAction = buildKeroGatewayFallbackCharacterPatchAction(request, { includeStarterLorebooks: true, fullBuild: true, concept: fallbackConcept });
         actions.push(characterAction);
     }
@@ -46407,7 +46429,7 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
             chunkSize: Math.min(10, Math.max(3, Math.ceil(count / 12))),
             itemCharLimit: target === 'lorebook' ? (isCharacterRosterBulk ? 2400 : 3600) : 1800,
             chunkCharLimit: target === 'lorebook' ? (isCharacterRosterBulk ? 16000 : 18000) : 12000,
-            userRequest: buildKeroGatewayBulkCreateUserRequest(request, fallbackConcept, spec, { referenceDigest }),
+            userRequest: buildKeroGatewayBulkCreateUserRequest(request, fallbackConcept, spec, { referenceDigest, disableFallbackWorldAnchor }),
             jobId: bulkId,
             bulkJobId: bulkId,
             actionJobId: bulkId,
@@ -46430,11 +46452,13 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
     const bulkDetail = runnableSpecs.length
         ? runnableSpecs.map((spec) => `${labelForTarget(spec.target)} ${spec.count}개`).join(', ')
         : '';
-    const detail = isFullCharacterBuild && bulkDetail
+    const detail = isFullCharacterBuild && skipCharacterPatch && bulkDetail
+        ? `검증 없이 임의 캐릭터 전체 저장을 하지 않고 ${bulkDetail} 대량 생성 작업만 먼저 시작합니다.`
+        : (isFullCharacterBuild && bulkDetail
         ? `캐릭터 기본 구조를 먼저 저장하고 ${bulkDetail} 대량 생성은 각각 청크 작업으로 이어갈게.`
         : (isFullCharacterBuild
             ? '캐릭터 기본 구조를 먼저 저장하고, 남은 세부 작업은 이어갈게.'
-            : `${bulkDetail} 대량 생성 작업으로 쪼개서 이어갈게.`);
+            : `${bulkDetail} 대량 생성 작업으로 쪼개서 이어갈게.`));
     const reasonText = safeString(options.reasonText || '게이트웨이가 큰 응답을 중간에서 끊어서, 같은 대형 응답을 그대로 반복하지 않고').trim();
     return `${reasonText} ${detail}\n@action ${actionText}`;
 }
@@ -46556,9 +46580,137 @@ function buildKeroPreplannedLargeRequestResponse(userText, options = {}) {
         ...options,
         userRequest: safeString(options.userRequest || userText).trim(),
         allowSmallCreate: false,
+        skipCharacterPatch: true,
         actionReason: 'large_request_preplan',
-        reasonText: '처음부터 한 번의 대형 호출로 처리하지 않고'
+        reasonText: '검증 없는 로컬 전체 덮어쓰기를 하지 않고'
     });
+}
+
+function hasKeroUnsafeLocalFallbackFingerprint(text = '') {
+    return /(아르카넬|쇠비늘 왕관|에스카리온|카르덴누스|서리화로|이르베샤르|나흐트오름|유리숲|아벨리른|세리카엘|유리수해|유리뿌리|무염 성채|오르단트|바일로크|비 오는 경계선|비가 멈추지 않는 구도심|슈퍼바이브 캐릭터)/i.test(safeString(text));
+}
+
+function normalizeKeroActionResponseText(response = '') {
+    const source = safeString(response).trim();
+    if (!source) return '';
+    const parsed = parseKeroAction(source);
+    if (parsed.actions?.length) return source;
+    try {
+        const json = JSON.parse(stripAiCodeFence(source).trim());
+        const actions = Array.isArray(json) ? json : [json];
+        if (actions.some((entry) => entry && typeof entry === 'object')) {
+            return `@action ${JSON.stringify(Array.isArray(json) ? json : json)}`;
+        }
+    } catch (_) {}
+    return source;
+}
+
+function isKeroModelPreplannedActionSetSafe(actions = [], options = {}) {
+    const request = safeString(options.userRequest || '');
+    const allowedTargets = new Set(['character', 'lorebook', 'regex', 'trigger', 'asset']);
+    const normalizedActions = ensureArray(actions);
+    if (!normalizedActions.length) return false;
+    return normalizedActions.every((action) => {
+        if (!action || typeof action !== 'object') return false;
+        const type = safeString(action.type);
+        const target = normalizeKeroActionTargetName(action.target);
+        if (!['create', 'update', 'bulk_create'].includes(type)) return false;
+        if (!allowedTargets.has(target)) return false;
+        const serialized = JSON.stringify(action);
+        if (hasKeroUnsafeLocalFallbackFingerprint(serialized) && !hasKeroUnsafeLocalFallbackFingerprint(request)) return false;
+        if (target === 'character') {
+            if (type !== 'update') return false;
+            const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+            const usefulFields = ['name', 'desc', 'firstMessage', 'globalNote', 'backgroundHTML', 'lorebooks', 'regexScripts', 'triggers']
+                .filter((field) => Object.prototype.hasOwnProperty.call(payload, field));
+            if (usefulFields.length < 2) return false;
+            if (payload.personality || payload.scenario) return false;
+        }
+        if (type === 'bulk_create') {
+            const count = Number(action.count || action.total || action.totalCount || 0);
+            if (!Number.isFinite(count) || count <= 0) return false;
+            if (!safeString(action.userRequest).trim()) return false;
+        }
+        return true;
+    });
+}
+
+function mergeKeroPreplannedCoverageActions(modelActions = [], userText = '', options = {}) {
+    const request = safeString(options.userRequest || userText).trim();
+    const merged = ensureArray(modelActions).map((action) => makeCloneableData(action));
+    const hasBulk = merged.some((action) => safeString(action?.type) === 'bulk_create');
+    if (!hasBulk) {
+        const fallback = buildKeroPreplannedLargeRequestResponse(request, options);
+        const fallbackActions = parseKeroAction(fallback).actions || [];
+        fallbackActions
+            .filter((action) => safeString(action?.type) === 'bulk_create')
+            .forEach((action) => merged.push(makeCloneableData(action)));
+    }
+    return merged;
+}
+
+async function buildKeroModelAssistedPreplannedLargeRequestResponse(userText, options = {}) {
+    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
+    const request = safeString(options.userRequest || userText).trim();
+    const referenceDigest = compactKeroExecutionText(
+        options.referenceDigest || buildKeroReferenceDigestForExecution(options.keroContextPayload || options.contextPayload || {}),
+        7200
+    );
+    const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false, fullBuild: true });
+    const systemPrompt = `너는 RisuAI 대형 캐릭터/세계관 작업 선분해기다.
+목표는 거대한 원문 전체를 한 번에 처리하지 않고, 지금 즉시 저장 가능한 첫 실행 단위만 만든 뒤 나머지는 bulk_create 작업으로 이어가게 하는 것이다.
+
+절대 규칙:
+- 반드시 @action JSON 하나 또는 JSON 배열만 출력한다. 설명, 마크다운, 코드펜스 금지.
+- 사용자의 요청과 참고 자료 다이제스트를 기준으로 새 이름, 새 세계관, 새 관계 구조를 직접 설계한다.
+- 로컬 기본 템플릿명, 예시명, 아르카넬/아벨리른/유리수해/비 오는 경계선 같은 fallback 이름을 쓰지 않는다.
+- 사용자가 기존 작품을 리메이크하라고 하면 참고 자료의 큰 축과 관계 기능은 보존하되 이름/명칭/문장은 새로 만든다. 원문 복붙 금지.
+- 첫 액션은 가능하면 character update로 name, desc, firstMessage, globalNote, backgroundHTML 중 최소 3개를 저장한다.
+- 방대한 세부 세계관/인물/역사/관계는 bulk_create target:"lorebook"으로 넘긴다. bulk_create.userRequest에는 요청 요약과 참고 다이제스트를 충분히 넣는다.
+- personality/scenario 필드는 절대 쓰지 말고 desc에 통합한다.
+- 확신 없는 임의 전체 덮어쓰기는 금지한다. 안전한 character update를 못 만들면 bulk_create만 출력한다.`;
+    const payload = {
+        userRequest: compactKeroGatewayFallbackSourceRequest(request, 5200),
+        referenceDigest,
+        inferredBulkSpecs: bulkSpecs.map((spec) => ({
+            target: spec.target,
+            count: spec.count,
+            subject: spec.subject || '',
+            perEntity: spec.perEntity === true,
+            qualityProfile: spec.qualityProfile || ''
+        }))
+    };
+    try {
+        const response = await translateSingleChunk(systemPrompt, JSON.stringify(payload, null, 2), 1, {
+            ...options,
+            fromKero: true,
+            keroMode: 'work',
+            workTargetMode: 'character',
+            disableKeroContext: true,
+            keroContextPayload: null,
+            keroContextCompression: null,
+            useSubmodels: false,
+            allowGatewayRecovery: false,
+            disableLargeRequestPreplan: true,
+            maxOutputTokens: Math.min(Number(options.maxOutputTokens) || 8192, 8192)
+        });
+        const actionResponse = normalizeKeroActionResponseText(response);
+        const parsed = parseKeroAction(actionResponse);
+        if (!isKeroModelPreplannedActionSetSafe(parsed.actions, { userRequest: request })) return '';
+        const actions = mergeKeroPreplannedCoverageActions(parsed.actions, request, { ...options, userRequest: request, referenceDigest });
+        if (!isKeroModelPreplannedActionSetSafe(actions, { userRequest: request })) return '';
+        return `대형 요청을 작은 모델 생성 단위로 먼저 분해했습니다.\n@action ${JSON.stringify(actions.length === 1 ? actions[0] : actions)}`;
+    } catch (error) {
+        Logger.warn('Kero model-assisted large request preplan failed:', error?.message || error);
+        return '';
+    }
+}
+
+async function buildKeroPreplannedLargeRequestExecutionResponse(userText, options = {}) {
+    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
+    const modelResponse = await buildKeroModelAssistedPreplannedLargeRequestResponse(userText, options);
+    if (modelResponse) return modelResponse;
+    return buildKeroPreplannedLargeRequestResponse(userText, options);
 }
 
 function isKeroWorkTargetMutationRequest(text = '', mode = currentWorkTargetMode) {
@@ -55674,7 +55826,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.48",
+        name: "SuperVibeBot v1.5.49",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -55683,7 +55835,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.48 Settings",
+        "SuperVibeBot v1.5.49 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -55726,7 +55878,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.48");
+        Logger.info("SuperVibeBot v1.5.49");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

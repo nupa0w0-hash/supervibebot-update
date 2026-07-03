@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.48`
+Latest version: `1.5.49`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.49
+
+- Prevents local large-request preplanning from overwriting characters with canned fallback worlds.
+- Uses a compact model-assisted first chunk for remake/empty-bot jobs before queuing bulk-create follow-up work.
+- Removes fallback world anchors from safe bulk-create preplan requests.
 
 ## 1.5.48
 
