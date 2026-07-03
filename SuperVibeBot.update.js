@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.37
-//@version 1.5.37
+//@display-name 🐸 SuperVibeBot v1.5.38
+//@version 1.5.38
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.37는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.38는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.37 Release Notes
+ * SuperVibeBot v1.5.38 Release Notes
+ * - v1.5.38: makes Kero asset generation prompt-first instead of Asset Studio preset-part driven
+ * - v1.5.38: adds local image prompting guidance for ComfyUI, SDXL/ADXL, and Animagine-style anime XL models
+ * - v1.5.38: stops Kero asset execution from falling back to image preset positive prompts when an asset prompt is missing
  * - v1.5.37: lets Kero create image assets through the configured Image API profile and register them to emotionImages/additionalAssets
  * - v1.5.37: teaches Kero the asset create @action schema so profile/standing asset requests do not end as "cannot do it" answers
  * - v1.5.37: verifies Kero asset actions by tracking character asset list changes after generation
@@ -13104,7 +13107,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.37',
+            '//@version 1.5.38',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -30423,6 +30426,15 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         return normalizeImageGenerationPreset(preset);
     }
 
+    function getKeroDefaultAssetNegativePrompt(profile = {}, preset = {}) {
+        const probe = `${safeString(profile.provider)} ${safeString(profile.name)} ${safeString(profile.model)} ${safeString(preset.name)} ${safeString(preset.model)}`.toLowerCase();
+        const animeLike = /animagine|anima|anime|illustrious|nai|novel|adxl|sdxl/i.test(probe);
+        if (animeLike) {
+            return 'lowres, worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, text, logo, watermark, blurry, jpeg artifacts, cropped face, duplicate character';
+        }
+        return 'low quality, bad anatomy, bad hands, extra fingers, text, logo, watermark, blurry, distorted face, duplicate subject';
+    }
+
     function getKeroAssetOutputName(item, index = 0, total = 1) {
         const base = safeString(item?.name).trim() || (item?.target === 'emotion' ? 'emotion' : 'asset');
         if (total <= 1) return item?.target === 'emotion' ? base : svbNormalizeAssetName(base, 'asset');
@@ -30487,8 +30499,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             };
             const profile = pickKeroAssetImageProfile(item.profileId);
             const preset = pickKeroAssetImagePreset(item.presetId, profile);
-            const prompt = svbRenderImagePromptTemplate(item.prompt || preset.prompt, vars).trim();
-            const negative = svbRenderImagePromptTemplate(item.negative || preset.negative, vars).trim();
+            const prompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
+            const negative = svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim();
             const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
             const steps = item.steps || preset.steps || profile.steps || 26;
             updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
@@ -34162,14 +34174,26 @@ ${metaBlock}
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
-- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","assets":[{"assetType":"additional","name":"character_profile","prompt":"best quality, solo character portrait, clear face, fantasy profile asset","negative":"text, logo, watermark, low quality, bad anatomy","ratioId":"13:19","steps":26}]}}
-- 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
-- profileId/presetId를 모르면 생략해도 된다. 시스템은 활성 이미지 API 프로필/프리셋을 쓰고, Wellspring 프로필이 설정되어 있으면 Wellspring 기본 프리셋을 사용할 수 있다.
+- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"assets":[{"assetType":"additional","name":"character_profile","prompt":"masterpiece, best quality, solo, upper body portrait, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
+- 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
+- profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
 - 인물 기본 프로필 에셋, 대표 인물 프로필 이미지, 스탠딩 이미지처럼 캐릭터가 아닌 이미지 파일을 만드는 요청은 lorebook/regex/trigger가 아니라 target:"asset"이다.
 - assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
 - //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch가 가능해야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com의 main 브랜치 JS URL을 우선 사용한다.
 - raw.githubusercontent.com 브랜치 경로와 GitHub raw refs 경로는 캐시/지연으로 업데이트가 안 보일 수 있으므로 자동 업데이트 기본값으로 추천하지 않는다.
+
+### 이미지 에셋 프롬프팅 전문 규칙
+- 에셋 prompt는 영어 중심으로 쓴다. 이름/고유명은 그대로 두되, 외형/의상/구도/표정/조명/배경/스타일을 구체적으로 작성한다.
+- "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
+- 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
+- ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
+- SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, camera framing 순서로 명료하게 쓴다. portrait는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
+- Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
+- LoRA/trigger word는 사용자가 알려준 경우에만 정확히 넣는다. 모르는 LoRA trigger를 지어내지 않는다. "LoRA가 연결된 프로필을 사용" 같은 말로 prompt를 비워두면 안 된다.
+- 프로필 에셋은 additional, 감정 슬롯은 emotion을 쓴다. 감정 슬롯은 같은 캐릭터 디자인을 유지하고 expression/action만 바꾼다.
+- 이미지에 글자/로고/상태창/UI가 필요한 요청이 아니면 negative에 text, logo, watermark를 넣어 이미지 안 글자를 막는다.
 
         ### update (수정)
         - 사용자가 명시적으로 수정/업데이트를 요청할 때만 사용한다. 실제 실행은 시스템의 수정 전 확인 설정을 따른다.
@@ -41490,7 +41514,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.37 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.38 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -44947,8 +44971,8 @@ function buildKeroMissingAssetFallbackResponse(userText, assistantText = '', opt
     const assets = names.map((name) => ({
         assetType: 'additional',
         name: `${name}_profile`,
-        prompt: `best quality, solo character profile portrait, ${name}, clear face, upper body, polished fantasy simulation character asset, clean background`,
-        negative: 'text, logo, watermark, low quality, bad anatomy, extra fingers, blurry',
+        prompt: `masterpiece, best quality, solo, upper body portrait, ${name}, looking at viewer, clear face, detailed eyes, distinctive character silhouette, role-specific outfit, polished anime fantasy simulation character asset, clean readable background, soft cinematic lighting`,
+        negative: 'lowres, worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, text, logo, watermark, blurry, cropped face, duplicate character',
         ratioId: '13:19',
         steps: 26
     }));
@@ -44956,8 +44980,6 @@ function buildKeroMissingAssetFallbackResponse(userText, assistantText = '', opt
         type: 'create',
         target: 'asset',
         payload: {
-            profileId: WELLSPRING_IMAGE_API_PROFILE_ID,
-            presetId: WELLSPRING_IMAGE_GENERATION_PRESET_ID,
             assets
         },
         reason: 'missing_asset_action_local_fallback',
@@ -53046,7 +53068,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.37",
+        name: "SuperVibeBot v1.5.38",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -53055,7 +53077,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.37 Settings",
+        "SuperVibeBot v1.5.38 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -53098,7 +53120,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.37");
+        Logger.info("SuperVibeBot v1.5.38");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
