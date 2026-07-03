@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.52`
+Latest version: `1.5.53`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.53
+
+- Raises auto/unknown/router model output fallbacks to 128K instead of silently falling back to 8192.
+- Keeps enabled sub-agents parallel across bulk chunks instead of shrinking to one worker on large/mobile payloads.
+- Removes fixed 50/1000 bulk-count behavior, preserves requested counts for resume, and treats duplicate generated items as retryable failures rather than completed work.
+- Removes the local short-content quality gate so the LLM output is not rejected just because local heuristics dislike the length.
 
 ## 1.5.52
 
@@ -203,7 +210,7 @@ This repository is dedicated to SuperVibeBot only. Other plugins should use thei
 
 ## 1.5.12
 
-- Adds a separate output-token cap for sub-agent manager reports: 4096 on normal desktop profiles and 2048 on constrained/mobile/webview profiles.
+- Added a separate output-token cap for sub-agent manager reports at the time; the fixed cap was later removed by the model-scale output policy.
 - Reduces WebView/PocketRisu crash pressure when GLM/Kimi/API Hub sub-agents return oversized reports.
 - Keeps explicit `subAgentMaxOutputTokens` overrides available for advanced cases.
 - Adds runtime diagnostics for sub-agent output caps.
