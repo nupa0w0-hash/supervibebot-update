@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.41
-//@version 1.5.41
+//@display-name 🐸 SuperVibeBot v1.5.42
+//@version 1.5.42
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.41는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.42는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.41 Release Notes
+ * SuperVibeBot v1.5.42 Release Notes
+ * - v1.5.42: upgrades Asset Studio with AssetGod-style image ZIP backup/import and embedded asset metadata
+ * - v1.5.42: adds extension/name cleanup, per-asset image download, and generated-output tag copy/download actions
+ * - v1.5.42: changes generated preset outputs into a larger gallery grid for easier review after Wellspring/API batches
+ * - v1.5.42: teaches Kero asset_manage actions for Asset Studio cleanup, foldering, pattern rename, and deletion
  * - v1.5.41: adds Kero asset style presets and custom stylePrompt support for reusable 2D image prompt packs
  * - v1.5.41: lets Kero choose a built-in stylePreset per asset request while keeping the 2D/safe prompt sanitizer
  * - v1.5.40: forces Kero image asset prompts into 2D anime illustration style and strips realism/photo/3D trigger terms before API calls
@@ -1162,7 +1166,7 @@ function hasKeroActionDirectiveText(text) {
     const source = safeString(text);
     if (!source.trim()) return false;
     if (/(?:^|\n|[\s:：>])\s*(?:[-*]\s*)?@?action\b\s*[:{\[]/i.test(source)) return true;
-    return /"type"\s*:\s*"(?:improve|apply|create|generate|make|bulk_create|asset_generate|generate_asset|asset_generation|image_generate|generate_image|image_generation|update|patch|delete)"/i.test(source)
+    return /"type"\s*:\s*"(?:improve|apply|create|generate|make|bulk_create|asset_generate|generate_asset|asset_generation|asset_manage|manage_asset|asset_update|image_generate|generate_image|image_generation|update|patch|delete)"/i.test(source)
         && /"target"\s*:/i.test(source);
 }
 
@@ -9547,6 +9551,9 @@ function normalizeKeroActionTypeName(type) {
         rewrite: 'improve',
         update: 'update',
         patch: 'patch',
+        manage: 'asset_manage',
+        organize: 'asset_manage',
+        cleanup: 'asset_manage',
         apply: 'apply',
         save: 'apply',
         create: 'create',
@@ -9560,6 +9567,14 @@ function normalizeKeroActionTypeName(type) {
         generateimage: 'create',
         assetcreate: 'create',
         createasset: 'create',
+        assetmanage: 'asset_manage',
+        manageasset: 'asset_manage',
+        assetupdate: 'asset_manage',
+        updateasset: 'asset_manage',
+        assetorganize: 'asset_manage',
+        organizeasset: 'asset_manage',
+        assetcleanup: 'asset_manage',
+        cleanupasset: 'asset_manage',
         imagecreate: 'create',
         createimage: 'create',
         assetgeneration: 'create',
@@ -9674,6 +9689,7 @@ function getKeroActionLabel(type) {
         patch: '패치',
         apply: '적용',
         create: '생성',
+        asset_manage: '에셋 관리',
         bulk_create: '대량 생성',
         delete: '삭제'
     };
@@ -9747,7 +9763,7 @@ function inferKeroActionTypeTargetFromAlias(value = '') {
     const raw = safeString(value).trim();
     if (!raw) return { type: '', target: '' };
     const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
-    const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+    const validTypes = new Set(['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
     const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
     for (let index = 0; index < parts.length; index += 1) {
         const first = parts[index];
@@ -9837,7 +9853,7 @@ function isKeroActionShapedObject(entry) {
     const type = normalizeKeroActionTypeName(entry.type);
     const target = normalizeKeroActionTargetName(entry.target);
     if (!type || !target) return false;
-    return ['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update'].includes(type);
+    return ['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update'].includes(type);
 }
 
 function getKeroGlobalSingleFieldPatchKeys(target) {
@@ -9947,7 +9963,7 @@ function normalizeKeroParsedActionForExecution(action) {
         return null;
     }
     if (target === 'asset') {
-        if (type === 'create') return normalized;
+        if (type === 'create' || type === 'asset_manage' || type === 'update' || type === 'patch' || type === 'delete') return normalized;
         return null;
     }
     if (target === 'character') {
@@ -10646,6 +10662,7 @@ function getKeroActionVerificationSnapshot(char) {
         triggerSignature: getKeroSnapshotSignature(ensureArray(getCharacterField(char, 'triggerscript'))),
         emotionAssetSignature: getKeroSnapshotSignature(normalizeEmotionAssets(getCharacterField(char, 'emotionImages'))),
         additionalAssetSignature: getKeroSnapshotSignature(normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'))),
+        assetStudioMetaSignature: getKeroSnapshotSignature(svbReadAssetStudioMetaFromCharacter(char)),
         lorebookCount: ensureArray(getCharacterField(char, 'globalLore')).length,
         regexCount: ensureArray(getCharacterField(char, 'customscript')).length,
         triggerCount: ensureArray(getCharacterField(char, 'triggerscript')).length,
@@ -11028,11 +11045,25 @@ function summarizeKeroActionVerification(action, beforeSnapshot, afterSnapshot, 
         const additionalDelta = Number(afterSnapshot.additionalAssetCount || 0) - Number(beforeSnapshot.additionalAssetCount || 0);
         const totalDelta = Math.max(0, emotionDelta) + Math.max(0, additionalDelta);
         const signatureChanged = beforeSnapshot.emotionAssetSignature !== afterSnapshot.emotionAssetSignature
-            || beforeSnapshot.additionalAssetSignature !== afterSnapshot.additionalAssetSignature;
+            || beforeSnapshot.additionalAssetSignature !== afterSnapshot.additionalAssetSignature
+            || beforeSnapshot.assetStudioMetaSignature !== afterSnapshot.assetStudioMetaSignature;
         const requested = Number(result.requested || action?.requested || action?.count || action?.total || 0);
         const created = Number(result.created || totalDelta || 0);
+        const changed = Number(result.changed || 0);
         if (result.failed > 0) {
             return { status: 'warning', ok: false, detail: result.detail || `이미지 에셋 일부 생성 실패: ${result.failed}개`, warnings: ['asset_partial_failure'] };
+        }
+        if (type !== 'create') {
+            if (changed > 0 && signatureChanged) {
+                return { status: 'verified', ok: true, detail: result.detail || `이미지 에셋 ${changed}개 변경 확인`, warnings: [] };
+            }
+            if (signatureChanged) {
+                return { status: 'verified', ok: true, detail: result.detail || '이미지 에셋 관리 변경 확인', warnings: [] };
+            }
+            if (changed > 0) {
+                return { status: 'warning', ok: false, detail: result.detail || `이미지 에셋 ${changed}개 변경 보고가 있었지만 저장 스냅샷 변화가 확인되지 않았습니다.`, warnings: ['asset_snapshot_unchanged'] };
+            }
+            return { status: 'warning', ok: false, detail: result.detail || '이미지 에셋 관리 변경이 확인되지 않았습니다.', warnings: ['asset_snapshot_unchanged'] };
         }
         if (totalDelta > 0 || (created > 0 && signatureChanged)) {
             return { status: 'verified', ok: true, detail: `이미지 에셋 ${totalDelta || created}개 등록 확인`, warnings: [] };
@@ -11173,7 +11204,7 @@ function shouldVerifyKeroActionEffect(action) {
     const type = safeString(action?.type);
     const target = safeString(action?.target);
     const shouldVerifyImprove = type === 'improve' && action?.autoApply !== false;
-    if (!['create', 'bulk_create', 'delete', 'apply', 'update', 'patch'].includes(type) && !shouldVerifyImprove) return false;
+    if (!['create', 'asset_manage', 'bulk_create', 'delete', 'apply', 'update', 'patch'].includes(type) && !shouldVerifyImprove) return false;
     return ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'asset'].includes(target)
         || isKeroCharacterPatchAction(action)
         || isTextFieldStudioTarget(target);
@@ -12132,6 +12163,13 @@ function addSvbRuntimeActionParserSelfTest(checks) {
                         assetType: 'additional'
                     }
                 ]
+            },
+            {
+                type: 'asset_manage',
+                target: 'asset',
+                operation: 'normalize_extensions',
+                kind: 'all',
+                all: true
             }
         ];
         const tagged = `케로 진단 액션\n@action ${JSON.stringify(actionSource)}`;
@@ -13122,7 +13160,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.41',
+            '//@version 1.5.42',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -26006,7 +26044,7 @@ ${currentVars || '{}'}
         const raw = safeString(value).trim();
         if (!raw) return { type: '', target: '' };
         const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
-        const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+        const validTypes = new Set(['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
         const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
         for (let index = 0; index < parts.length; index += 1) {
             const first = parts[index];
@@ -26061,7 +26099,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -26098,6 +26136,7 @@ ${currentVars || '{}'}
         if (!type || !target) return false;
         return [
             'apply',
+            'asset_manage',
             'bulk_create',
             'create',
             'delete',
@@ -26240,6 +26279,9 @@ ${currentVars || '{}'}
             rewrite: 'improve',
             update: 'update',
             patch: 'patch',
+            manage: 'asset_manage',
+            organize: 'asset_manage',
+            cleanup: 'asset_manage',
             apply: 'apply',
             save: 'apply',
             create: 'create',
@@ -26253,6 +26295,14 @@ ${currentVars || '{}'}
             generateimage: 'create',
             assetcreate: 'create',
             createasset: 'create',
+            assetmanage: 'asset_manage',
+            manageasset: 'asset_manage',
+            assetupdate: 'asset_manage',
+            updateasset: 'asset_manage',
+            assetorganize: 'asset_manage',
+            organizeasset: 'asset_manage',
+            assetcleanup: 'asset_manage',
+            cleanupasset: 'asset_manage',
             imagecreate: 'create',
             createimage: 'create',
             assetgeneration: 'create',
@@ -26450,10 +26500,10 @@ ${currentVars || '{}'}
             if (['improve', 'apply', 'create', 'bulk_create', 'delete'].includes(type)) return normalized;
             return null;
         }
-        if (target === 'asset') {
-            if (type === 'create') return normalized;
-            return null;
-        }
+    if (target === 'asset') {
+        if (type === 'create' || type === 'asset_manage' || type === 'update' || type === 'patch' || type === 'delete') return normalized;
+        return null;
+    }
         if (target === 'character') {
             if (['update', 'patch'].includes(type) && isPlainObject(normalized.payload)) return normalized;
             return null;
@@ -27778,6 +27828,7 @@ ${currentVars || '{}'}
             update: '수정',
             delete: '삭제',
             create: '생성',
+            asset_manage: '에셋 관리',
             bulk_create: '대량 생성'
         };
         return labels[type] || type || '작업';
@@ -28063,6 +28114,19 @@ ${currentVars || '{}'}
             return '새 항목 생성';
         }
 
+        if (target === 'asset' && ['asset_manage', 'update', 'patch', 'delete'].includes(type)) {
+            const operation = normalizeKeroAssetManageOperation(action);
+            const names = collectKeroAssetManageNames(action).filter(name => name !== '*');
+            const folder = getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '');
+            const pattern = getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '');
+            const lines = [`이미지 에셋 ${getKeroAssetManageOperationLabel(operation)}`];
+            if (names.length) lines.push(`대상: ${names.slice(0, 10).join(', ')}${names.length > 10 ? ' ...' : ''}`);
+            if (folder !== '') lines.push(`폴더: ${safeString(folder)}`);
+            if (pattern) lines.push(`패턴: ${safeString(pattern)}`);
+            if (getKeroAssetManageBoolean(action, ['all', 'includeAll', 'selectAll'])) lines.push('범위: 전체');
+            return lines.join('\n');
+        }
+
         return `${getTargetLabel(target)} ${type} 작업`;
     }
 
@@ -28082,7 +28146,7 @@ ${currentVars || '{}'}
         const type = safeString(action?.type);
         const target = normalizeKeroActionTargetName(action?.target);
         if (!type || !target) return false;
-        if (['create', 'bulk_create', 'update', 'patch', 'delete', 'apply'].includes(type)) return true;
+        if (['create', 'asset_manage', 'bulk_create', 'update', 'patch', 'delete', 'apply'].includes(type)) return true;
         if (type === 'improve') return action?.autoApply !== false || ['lorebook', 'regex', 'trigger', 'desc', 'globalNote', 'background', 'vars'].includes(target);
         return false;
     }
@@ -30618,6 +30682,345 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료`, createdAssets };
     }
 
+    function getKeroAssetManageSources(action = {}) {
+        const sources = [];
+        if (isPlainObject(action.payload)) sources.push(action.payload);
+        ['data', 'params', 'options'].forEach((key) => {
+            if (isPlainObject(action?.[key])) sources.push(action[key]);
+        });
+        sources.push(action || {});
+        return sources;
+    }
+
+    function getKeroAssetManageValue(action = {}, keys = [], fallback = '') {
+        for (const source of getKeroAssetManageSources(action)) {
+            for (const key of keys) {
+                if (source && Object.prototype.hasOwnProperty.call(source, key)) {
+                    return source[key];
+                }
+            }
+        }
+        return fallback;
+    }
+
+    function getKeroAssetManageBoolean(action = {}, keys = []) {
+        const value = getKeroAssetManageValue(action, keys, undefined);
+        if (value === true) return true;
+        const text = safeString(value).trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y', 'all', '*', '전체'].includes(text);
+    }
+
+    function normalizeKeroAssetManageOperation(action = {}) {
+        const explicit = getKeroAssetManageValue(action, ['operation', 'op', 'mode', 'assetOperation', 'asset_operation'], '');
+        const type = normalizeKeroActionTypeName(action?.type);
+        const raw = safeString(explicit).trim() || (type === 'delete' ? 'delete' : '');
+        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
+        if (/^(?:normalize|normalizeextension|normalizeextensions|stripext|stripextension|stripextensions|cleanext|cleanextension|cleanextensions|extensioncleanup|cleanupextensions?)$/.test(key)) return 'normalize_extensions';
+        if (/^(?:move|movefolder|folder|setfolder|organize|organizefolder|group|groupfolder)$/.test(key)) return 'move_folder';
+        if (/^(?:pattern|patternrename|renamepattern|rename|batchrename|bulkrename)$/.test(key)) return 'pattern_rename';
+        if (/^(?:batchreplace|bulkreplace|replaceimages?|replaceasset|replaceassets)$/.test(key)) return 'batch_replace';
+        if (/^(?:zipimport|importzip|imagezipimport|importimagezip|backupimport)$/.test(key)) return 'zip_import';
+        if (/^(?:delete|remove|purge)$/.test(key)) return 'delete';
+        if (!key && getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')) return 'pattern_rename';
+        if (!key && getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '') !== '') return 'move_folder';
+        return '';
+    }
+
+    function normalizeKeroAssetManageKind(action = {}) {
+        const raw = safeString(getKeroAssetManageValue(action, ['kind', 'assetKind', 'assetType', 'targetKind', 'slotType'], '')).trim();
+        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
+        if (!key || ['all', '*', 'both', 'any', '전체'].includes(key)) return 'all';
+        if (/^(?:emotion|emotions|emotionimage|emotionimages|감정)$/.test(key)) return 'emotion';
+        if (/^(?:additional|additionalasset|additionalassets|image|images|profile|profileasset|standing|asset|assets|추가)$/.test(key)) return 'additional';
+        return 'all';
+    }
+
+    function collectKeroAssetManageNames(action = {}) {
+        const names = [];
+        const pushName = (value) => {
+            if (Array.isArray(value)) {
+                value.forEach(pushName);
+                return;
+            }
+            if (isPlainObject(value)) {
+                pushName(value.name || value.assetName || value.slotName || value.id || value.key || value.label);
+                return;
+            }
+            const text = safeString(value).trim();
+            if (!text) return;
+            text.split(/[,\n|]+/).map(item => item.trim()).filter(Boolean).forEach((item) => names.push(item));
+        };
+        for (const source of getKeroAssetManageSources(action)) {
+            ['names', 'name', 'assetNames', 'assetName', 'slotName', 'items', 'assets', 'images', 'targets'].forEach((key) => {
+                if (source && Object.prototype.hasOwnProperty.call(source, key)) pushName(source[key]);
+            });
+        }
+        const seen = new Set();
+        return names.filter((name) => {
+            const key = safeString(name).toLowerCase();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
+    function getKeroAssetManageLists(char) {
+        const emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
+        const additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
+        const meta = svbCleanAssetStudioMeta(svbReadAssetStudioMetaFromCharacter(char), emotionAssets, additionalAssets);
+        return { emotionAssets, additionalAssets, meta };
+    }
+
+    function getKeroAssetManageFolderFilter(action = {}, operation = '') {
+        if (operation === 'move_folder') {
+            const value = getKeroAssetManageValue(action, ['fromFolder', 'from_folder', 'sourceFolder', 'source_folder', 'currentFolder', 'current_folder'], undefined);
+            return value === undefined ? null : safeString(value).trim();
+        }
+        const value = getKeroAssetManageValue(action, ['folder', 'fromFolder', 'from_folder'], undefined);
+        return value === undefined ? null : safeString(value).trim();
+    }
+
+    function keroAssetFolderMatches(currentFolder, filter) {
+        if (filter === null || filter === undefined) return true;
+        const wanted = safeString(filter).trim();
+        if (!wanted) return true;
+        const key = wanted.toLowerCase();
+        if (['__none__', 'none', 'uncategorized', 'root', '미분류'].includes(key)) return !safeString(currentFolder).trim();
+        return safeString(currentFolder).trim() === wanted;
+    }
+
+    function selectKeroAssetManageRefs(lists, action = {}, operation = '') {
+        const kind = normalizeKeroAssetManageKind(action);
+        const names = collectKeroAssetManageNames(action);
+        const allRequested = getKeroAssetManageBoolean(action, ['all', 'includeAll', 'selectAll'])
+            || names.some(name => safeString(name).trim() === '*');
+        const nameSet = new Set(names
+            .filter(name => safeString(name).trim() !== '*')
+            .map(name => safeString(name).trim().toLowerCase()));
+        const folderFilter = getKeroAssetManageFolderFilter(action, operation);
+        const hasFolderFilter = folderFilter !== null && folderFilter !== undefined && safeString(folderFilter).trim() !== '';
+        const shouldDefaultAll = operation === 'normalize_extensions' && !nameSet.size && !hasFolderFilter;
+        const kinds = kind === 'emotion' ? ['emotion'] : (kind === 'additional' ? ['additional'] : ['additional', 'emotion']);
+        const refs = [];
+        for (const assetKind of kinds) {
+            const source = assetKind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+            source.forEach((asset, idx) => {
+                const name = safeString(asset.name).trim();
+                const base = svbSplitAssetDisplayName(name).base;
+                const folder = svbGetAssetStudioFolder(lists.meta, assetKind, name);
+                const nameMatches = !nameSet.size || nameSet.has(name.toLowerCase()) || nameSet.has(base.toLowerCase());
+                if (!nameMatches) return;
+                if (!keroAssetFolderMatches(folder, folderFilter)) return;
+                if (!allRequested && !shouldDefaultAll && !nameSet.size && !hasFolderFilter) return;
+                refs.push({ kind: assetKind, idx, asset });
+            });
+        }
+        return refs;
+    }
+
+    function getKeroAssetManageOperationLabel(operation) {
+        const labels = {
+            normalize_extensions: '확장자 정리',
+            move_folder: '폴더 이동',
+            pattern_rename: '패턴 이름 변경',
+            delete: '삭제'
+        };
+        return labels[operation] || operation || '에셋 관리';
+    }
+
+    function renderKeroAssetManagePattern(pattern, ref, sequence, lists) {
+        const asset = ref.asset || {};
+        const name = safeString(asset.name).trim();
+        const split = svbSplitAssetDisplayName(name);
+        const folder = svbGetAssetStudioFolder(lists.meta, ref.kind, name);
+        const ext = ref.kind === 'additional'
+            ? svbNormalizeAssetExtValue(split.ext, asset.ext, svbGetFileExt(asset.path), 'png')
+            : svbNormalizeAssetExtValue(split.ext, svbGetFileExt(asset.path), 'png');
+        const n = String(sequence + 1);
+        const nn = n.padStart(2, '0');
+        return safeString(pattern || '{name}')
+            .replace(/\{nn\}/g, nn)
+            .replace(/\{n\}/g, n)
+            .replace(/\{folder\}/g, folder || 'root')
+            .replace(/\{base\}/g, split.base || name)
+            .replace(/\{name\}/g, name)
+            .replace(/\{kind\}/g, ref.kind)
+            .replace(/\{ext\}/g, ext);
+    }
+
+    async function runKeroAssetManageAction(action = {}, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const char = await getCharacterData();
+        if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
+
+        const operation = normalizeKeroAssetManageOperation(action);
+        if (!operation) {
+            const detail = '에셋 관리 operation이 없습니다. normalize_extensions, move_folder, pattern_rename, delete 중 하나가 필요합니다.';
+            await addBotMessage(`❌ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+        if (operation === 'batch_replace' || operation === 'zip_import') {
+            const detail = '파일 선택이 필요한 작업은 케로가 직접 로컬 파일을 고를 수 없어 에셋 스튜디오 버튼에서 실행해야 합니다.';
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+
+        const lists = getKeroAssetManageLists(char);
+        const refs = selectKeroAssetManageRefs(lists, action, operation);
+        if (!refs.length) {
+            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 에셋을 찾지 못했습니다. names, folder, all:true 중 하나로 대상을 지정해야 합니다.`;
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, requested: 0, detail };
+        }
+
+        addKeroWorkstreamEvent('이미지 에셋 관리', `${getKeroAssetManageOperationLabel(operation)} ${refs.length}개 대상`, 'action', actionProgressOptions);
+        updateKeroProgress(0, refs.length, `${getKeroAssetManageOperationLabel(operation)} 준비 중...`, actionProgressOptions);
+
+        let changed = 0;
+        const changedAssets = [];
+        const markChanged = (ref, beforeName, afterName, detail = '') => {
+            changed += 1;
+            changedAssets.push({ kind: ref.kind, beforeName, afterName, detail });
+            updateKeroProgress(Math.min(changed, refs.length), refs.length, `${getKeroAssetManageOperationLabel(operation)} ${changed}/${refs.length}`, actionProgressOptions);
+        };
+
+        if (operation === 'normalize_extensions') {
+            refs.forEach((ref) => {
+                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+                const asset = list[ref.idx];
+                if (!asset) return;
+                const beforeName = safeString(asset.name).trim();
+                const split = svbSplitAssetDisplayName(beforeName);
+                const baseName = split.base || beforeName || (ref.kind === 'emotion' ? 'emotion' : 'asset');
+                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
+                if (ref.kind === 'emotion') {
+                    const nextName = svbMakeUniqueLooseAssetName(baseName, usedNames, 'emotion');
+                    if (nextName !== beforeName) {
+                        asset.name = nextName;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, 'name');
+                    }
+                } else {
+                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
+                    const nextName = svbMakeUniqueAssetName(baseName, usedNames);
+                    const nextExt = svbNormalizeAssetExtValue(split.ext, beforeExt, svbGetFileExt(asset.path), 'png');
+                    if (nextName !== beforeName || nextExt !== beforeExt) {
+                        asset.name = nextName;
+                        asset.ext = nextExt;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, `ext:${beforeExt || '-'}>${nextExt}`);
+                    }
+                }
+            });
+        } else if (operation === 'move_folder') {
+            const hasFolderValue = getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], undefined) !== undefined;
+            if (!hasFolderValue) {
+                const detail = '폴더 이동에는 folder 또는 toFolder 값이 필요합니다. 폴더를 비우려면 folder:""를 명시하세요.';
+                await addBotMessage(`❌ ${detail}`);
+                return { success: false, failed: 1, requested: refs.length, detail };
+            }
+            const folder = safeString(getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '')).trim();
+            refs.forEach((ref) => {
+                const asset = ref.kind === 'emotion' ? lists.emotionAssets[ref.idx] : lists.additionalAssets[ref.idx];
+                if (!asset?.name) return;
+                const beforeFolder = svbGetAssetStudioFolder(lists.meta, ref.kind, asset.name);
+                if (beforeFolder === folder) return;
+                svbSetAssetStudioFolder(lists.meta, ref.kind, asset.name, folder);
+                markChanged(ref, asset.name, asset.name, `folder:${beforeFolder || '미분류'}>${folder || '미분류'}`);
+            });
+        } else if (operation === 'pattern_rename') {
+            const pattern = safeString(getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')).trim();
+            if (!pattern) {
+                const detail = '패턴 이름 변경에는 pattern 값이 필요합니다. 예: "{folder}_{nn}_{base}"';
+                await addBotMessage(`❌ ${detail}`);
+                return { success: false, failed: 1, requested: refs.length, detail };
+            }
+            refs.forEach((ref, sequence) => {
+                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+                const asset = list[ref.idx];
+                if (!asset) return;
+                const beforeName = safeString(asset.name).trim();
+                const rendered = renderKeroAssetManagePattern(pattern, ref, sequence, lists);
+                const split = svbSplitAssetDisplayName(rendered);
+                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
+                if (ref.kind === 'emotion') {
+                    const nextName = svbMakeUniqueLooseAssetName(split.base || rendered || beforeName, usedNames, 'emotion');
+                    if (nextName !== beforeName) {
+                        asset.name = nextName;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, 'rename');
+                    }
+                } else {
+                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
+                    const nextName = svbMakeUniqueAssetName(split.base || rendered || beforeName, usedNames);
+                    const nextExt = split.ext ? svbNormalizeAssetExtValue(split.ext) : (beforeExt || svbNormalizeAssetExtValue(svbGetFileExt(asset.path), 'png'));
+                    if (nextName !== beforeName || nextExt !== beforeExt) {
+                        asset.name = nextName;
+                        asset.ext = nextExt;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, `rename/ext:${beforeExt || '-'}>${nextExt}`);
+                    }
+                }
+            });
+        } else if (operation === 'delete') {
+            const byKind = {
+                additional: [...new Set(refs.filter(ref => ref.kind === 'additional').map(ref => ref.idx))].sort((a, b) => b - a),
+                emotion: [...new Set(refs.filter(ref => ref.kind === 'emotion').map(ref => ref.idx))].sort((a, b) => b - a)
+            };
+            byKind.additional.forEach((idx) => {
+                const asset = lists.additionalAssets[idx];
+                if (!asset) return;
+                const beforeName = asset.name;
+                svbSetAssetStudioFolder(lists.meta, 'additional', beforeName, '');
+                lists.additionalAssets.splice(idx, 1);
+                markChanged({ kind: 'additional', idx }, beforeName, '', 'delete');
+            });
+            byKind.emotion.forEach((idx) => {
+                const asset = lists.emotionAssets[idx];
+                if (!asset) return;
+                const beforeName = asset.name;
+                svbSetAssetStudioFolder(lists.meta, 'emotion', beforeName, '');
+                lists.emotionAssets.splice(idx, 1);
+                markChanged({ kind: 'emotion', idx }, beforeName, '', 'delete');
+            });
+        }
+
+        if (changed <= 0) {
+            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 ${refs.length}개를 확인했지만 변경할 내용이 없었습니다.`;
+            await addBotMessage(`↪ ${detail}`);
+            return { success: true, requested: refs.length, changed: 0, skipped: refs.length, detail };
+        }
+
+        lists.meta = svbCleanAssetStudioMeta(lists.meta, lists.emotionAssets, lists.additionalAssets);
+        assertKeroActionNotTimedOut(action, '이미지 에셋 관리 저장');
+        if (typeof options.abortCheck === 'function' && options.abortCheck()) {
+            throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 관리 저장을 중단했습니다.');
+        }
+        try {
+            await backupCharacterBeforeSave(char, 'kero-asset-manage', { strict: true });
+        } catch (error) {
+            await addBotMessage(`❌ 에셋 관리 전 백업에 실패해서 작업을 중단했습니다: ${error.message || error}`);
+            return { success: false, failed: 1, requested: refs.length, changed: 0, detail: error?.message || String(error), keepProposal: true };
+        }
+        setCharacterField(char, 'emotionImages', svbEmotionTuples(lists.emotionAssets));
+        setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(lists.additionalAssets));
+        svbWriteAssetStudioMetaToCharacter(char, lists.meta);
+        const ok = await setCharacterData(char, {
+            ...options,
+            skipBackup: true,
+            label: 'kero-asset-manage'
+        });
+        if (!ok) {
+            const detail = '캐릭터 저장에 실패했습니다.';
+            await addBotMessage(`❌ ${detail}`);
+            return { success: false, failed: 1, requested: refs.length, changed: 0, detail, keepProposal: true };
+        }
+        updateKeroProgress(refs.length, refs.length, `${getKeroAssetManageOperationLabel(operation)} 완료`, actionProgressOptions);
+        const detail = `이미지 에셋 ${getKeroAssetManageOperationLabel(operation)} ${changed}개 변경 완료`;
+        await addBotMessage(`✅ ${detail}`);
+        return { success: true, requested: refs.length, changed, failed: 0, detail, changedAssets };
+    }
+
     async function executeKeroAction(action, options = {}) {
         const target = action?.target;
         const type = action?.type;
@@ -30641,11 +31044,14 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (workTargetResult?.handled) return workTargetResult;
 
         if (target === 'asset') {
-            if (type !== 'create') {
-                await addBotMessage('이미지 에셋 작업은 create 액션만 지원합니다.');
-                return { success: false, detail: '이미지 에셋 지원 타입 아님' };
+            if (type === 'create') {
+                return await runKeroAssetCreateAction(action, { ...options, ...actionAbortOptions, progressOptions: actionProgressOptions });
             }
-            return await runKeroAssetCreateAction(action, { ...options, ...actionAbortOptions, progressOptions: actionProgressOptions });
+            if (type === 'asset_manage' || type === 'update' || type === 'patch' || type === 'delete') {
+                return await runKeroAssetManageAction(action, { ...options, ...actionAbortOptions, progressOptions: actionProgressOptions });
+            }
+            await addBotMessage('이미지 에셋 작업은 create 또는 asset_manage 액션만 지원합니다.');
+            return { success: false, detail: '이미지 에셋 지원 타입 아님' };
         }
 
         if (isKeroCharacterPatchTarget(target)) {
@@ -31031,11 +31437,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         }
 
         if (target === 'asset') {
-            if (type !== 'create') {
-                await addBotMessage('이미지 에셋 작업은 create 액션만 지원합니다.');
+            if (!['create', 'asset_manage', 'update', 'patch', 'delete'].includes(type)) {
+                await addBotMessage('이미지 에셋 작업은 create 또는 asset_manage 액션만 지원합니다.');
                 return { success: false, detail: '이미지 에셋 지원 타입 아님' };
             }
-            addKeroWorkstreamEvent('이미지 에셋 생성 실행', `${getTargetLabel(target)} ${getKeroActionLabel(type)} 직접 실행`, 'action', actionProgressOptions);
+            addKeroWorkstreamEvent(type === 'create' ? '이미지 에셋 생성 실행' : '이미지 에셋 관리 실행', `${getTargetLabel(target)} ${getKeroActionLabel(type)} 직접 실행`, 'action', actionProgressOptions);
             return await executeKeroAction(action, options);
         }
 
@@ -31082,7 +31488,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return await withKeroApprovalBypass(() => executeKeroAction(action, options));
         }
 
-        await addBotMessage(`${getTargetLabel(target)} ${getKeroActionLabel(type)}은 현재 케로 자동 실행 대상이 아닙니다. create/improve/apply/delete 중 하나로 요청해 주세요.`);
+        await addBotMessage(`${getTargetLabel(target)} ${getKeroActionLabel(type)}은 현재 케로 자동 실행 대상이 아닙니다. create/asset_manage/improve/apply/delete 중 하나로 요청해 주세요.`);
         return { success: false, detail: '지원하지 않는 액션 타입' };
     }
 
@@ -34234,7 +34640,7 @@ ${metaBlock}
 
 ### 형식
 응답의 맨 마지막 영역에 단독으로 작성:
-        @action {"type":"improve|apply|create|bulk_create|update|patch|delete", "target":"...", ...}
+        @action {"type":"improve|apply|create|asset_manage|bulk_create|update|patch|delete", "target":"...", ...}
 복합 작업이면 하나의 JSON 배열로 여러 액션을 순서대로 담는다:
         @action [{"type":"update","target":"character","payload":{...}}, {"type":"create","target":"lorebook","payload":[...]}]
 
@@ -34268,6 +34674,12 @@ ${metaBlock}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
+- 에셋 스튜디오 관리 기능도 케로가 활용한다. 확장자 정리/폴더 이동/패턴 이름 변경/삭제는 target:"asset", type:"asset_manage"로 실행한다.
+- 에셋 확장자 정리: @action {"type":"asset_manage","target":"asset","operation":"normalize_extensions","kind":"all","all":true}
+- 에셋 폴더 이동: @action {"type":"asset_manage","target":"asset","operation":"move_folder","kind":"additional","names":["profile_main"],"folder":"profiles"}
+- 에셋 패턴 변경: @action {"type":"asset_manage","target":"asset","operation":"pattern_rename","kind":"additional","folder":"profiles","pattern":"{folder}_{nn}_{base}"}
+- 에셋 삭제: @action {"type":"asset_manage","target":"asset","operation":"delete","kind":"emotion","names":["old_happy"]}
+- 파일 선택이 필요한 이미지 ZIP 가져오기/일괄 교체는 케로가 로컬 파일을 직접 선택할 수 없다. 그런 경우에는 에셋 스튜디오의 "이미지 ZIP 가져오기" 또는 "일괄 교체" 버튼을 사용하라고 안내하고, 저장형 JSON 액션으로 위장하지 않는다.
 - 인물 기본 프로필 에셋, 대표 인물 프로필 이미지, 스탠딩 이미지처럼 캐릭터가 아닌 이미지 파일을 만드는 요청은 lorebook/regex/trigger가 아니라 target:"asset"이다.
 - assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
@@ -41609,7 +42021,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.41 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.42 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -50312,6 +50724,103 @@ function svbAdditionalAssetTuples(list) {
         .filter(item => item[0] && item[1]);
 }
 
+function svbSplitAssetDisplayName(name) {
+    const clean = safeString(name).trim();
+    const ext = svbGetFileExt(clean);
+    if (!ext || !SVB_ASSET_EXTRA_EXTS.has(ext)) {
+        return { base: clean, ext: '' };
+    }
+    return {
+        base: clean.slice(0, -(ext.length + 1)).trim(),
+        ext: ext === 'jpeg' ? 'jpg' : ext
+    };
+}
+
+function svbNormalizeAssetExtValue(...values) {
+    for (const value of values) {
+        const ext = safeString(value).trim().replace(/^\./, '').toLowerCase();
+        if (ext) return ext === 'jpeg' ? 'jpg' : ext;
+    }
+    return 'png';
+}
+
+function svbMakeUniqueLooseAssetName(name, usedNames, fallback = 'asset') {
+    const base = safeString(name).trim() || fallback;
+    const used = new Set(ensureArray(usedNames).map(item => safeString(item).toLowerCase()));
+    if (!used.has(base.toLowerCase())) return base;
+    let index = 2;
+    let candidate = `${base}_${index}`;
+    while (used.has(candidate.toLowerCase())) {
+        index += 1;
+        candidate = `${base}_${index}`;
+    }
+    return candidate;
+}
+
+function svbNormalizeAssetStudioMeta(raw = {}) {
+    const folders = raw?.folders || {};
+    const normalizeMap = (value) => {
+        if (!value || typeof value !== 'object') return {};
+        return Object.fromEntries(Object.entries(value)
+            .map(([name, folder]) => [safeString(name).trim(), safeString(folder).trim()])
+            .filter(([name, folder]) => name && folder));
+    };
+    return {
+        folders: {
+            additional: normalizeMap(folders.additional),
+            emotion: normalizeMap(folders.emotion)
+        }
+    };
+}
+
+function svbReadAssetStudioMetaFromCharacter(character = {}) {
+    const ext = character?.extensions;
+    return svbNormalizeAssetStudioMeta(ext?.superVibeBotAssetStudio || ext?.superVibeBot?.assetStudio || {});
+}
+
+function svbWriteAssetStudioMetaToCharacter(character, meta = {}) {
+    if (!character) return;
+    if (!character.extensions || typeof character.extensions !== 'object') character.extensions = {};
+    character.extensions.superVibeBotAssetStudio = svbNormalizeAssetStudioMeta(meta);
+}
+
+function svbCleanAssetStudioMeta(meta, emotionAssets = [], additionalAssets = []) {
+    const clean = svbNormalizeAssetStudioMeta(meta);
+    const additionalNames = new Set(ensureArray(additionalAssets).map(item => safeString(item.name).trim()).filter(Boolean));
+    const emotionNames = new Set(ensureArray(emotionAssets).map(item => safeString(item.name).trim()).filter(Boolean));
+    Object.keys(clean.folders.additional || {}).forEach((name) => {
+        if (!additionalNames.has(name)) delete clean.folders.additional[name];
+    });
+    Object.keys(clean.folders.emotion || {}).forEach((name) => {
+        if (!emotionNames.has(name)) delete clean.folders.emotion[name];
+    });
+    return clean;
+}
+
+function svbGetAssetStudioFolder(meta, kind, name) {
+    return safeString(meta?.folders?.[kind]?.[name]).trim();
+}
+
+function svbSetAssetStudioFolder(meta, kind, name, folder) {
+    const cleanName = safeString(name).trim();
+    if (!cleanName || !['additional', 'emotion'].includes(kind)) return;
+    if (!meta.folders) meta.folders = { additional: {}, emotion: {} };
+    if (!meta.folders[kind]) meta.folders[kind] = {};
+    const cleanFolder = safeString(folder).trim();
+    if (cleanFolder) meta.folders[kind][cleanName] = cleanFolder;
+    else delete meta.folders[kind][cleanName];
+}
+
+function svbRenameAssetStudioFolderKey(meta, kind, oldName, newName) {
+    const cleanOld = safeString(oldName).trim();
+    const cleanNew = safeString(newName).trim();
+    const map = meta?.folders?.[kind];
+    if (!map || !cleanOld || cleanOld === cleanNew) return;
+    const folder = map[cleanOld];
+    delete map[cleanOld];
+    if (folder && cleanNew) map[cleanNew] = folder;
+}
+
 function svbDetectImageFormat(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length < 4) return '';
     if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'png';
@@ -50499,6 +51008,9 @@ async function openAssetStudio() {
     let activeTab = 'additional';
     let emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
     let additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
+    let assetStudioMeta = normalizeAssetStudioMeta(readAssetStudioMetaFromCharacter(char));
+    let selectedAssetIds = new Set();
+    let pendingBatchReplaceKind = 'additional';
     let generatedImageResult = null;
     let generationRequestId = 0;
 
@@ -50510,9 +51022,11 @@ async function openAssetStudio() {
     }
 
     function syncCharacterAssetFields() {
+        cleanAssetStudioMeta();
         setCharacterField(char, 'emotionImages', svbEmotionTuples(emotionAssets));
         const tuples = svbAdditionalAssetTuples(additionalAssets);
         setCharacterField(char, 'additionalAssets', tuples.length ? tuples : []);
+        writeAssetStudioMetaToCharacter();
     }
 
     async function saveCurrentAssets(message = '저장했습니다.') {
@@ -50523,9 +51037,161 @@ async function openAssetStudio() {
         return ok;
     }
 
+    function splitAssetDisplayName(name) {
+        const clean = safeString(name).trim();
+        const ext = svbGetFileExt(clean);
+        if (!ext || !SVB_ASSET_EXTRA_EXTS.has(ext)) {
+            return { base: clean, ext: '' };
+        }
+        return {
+            base: clean.slice(0, -(ext.length + 1)).trim(),
+            ext
+        };
+    }
+
+    function normalizeAssetExtValue(...values) {
+        for (const value of values) {
+            const ext = safeString(value).trim().replace(/^\./, '').toLowerCase();
+            if (ext) return ext === 'jpeg' ? 'jpg' : ext;
+        }
+        return 'png';
+    }
+
+    function makeUniqueLooseAssetName(name, usedNames, fallback = 'asset') {
+        const base = safeString(name).trim() || fallback;
+        const used = new Set(ensureArray(usedNames).map(item => safeString(item).toLowerCase()));
+        if (!used.has(base.toLowerCase())) return base;
+        let index = 2;
+        let candidate = `${base}_${index}`;
+        while (used.has(candidate.toLowerCase())) {
+            index += 1;
+            candidate = `${base}_${index}`;
+        }
+        return candidate;
+    }
+
+    function readAssetStudioMetaFromCharacter(character = char) {
+        const ext = character?.extensions;
+        return ext?.superVibeBotAssetStudio || ext?.superVibeBot?.assetStudio || {};
+    }
+
+    function normalizeAssetStudioMeta(raw = {}) {
+        const folders = raw?.folders || {};
+        const normalizeMap = (value) => {
+            if (!value || typeof value !== 'object') return {};
+            return Object.fromEntries(Object.entries(value)
+                .map(([name, folder]) => [safeString(name).trim(), safeString(folder).trim()])
+                .filter(([name, folder]) => name && folder));
+        };
+        return {
+            folders: {
+                additional: normalizeMap(folders.additional),
+                emotion: normalizeMap(folders.emotion)
+            }
+        };
+    }
+
+    function writeAssetStudioMetaToCharacter() {
+        if (!char) return;
+        if (!char.extensions || typeof char.extensions !== 'object') char.extensions = {};
+        char.extensions.superVibeBotAssetStudio = normalizeAssetStudioMeta(assetStudioMeta);
+    }
+
+    function assetSelectionId(kind, idx) {
+        return `${kind}:${idx}`;
+    }
+
+    function parseAssetSelectionId(id) {
+        const [kind, rawIdx] = safeString(id).split(':');
+        const idx = Number(rawIdx);
+        return { kind, idx };
+    }
+
+    function getAssetFolder(kind, name) {
+        return safeString(assetStudioMeta?.folders?.[kind]?.[name]).trim();
+    }
+
+    function setAssetFolder(kind, name, folder) {
+        const cleanName = safeString(name).trim();
+        if (!cleanName) return;
+        if (!assetStudioMeta.folders[kind]) assetStudioMeta.folders[kind] = {};
+        const cleanFolder = safeString(folder).trim();
+        if (cleanFolder) assetStudioMeta.folders[kind][cleanName] = cleanFolder;
+        else delete assetStudioMeta.folders[kind][cleanName];
+    }
+
+    function renameAssetFolderKey(kind, oldName, newName) {
+        const map = assetStudioMeta?.folders?.[kind];
+        if (!map) return;
+        const folder = map[oldName];
+        delete map[oldName];
+        if (folder && newName) map[newName] = folder;
+    }
+
+    function cleanAssetStudioMeta() {
+        const additionalNames = new Set(additionalAssets.map(item => safeString(item.name)));
+        const emotionNames = new Set(emotionAssets.map(item => safeString(item.name)));
+        for (const name of Object.keys(assetStudioMeta.folders.additional || {})) {
+            if (!additionalNames.has(name)) delete assetStudioMeta.folders.additional[name];
+        }
+        for (const name of Object.keys(assetStudioMeta.folders.emotion || {})) {
+            if (!emotionNames.has(name)) delete assetStudioMeta.folders.emotion[name];
+        }
+        selectedAssetIds = new Set([...selectedAssetIds].filter(id => {
+            const { kind, idx } = parseAssetSelectionId(id);
+            return kind === 'additional'
+                ? idx >= 0 && idx < additionalAssets.length
+                : idx >= 0 && idx < emotionAssets.length;
+        }));
+    }
+
+    function getFolderNames(kind) {
+        const values = Object.values(assetStudioMeta?.folders?.[kind] || {})
+            .map(value => safeString(value).trim())
+            .filter(Boolean);
+        return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+    }
+
+    function renderFolderFilter(selectId, kind) {
+        const select = document.getElementById(selectId);
+        if (!select) return '';
+        const previous = select.value || '';
+        const folders = getFolderNames(kind);
+        select.innerHTML = [
+            '<option value="">모든 폴더</option>',
+            '<option value="__none__">미분류</option>',
+            ...folders.map(folder => `<option value="${escapeHtml(folder)}">${escapeHtml(folder)}</option>`)
+        ].join('');
+        select.value = previous && (previous === '__none__' || folders.includes(previous)) ? previous : '';
+        return select.value;
+    }
+
+    function getAssetRefsForKind(kind, selectedOnly = true) {
+        const source = kind === 'emotion' ? emotionAssets : additionalAssets;
+        return source
+            .map((asset, idx) => ({ kind, idx, asset }))
+            .filter(ref => !selectedOnly || selectedAssetIds.has(assetSelectionId(kind, ref.idx)));
+    }
+
+    function getSelectedAssetRefs(kind) {
+        const refs = getAssetRefsForKind(kind, true);
+        if (!refs.length) {
+            alert('먼저 에셋을 선택해주세요.');
+        }
+        return refs;
+    }
+
+    function visibleAssetIndexes(kind) {
+        return Array.from(studioWindow.querySelectorAll(`.svb-as-row[data-kind="${kind}"][data-idx]`))
+            .map(row => Number(row.dataset.idx))
+            .filter(idx => Number.isInteger(idx));
+    }
+
     function refreshStateFromCharacter() {
         emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
         additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
+        assetStudioMeta = normalizeAssetStudioMeta(readAssetStudioMetaFromCharacter(char));
+        cleanAssetStudioMeta();
     }
 
     function renderSummary() {
@@ -50849,6 +51515,7 @@ async function openAssetStudio() {
         if (!outputs.length) return '<div class="svb-as-output-empty">아직 이 파트로 만든 생성본이 없습니다.</div>';
         return outputs.map((output, outputIndex) => {
             const ext = safeString(output.ext || svbGetFileExt(output.name) || svbGetFileExt(output.path) || 'png').toUpperCase();
+            const tag = output.target === 'emotion' ? `{{emotion::${output.name || ''}}}` : `{{image::${output.name || ''}}}`;
             return `<div class="svb-as-output-card" data-part-idx="${partIndex}" data-output-idx="${outputIndex}">
                 <button class="svb-as-output-thumb is-empty" data-action="zoom-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" data-output-name="${escapeHtml(output.name || '')}" data-output-path="${escapeHtml(output.path || '')}" data-output-ext="${escapeHtml(output.ext || 'png')}" type="button" title="생성본 확대">
                     <span>${escapeHtml(ext || 'IMG')}</span>
@@ -50856,8 +51523,13 @@ async function openAssetStudio() {
                 <div class="svb-as-output-meta">
                     <strong>${escapeHtml(output.name || `생성본 ${outputIndex + 1}`)}</strong>
                     <span>${escapeHtml(output.target === 'emotion' ? '감정 이미지' : '추가 에셋')}</span>
+                    <code>${escapeHtml(tag)}</code>
                 </div>
-                <button class="svb-as-btn danger" data-action="delete-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">목록 삭제</button>
+                <div class="svb-as-output-actions">
+                    <button class="svb-as-btn" data-action="copy-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">태그 복사</button>
+                    <button class="svb-as-btn" data-action="download-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">이미지 저장</button>
+                    <button class="svb-as-btn danger" data-action="delete-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">목록 삭제</button>
+                </div>
             </div>`;
         }).join('');
     }
@@ -51174,24 +51846,36 @@ async function openAssetStudio() {
     function renderEmotionList() {
         const list = document.getElementById('svb-as-emotion-list');
         if (!list) return;
+        const folderFilter = renderFolderFilter('svb-as-emotion-folder-filter', 'emotion');
         const usage = svbCollectAssetUsage(char, [], emotionAssets.map(item => item.name));
-        if (!emotionAssets.length) {
+        const filtered = emotionAssets
+            .map((asset, idx) => ({ asset, idx }))
+            .filter(({ asset }) => {
+                const folder = getAssetFolder('emotion', asset.name);
+                if (folderFilter === '__none__') return !folder;
+                return !folderFilter || folder === folderFilter;
+            });
+        if (!filtered.length) {
             list.innerHTML = '<div class="svb-as-empty">감정 이미지가 없습니다. 기본 프리셋을 만들거나 직접 추가하세요.</div>';
             return;
         }
-        list.innerHTML = emotionAssets.map((asset, idx) => {
+        list.innerHTML = filtered.map(({ asset, idx }) => {
             const count = usage[asset.name] || 0;
+            const folder = getAssetFolder('emotion', asset.name);
+            const selected = selectedAssetIds.has(assetSelectionId('emotion', idx));
             return `<div class="svb-as-row" data-kind="emotion" data-idx="${idx}">
                 <div class="svb-as-row-main">
+                    <input class="svb-as-select" data-kind="emotion" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
                     ${assetThumbHtml('emotion', idx, { ...asset, ext: svbGetFileExt(asset.path) || 'png' })}
                     <div class="svb-as-row-fields">
-                        <input class="svb-as-inline svb-as-emotion-name" data-idx="${idx}" value="${escapeHtml(asset.name)}" placeholder="감정명">
+                        <input class="svb-as-inline svb-as-emotion-name" data-idx="${idx}" data-prev-name="${escapeHtml(asset.name)}" value="${escapeHtml(asset.name)}" placeholder="감정명">
                         <input class="svb-as-inline svb-as-emotion-path" data-idx="${idx}" value="${escapeHtml(asset.path)}" placeholder="assets/... 또는 data:">
                     </div>
-                    <span class="svb-as-badge">${count ? `사용 ${count}` : '미사용'}</span>
+                    <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
                 </div>
                 <div class="svb-as-row-actions">
                     <button class="svb-as-btn" data-action="copy-emotion" data-idx="${idx}" type="button">태그 복사</button>
+                    <button class="svb-as-btn" data-action="download-emotion" data-idx="${idx}" type="button">이미지 저장</button>
                     <button class="svb-as-btn danger" data-action="delete-emotion" data-idx="${idx}" type="button">삭제</button>
                 </div>
             </div>`;
@@ -51203,28 +51887,38 @@ async function openAssetStudio() {
         const list = document.getElementById('svb-as-additional-list');
         if (!list) return;
         const query = safeString(document.getElementById('svb-as-search')?.value).trim().toLowerCase();
+        const folderFilter = renderFolderFilter('svb-as-add-folder-filter', 'additional');
         const usage = svbCollectAssetUsage(char, additionalAssets.map(item => item.name), []);
         const filtered = additionalAssets
             .map((asset, idx) => ({ asset, idx }))
-            .filter(({ asset }) => !query || [asset.name, asset.path, asset.ext].join(' ').toLowerCase().includes(query));
+            .filter(({ asset }) => {
+                const folder = getAssetFolder('additional', asset.name);
+                if (folderFilter === '__none__' && folder) return false;
+                if (folderFilter && folderFilter !== '__none__' && folder !== folderFilter) return false;
+                return !query || [asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
+            });
         if (!filtered.length) {
             list.innerHTML = '<div class="svb-as-empty">표시할 추가 에셋이 없습니다.</div>';
             return;
         }
         list.innerHTML = filtered.map(({ asset, idx }) => {
             const count = usage[asset.name] || 0;
+            const folder = getAssetFolder('additional', asset.name);
+            const selected = selectedAssetIds.has(assetSelectionId('additional', idx));
             return `<div class="svb-as-row" data-kind="additional" data-idx="${idx}">
                 <div class="svb-as-row-main">
+                    <input class="svb-as-select" data-kind="additional" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
                     ${assetThumbHtml('additional', idx, asset)}
                     <div class="svb-as-row-fields">
-                        <input class="svb-as-inline svb-as-add-name" data-idx="${idx}" value="${escapeHtml(asset.name)}" placeholder="에셋 이름">
+                        <input class="svb-as-inline svb-as-add-name" data-idx="${idx}" data-prev-name="${escapeHtml(asset.name)}" value="${escapeHtml(asset.name)}" placeholder="에셋 이름">
                         <input class="svb-as-inline svb-as-add-path" data-idx="${idx}" value="${escapeHtml(asset.path)}" placeholder="assets/... 또는 data:">
                         <input class="svb-as-inline ext svb-as-add-ext" data-idx="${idx}" value="${escapeHtml(asset.ext)}" placeholder="확장자">
                     </div>
-                    <span class="svb-as-badge">${count ? `사용 ${count}` : '미사용'}</span>
+                    <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
                 </div>
                 <div class="svb-as-row-actions">
                     <button class="svb-as-btn" data-action="copy-additional" data-idx="${idx}" type="button">태그 복사</button>
+                    <button class="svb-as-btn" data-action="download-additional" data-idx="${idx}" type="button">이미지 저장</button>
                     <button class="svb-as-btn danger" data-action="delete-additional" data-idx="${idx}" type="button">삭제</button>
                 </div>
             </div>`;
@@ -51306,8 +52000,9 @@ async function openAssetStudio() {
             for (const file of fileList) {
                 const bytes = new Uint8Array(await file.arrayBuffer());
                 const path = await svbSaveAssetBytes(bytes, file.name);
-                const ext = svbGetFileExt(file.name) || svbGetFileExt(path) || svbDetectImageFormat(bytes) || 'png';
-                const name = svbMakeUniqueAssetName(file.name, additionalAssets.map(item => item.name));
+                const parsedName = splitAssetDisplayName(file.name);
+                const ext = normalizeAssetExtValue(svbDetectImageFormat(bytes), parsedName.ext, svbGetFileExt(path), 'png');
+                const name = svbMakeUniqueAssetName(parsedName.base || file.name, additionalAssets.map(item => item.name));
                 additionalAssets.push({ name, path, ext });
                 count += 1;
                 setStatus(`업로드 중... ${count}/${fileList.length}`, 'info');
@@ -51469,6 +52164,528 @@ async function openAssetStudio() {
         a.href = url;
         a.download = filename;
         a.click();
+    }
+
+    async function loadAssetStudioZipEngine() {
+        if (globalThis.fflate?.Zip && globalThis.fflate?.ZipDeflate) return globalThis.fflate;
+        await loadScriptOnce(FFLATE_UMD_URL);
+        if (globalThis.fflate?.Zip && globalThis.fflate?.ZipDeflate) return globalThis.fflate;
+        throw new Error('ZIP 엔진(fflate)을 불러오지 못했습니다.');
+    }
+
+    function bytesFromBase64Text(text) {
+        const clean = safeString(text).replace(/^data:[^,]+,/, '').replace(/\s+/g, '');
+        const binary = atob(clean);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+
+    async function createAssetStudioZipBlob(files, onProgress) {
+        const fflate = await loadAssetStudioZipEngine();
+        const entries = Object.entries(files);
+        return new Promise((resolve, reject) => {
+            const chunks = [];
+            const zip = new fflate.Zip((err, data, final) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                if (data) chunks.push(data);
+                if (final) resolve(new Blob(chunks, { type: 'application/zip' }));
+            });
+            (async () => {
+                try {
+                    for (let i = 0; i < entries.length; i += 1) {
+                        const [name, data] = entries[i];
+                        const file = new fflate.ZipDeflate(name, { level: 6 });
+                        zip.add(file);
+                        file.push(data instanceof Uint8Array ? data : new TextEncoder().encode(String(data)), true);
+                        if (typeof onProgress === 'function') onProgress(i + 1, entries.length);
+                        if ((i + 1) % 8 === 0) await new Promise(resolveFrame => setTimeout(resolveFrame, 0));
+                    }
+                    zip.end();
+                } catch (error) {
+                    reject(error);
+                }
+            })();
+        });
+    }
+
+    async function readAssetStudioZipBlob(blob) {
+        const fflate = await loadAssetStudioZipEngine();
+        return new Promise((resolve, reject) => {
+            const result = {};
+            const pending = new Map();
+            let ended = false;
+            const checkDone = () => {
+                if (ended && pending.size === 0) resolve(result);
+            };
+            const unzip = new fflate.Unzip();
+            unzip.register(fflate.UnzipInflate);
+            unzip.onfile = (file) => {
+                const chunks = [];
+                pending.set(file.name, chunks);
+                file.ondata = (err, data, final) => {
+                    if (err) {
+                        pending.delete(file.name);
+                        reject(err);
+                        return;
+                    }
+                    if (data) chunks.push(data);
+                    if (final) {
+                        const length = chunks.reduce((sum, item) => sum + item.length, 0);
+                        const merged = new Uint8Array(length);
+                        let offset = 0;
+                        chunks.forEach(item => {
+                            merged.set(item, offset);
+                            offset += item.length;
+                        });
+                        result[file.name] = merged;
+                        pending.delete(file.name);
+                        checkDone();
+                    }
+                };
+                file.start();
+            };
+            (async () => {
+                try {
+                    if (blob instanceof Blob) {
+                        const reader = blob.stream().getReader();
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            unzip.push(value, false);
+                        }
+                        unzip.push(new Uint8Array(0), true);
+                    } else {
+                        unzip.push(blob instanceof Uint8Array ? blob : new Uint8Array(blob), true);
+                    }
+                    ended = true;
+                    checkDone();
+                } catch (error) {
+                    reject(error);
+                }
+            })();
+        });
+    }
+
+    function getPortableAssetExt(asset = {}, fallback = 'png') {
+        return normalizeAssetExtValue(asset.ext, svbGetFileExt(asset.name), svbGetFileExt(asset.path), fallback);
+    }
+
+    async function readAssetAsBytes(asset = {}) {
+        const path = safeString(asset.path).trim();
+        if (!path) throw new Error('asset path is empty');
+        if (path.startsWith('data:')) return svbDataUrlToImageResult(path, getPortableAssetExt(asset)).bytes;
+        const data = await svbReadRisuAssetBytes(path);
+        if (!data) throw new Error(`cannot read asset bytes: ${path}`);
+        if (data instanceof Uint8Array) return data;
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        if (typeof data === 'string') {
+            const text = data.trim();
+            if (text.startsWith('data:')) return svbDataUrlToImageResult(text, getPortableAssetExt(asset)).bytes;
+            return bytesFromBase64Text(text);
+        }
+        throw new Error(`unsupported asset data: ${path}`);
+    }
+
+    async function readAssetAsDataUrl(asset = {}) {
+        const bytes = await readAssetAsBytes(asset);
+        return svbBytesToImageResult(bytes, getPortableAssetExt(asset)).dataUrl;
+    }
+
+    async function downloadAssetImage(asset = {}, fallbackName = 'asset') {
+        if (!isPreviewableAsset(asset)) {
+            setStatus(`이미지로 내보낼 수 없는 에셋입니다: ${asset.path || asset.name || fallbackName}`, 'error');
+            return;
+        }
+        const dataUrl = await readAssetAsDataUrl(asset);
+        const ext = getPortableAssetExt(asset);
+        const parsed = splitAssetDisplayName(asset.name || fallbackName);
+        const fileBase = svbNormalizeAssetName(parsed.base || asset.name || fallbackName, fallbackName);
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `${fileBase}.${ext}`;
+        a.click();
+        setStatus(`${fileBase}.${ext} 이미지를 내보냈습니다.`, 'success');
+    }
+
+    function collectAssetBackupSources() {
+        const emotions = emotionAssets.map((asset, index) => ({
+            type: 'emotion',
+            index,
+            tag: `{{emotion::${asset.name || ''}}}`,
+            asset: { ...asset, ext: svbGetFileExt(asset.path) || 'png' }
+        }));
+        const additional = additionalAssets.map((asset, index) => ({
+            type: 'additional',
+            index,
+            tag: `{{image::${asset.name || ''}}}`,
+            asset
+        }));
+        return [...emotions, ...additional].filter(item => isPreviewableAsset(item.asset));
+    }
+
+    function makeUniqueBackupPath(path, used) {
+        const normalized = safeString(path).replace(/\\/g, '/').replace(/^\/+/, '') || 'asset.png';
+        if (!used.has(normalized.toLowerCase())) {
+            used.add(normalized.toLowerCase());
+            return normalized;
+        }
+        const ext = svbGetFileExt(normalized);
+        const suffix = ext ? `.${ext}` : '';
+        const base = ext ? normalized.slice(0, -suffix.length) : normalized;
+        let index = 2;
+        let candidate = `${base}_${index}${suffix}`;
+        while (used.has(candidate.toLowerCase())) {
+            index += 1;
+            candidate = `${base}_${index}${suffix}`;
+        }
+        used.add(candidate.toLowerCase());
+        return candidate;
+    }
+
+    async function exportAssetImageBackupZip() {
+        const sources = collectAssetBackupSources();
+        if (!sources.length) {
+            alert('백업할 이미지 에셋이 없습니다.');
+            return;
+        }
+        const btn = document.getElementById('svb-as-image-backup');
+        const original = btn?.textContent;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'ZIP 준비...';
+        }
+        const files = {};
+        const usedPaths = new Set();
+        const entries = [];
+        const failures = [];
+        const characterName = getCharacterDisplayName(char);
+        const date = new Date().toISOString().slice(0, 10);
+        const root = `${svbNormalizeAssetName(characterName, 'character')}_assets_${date}`;
+        try {
+            await loadAssetStudioZipEngine();
+            for (let i = 0; i < sources.length; i += 1) {
+                const source = sources[i];
+                const asset = source.asset;
+                setStatus(`이미지 ZIP 백업 중... ${i + 1}/${sources.length} · ${asset.name || asset.path}`, 'info');
+                try {
+                    const bytes = await readAssetAsBytes(asset);
+                    const ext = normalizeAssetExtValue(svbDetectImageFormat(bytes), getPortableAssetExt(asset));
+                    const parsed = splitAssetDisplayName(asset.name || `asset_${i + 1}`);
+                    const fileBase = svbNormalizeAssetName(parsed.base || asset.name || `asset_${i + 1}`, `asset_${i + 1}`);
+                    const folder = source.type === 'emotion' ? 'emotionImages' : 'additionalAssets';
+                    const zipPath = makeUniqueBackupPath(`${root}/${folder}/${fileBase}.${ext}`, usedPaths);
+                    files[zipPath] = bytes;
+                    entries.push({
+                        type: source.type,
+                        index: source.index,
+                        name: asset.name || '',
+                        path: asset.path || '',
+                        ext,
+                        tag: source.tag,
+                        zipPath
+                    });
+                } catch (error) {
+                    failures.push({
+                        type: source.type,
+                        name: asset.name || '',
+                        path: asset.path || '',
+                        error: error?.message || String(error)
+                    });
+                }
+            }
+            if (!entries.length) {
+                alert(`이미지를 읽지 못했습니다.\n실패 ${failures.length}개`);
+                setStatus('이미지 ZIP 백업 실패: 읽을 수 있는 이미지가 없습니다.', 'error');
+                return;
+            }
+            const metadata = {
+                version: 'SuperVibeBot Asset Image Backup ZIP v1',
+                character: characterName,
+                exportedAt: new Date().toISOString(),
+                imageCount: entries.length,
+                failures,
+                emotionImages: svbEmotionTuples(emotionAssets),
+                additionalAssets: svbAdditionalAssetTuples(additionalAssets),
+                files: entries
+            };
+            files[`${root}/_supervibebot_asset_backup.json`] = new TextEncoder().encode(JSON.stringify(metadata, null, 2));
+            if (btn) btn.textContent = 'ZIP 생성...';
+            const blob = await createAssetStudioZipBlob(files, (done, total) => {
+                setStatus(`이미지 ZIP 생성 중... ${done}/${total}`, 'info');
+            });
+            const url = URL.createObjectURL(blob);
+            objectUrls.add(url);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${svbNormalizeAssetName(characterName, 'character')}_asset_images_${date}.zip`;
+            a.click();
+            setStatus(`이미지 ZIP 백업 완료: ${entries.length}개${failures.length ? ` · 실패 ${failures.length}개` : ''}`, failures.length ? 'error' : 'success');
+        } catch (error) {
+            Logger.error('Asset Studio image ZIP backup failed:', error);
+            setStatus(`이미지 ZIP 백업 실패: ${error?.message || error}`, 'error');
+            alert(`이미지 ZIP 백업 실패: ${error?.message || error}`);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = original || '이미지 ZIP 백업';
+            }
+        }
+    }
+
+    function parseAssetBackupMetadata(zipData) {
+        const metaEntry = Object.entries(zipData).find(([name]) => /_supervibebot_asset_backup\.json$/i.test(name));
+        if (!metaEntry) return null;
+        try {
+            return JSON.parse(new TextDecoder().decode(metaEntry[1]));
+        } catch (error) {
+            Logger.warn('Asset backup metadata parse failed:', error?.message || error);
+            return null;
+        }
+    }
+
+    function inferZipAssetInfo(zipPath, metadataMap) {
+        const fromMeta = metadataMap.get(zipPath);
+        if (fromMeta) return fromMeta;
+        const filename = safeString(zipPath).split('/').pop() || 'asset.png';
+        const parsed = splitAssetDisplayName(filename);
+        const folder = safeString(zipPath).toLowerCase();
+        return {
+            type: folder.includes('/emotionimages/') || folder.includes('/emotions/') ? 'emotion' : 'additional',
+            name: parsed.base || filename,
+            ext: parsed.ext || svbGetFileExt(filename) || 'png',
+            zipPath
+        };
+    }
+
+    async function importAssetImageBackupZip(file) {
+        if (!file) return;
+        const btn = document.getElementById('svb-as-image-import');
+        const original = btn?.textContent;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'ZIP 읽는 중...';
+        }
+        try {
+            const zipData = await readAssetStudioZipBlob(file);
+            const metadata = parseAssetBackupMetadata(zipData);
+            const metadataMap = new Map(ensureArray(metadata?.files).map(item => [safeString(item.zipPath), item]));
+            const entries = Object.entries(zipData)
+                .filter(([name]) => !/\/$/.test(name) && !/_supervibebot_asset_backup\.json$/i.test(name))
+                .map(([zipPath, bytes]) => {
+                    const info = inferZipAssetInfo(zipPath, metadataMap);
+                    const ext = normalizeAssetExtValue(svbDetectImageFormat(bytes), info.ext, svbGetFileExt(zipPath), 'png');
+                    return { zipPath, bytes, info: { ...info, ext } };
+                })
+                .filter(item => SVB_ASSET_IMAGE_EXTS.has(item.info.ext) || svbDetectImageFormat(item.bytes));
+            if (!entries.length) {
+                alert('ZIP 안에서 이미지 에셋을 찾지 못했습니다.');
+                setStatus('이미지 ZIP 가져오기 실패: 이미지가 없습니다.', 'error');
+                return;
+            }
+            if (!confirm(`이미지 ZIP에서 ${entries.length}개를 현재 캐릭터 에셋에 병합할까요?\n같은 이름은 새 이미지로 교체합니다.`)) return;
+            let saved = 0;
+            for (let i = 0; i < entries.length; i += 1) {
+                const entry = entries[i];
+                const target = entry.info.type === 'emotion' ? 'emotion' : 'additional';
+                const parsed = splitAssetDisplayName(entry.info.name || entry.zipPath.split('/').pop());
+                const name = target === 'emotion'
+                    ? safeString(parsed.base || entry.info.name || `emotion_${i + 1}`).trim()
+                    : svbNormalizeAssetName(parsed.base || entry.info.name || `asset_${i + 1}`, `asset_${i + 1}`);
+                const ext = normalizeAssetExtValue(svbDetectImageFormat(entry.bytes), parsed.ext, entry.info.ext, 'png');
+                if (!name) continue;
+                setStatus(`이미지 ZIP 가져오는 중... ${i + 1}/${entries.length} · ${name}`, 'info');
+                const path = await svbSaveAssetBytes(entry.bytes, `${svbNormalizeAssetName(name, 'asset')}.${ext}`);
+                if (target === 'emotion') {
+                    const existing = emotionAssets.findIndex(item => safeString(item.name).toLowerCase() === name.toLowerCase());
+                    if (existing >= 0) emotionAssets[existing] = { name, path };
+                    else emotionAssets.push({ name, path });
+                } else {
+                    const existing = additionalAssets.findIndex(item => safeString(item.name).toLowerCase() === name.toLowerCase());
+                    if (existing >= 0) additionalAssets[existing] = { name, path, ext };
+                    else additionalAssets.push({ name, path, ext });
+                }
+                saved += 1;
+                if (saved % 10 === 0) await new Promise(resolveFrame => setTimeout(resolveFrame, 0));
+            }
+            syncCharacterAssetFields();
+            await saveCurrentAssets(`이미지 ZIP 가져오기 완료: ${saved}개 병합했습니다.`);
+            renderAll();
+        } catch (error) {
+            Logger.error('Asset Studio image ZIP import failed:', error);
+            setStatus(`이미지 ZIP 가져오기 실패: ${error?.message || error}`, 'error');
+            alert(`이미지 ZIP 가져오기 실패: ${error?.message || error}`);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = original || '이미지 ZIP 가져오기';
+            }
+        }
+    }
+
+    async function normalizeAssetExtensionsInStudio() {
+        if (!emotionAssets.length && !additionalAssets.length) {
+            alert('정리할 에셋이 없습니다.');
+            return;
+        }
+        if (!confirm('에셋 이름의 확장자를 분리하고 ext 값을 정리할까요?\n예: profile.png → 이름 profile, ext png')) return;
+        let changed = 0;
+        const usedEmotionNames = [];
+        emotionAssets = emotionAssets.map((asset, index) => {
+            const parsed = splitAssetDisplayName(asset.name);
+            const nextName = makeUniqueLooseAssetName(parsed.base || asset.name, usedEmotionNames, `emotion_${index + 1}`);
+            usedEmotionNames.push(nextName);
+            const next = { name: nextName, path: safeString(asset.path).trim() };
+            if (next.name !== asset.name || next.path !== asset.path) changed += 1;
+            return next;
+        }).filter(asset => asset.name && asset.path);
+        const usedAdditionalNames = [];
+        additionalAssets = additionalAssets.map((asset, index) => {
+            const parsed = splitAssetDisplayName(asset.name);
+            const ext = normalizeAssetExtValue(parsed.ext, asset.ext, svbGetFileExt(asset.path), 'png');
+            const nextName = svbMakeUniqueAssetName(parsed.base || asset.name || `asset_${index + 1}`, usedAdditionalNames);
+            usedAdditionalNames.push(nextName);
+            const next = {
+                name: nextName,
+                path: safeString(asset.path).trim(),
+                ext
+            };
+            if (next.name !== asset.name || next.path !== asset.path || next.ext !== asset.ext) changed += 1;
+            return next;
+        }).filter(asset => asset.name && asset.path);
+        syncCharacterAssetFields();
+        if (changed > 0) await saveCurrentAssets(`확장자/이름 정리 완료: ${changed}개 수정했습니다.`);
+        else setStatus('이미 확장자/이름이 정리되어 있습니다.', 'info');
+        renderAll();
+    }
+
+    function renderAssetNamePattern(pattern, asset, position, folder) {
+        const parsed = splitAssetDisplayName(asset.name);
+        const base = parsed.base || asset.name || `asset_${position}`;
+        const ext = parsed.ext || asset.ext || svbGetFileExt(asset.path) || '';
+        const index = String(position);
+        const padded = index.padStart(2, '0');
+        const raw = safeString(pattern || '{name}_{nn}')
+            .replace(/\{name\}/g, base)
+            .replace(/\{base\}/g, base)
+            .replace(/\{n\}/g, index)
+            .replace(/\{nn\}/g, padded)
+            .replace(/\{folder\}/g, folder || '');
+        const next = raw.includes('{ext}') ? raw.replace(/\{ext\}/g, ext) : raw;
+        return splitAssetDisplayName(next).base || next;
+    }
+
+    async function patternRenameSelectedAssets(kind) {
+        const refs = getSelectedAssetRefs(kind);
+        if (!refs.length) return;
+        const pattern = prompt('패턴 이름변경\n사용 가능: {name}, {n}, {nn}, {folder}, {ext}\n예: {folder}_{nn}_{name}', '{name}_{nn}');
+        if (!pattern) return;
+        if (!confirm(`${refs.length}개 에셋 이름을 패턴으로 변경합니다.\n기존 {{image::이름}} / {{emotion::이름}} 참조는 자동 변경되지 않습니다. 계속할까요?`)) return;
+        const used = kind === 'emotion'
+            ? emotionAssets.map((item, idx) => refs.some(ref => ref.idx === idx) ? '' : item.name).filter(Boolean)
+            : additionalAssets.map((item, idx) => refs.some(ref => ref.idx === idx) ? '' : item.name).filter(Boolean);
+        let changed = 0;
+        refs.forEach((ref, order) => {
+            const folder = getAssetFolder(kind, ref.asset.name);
+            const rawName = renderAssetNamePattern(pattern, ref.asset, order + 1, folder);
+            const nextName = kind === 'emotion'
+                ? makeUniqueLooseAssetName(rawName, used, `emotion_${order + 1}`)
+                : svbMakeUniqueAssetName(rawName, used);
+            used.push(nextName);
+            if (nextName && nextName !== ref.asset.name) {
+                renameAssetFolderKey(kind, ref.asset.name, nextName);
+                ref.asset.name = nextName;
+                changed += 1;
+            }
+        });
+        selectedAssetIds.clear();
+        if (changed > 0) {
+            syncCharacterAssetFields();
+            await saveCurrentAssets(`패턴 이름변경 완료: ${changed}개 수정했습니다.`);
+        } else {
+            setStatus('변경된 이름이 없습니다.', 'info');
+        }
+        renderAll();
+    }
+
+    async function moveSelectedAssetsToFolder(kind) {
+        const refs = getSelectedAssetRefs(kind);
+        if (!refs.length) return;
+        const currentFolders = getFolderNames(kind).join(', ');
+        const folder = prompt(`이동할 폴더 이름을 입력하세요. 비우면 미분류로 이동합니다.${currentFolders ? `\n기존 폴더: ${currentFolders}` : ''}`, '');
+        if (folder === null) return;
+        refs.forEach(ref => setAssetFolder(kind, ref.asset.name, folder));
+        selectedAssetIds.clear();
+        syncCharacterAssetFields();
+        await saveCurrentAssets(folder ? `${refs.length}개 에셋을 "${folder}" 폴더로 이동했습니다.` : `${refs.length}개 에셋을 미분류로 이동했습니다.`);
+        renderAll();
+    }
+
+    async function batchReplaceSelectedAssets(kind, files) {
+        const refs = getSelectedAssetRefs(kind);
+        const fileList = Array.from(files || []);
+        if (!refs.length || !fileList.length) return;
+        if (fileList.length !== refs.length && fileList.length !== 1) {
+            alert(`선택 ${refs.length}개와 파일 ${fileList.length}개의 수가 맞지 않습니다.\n파일 1개는 선택 전체에 적용할 수 있고, 여러 파일은 선택 수와 같아야 합니다.`);
+            return;
+        }
+        if (fileList.length === 1 && refs.length > 1 && !confirm(`파일 1개로 선택된 ${refs.length}개 에셋의 이미지를 모두 교체할까요? 이름은 유지됩니다.`)) return;
+        if (fileList.length === refs.length && !confirm(`${refs.length}개 에셋의 이미지를 선택한 파일 순서대로 교체합니다. 이름은 유지됩니다. 계속할까요?`)) return;
+        let changed = 0;
+        for (let i = 0; i < refs.length; i += 1) {
+            const ref = refs[i];
+            const file = fileList.length === 1 ? fileList[0] : fileList[i];
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const ext = normalizeAssetExtValue(svbDetectImageFormat(bytes), svbGetFileExt(file.name), ref.asset.ext, svbGetFileExt(ref.asset.path), 'png');
+            const fileBase = svbNormalizeAssetName(ref.asset.name || `asset_${i + 1}`, `asset_${i + 1}`);
+            const path = await svbSaveAssetBytes(bytes, `${fileBase}.${ext}`);
+            if (kind === 'emotion') {
+                emotionAssets[ref.idx] = { name: ref.asset.name, path };
+            } else {
+                additionalAssets[ref.idx] = { name: ref.asset.name, path, ext };
+            }
+            changed += 1;
+            setStatus(`일괄 교체 중... ${changed}/${refs.length}`, 'info');
+        }
+        selectedAssetIds.clear();
+        syncCharacterAssetFields();
+        await saveCurrentAssets(`일괄 교체 완료: ${changed}개 이미지를 교체했습니다.`);
+        renderAll();
+    }
+
+    async function deleteSelectedAssets(kind) {
+        const refs = getSelectedAssetRefs(kind);
+        if (!refs.length) return;
+        if (!confirm(`선택한 ${refs.length}개 에셋을 삭제할까요?`)) return;
+        const indexes = refs.map(ref => ref.idx).sort((a, b) => b - a);
+        if (kind === 'emotion') {
+            indexes.forEach(idx => emotionAssets.splice(idx, 1));
+        } else {
+            indexes.forEach(idx => additionalAssets.splice(idx, 1));
+        }
+        selectedAssetIds.clear();
+        syncCharacterAssetFields();
+        await saveCurrentAssets(`선택 삭제 완료: ${refs.length}개 삭제했습니다.`);
+        renderAll();
+    }
+
+    function selectVisibleAssets(kind) {
+        visibleAssetIndexes(kind).forEach(idx => selectedAssetIds.add(assetSelectionId(kind, idx)));
+        renderAll();
+        setStatus(`${kind === 'emotion' ? '감정 이미지' : '추가 에셋'} 표시 항목을 선택했습니다.`, 'info');
+    }
+
+    function clearSelectedAssets(kind = '') {
+        if (kind) {
+            selectedAssetIds = new Set([...selectedAssetIds].filter(id => !id.startsWith(`${kind}:`)));
+        } else {
+            selectedAssetIds.clear();
+        }
+        renderAll();
+        setStatus('선택을 해제했습니다.', 'info');
     }
 
     async function saveCurrentGenerationPreset() {
@@ -51771,7 +52988,8 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-search{margin:0 0 2px}
             #svb-asset-studio-window .svb-as-list{display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-row{border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:9px;display:flex;flex-direction:column;gap:8px}
-            #svb-asset-studio-window .svb-as-row-main{display:grid;grid-template-columns:58px minmax(0,1fr) auto;gap:8px;align-items:center}
+            #svb-asset-studio-window .svb-as-row-main{display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:8px;align-items:center}
+            #svb-asset-studio-window .svb-as-select{width:16px;height:16px;margin:0;accent-color:#0f766e}
             #svb-asset-studio-window .svb-as-row-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.45fr);gap:7px;align-items:center}
             #svb-asset-studio-window .svb-as-additional-list .svb-as-row-fields{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr) 70px}
             #svb-asset-studio-window .svb-as-inline{min-width:0;width:100%;height:30px;border:1px solid #dbe3ef;border-radius:7px;background:#fff;color:#111827;padding:0 8px;font-size:12px;box-sizing:border-box}
@@ -51813,14 +53031,17 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-part-more > summary{cursor:pointer;color:#475569;font-size:12px;font-weight:800;list-style:none}
             #svb-asset-studio-window .svb-as-part-more > summary::-webkit-details-marker{display:none}
             #svb-asset-studio-window .svb-as-output-head{display:flex;align-items:center;justify-content:space-between;color:#475569;font-size:12px}
-            #svb-asset-studio-window .svb-as-output-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:7px}
-            #svb-asset-studio-window .svb-as-output-card{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:6px;display:grid;grid-template-columns:46px minmax(0,1fr) auto;gap:6px;align-items:center}
-            #svb-asset-studio-window .svb-as-output-thumb{width:44px;height:44px;border:1px solid #dbe3ef;border-radius:7px;background:#fff;color:#64748b;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:zoom-in;padding:0;font-size:10px;font-weight:800}
+            #svb-asset-studio-window .svb-as-output-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+            #svb-asset-studio-window .svb-as-output-card{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:8px;display:flex;flex-direction:column;gap:7px;min-width:0}
+            #svb-asset-studio-window .svb-as-output-thumb{width:100%;aspect-ratio:1/1;border:1px solid #dbe3ef;border-radius:7px;background:#fff;color:#64748b;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:zoom-in;padding:0;font-size:11px;font-weight:800}
             #svb-asset-studio-window .svb-as-output-thumb img{width:100%;height:100%;object-fit:cover;display:block}
             #svb-asset-studio-window .svb-as-output-thumb.is-empty{background:#f1f5f9;color:#94a3b8}
             #svb-asset-studio-window .svb-as-output-meta{min-width:0;display:flex;flex-direction:column;gap:2px}
             #svb-asset-studio-window .svb-as-output-meta strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             #svb-asset-studio-window .svb-as-output-meta span,#svb-asset-studio-window .svb-as-output-empty{font-size:11px;color:#64748b}
+            #svb-asset-studio-window .svb-as-output-meta code{font-size:10px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:3px 5px}
+            #svb-asset-studio-window .svb-as-output-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+            #svb-asset-studio-window .svb-as-output-actions .danger{grid-column:1 / -1}
             #svb-asset-studio-window .svb-as-generated-preview{display:none;align-items:center;gap:10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:8px}
             #svb-asset-studio-window .svb-as-generated-thumb{width:72px;height:72px;border:1px solid #dbe3ef;border-radius:8px;background:#f8fafc;overflow:hidden;padding:0;cursor:zoom-in}
             #svb-asset-studio-window .svb-as-generated-thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -51840,9 +53061,9 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-part-top,#svb-asset-studio-window .svb-as-part-grid{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-part-check{justify-self:start}
                 #svb-asset-studio-window .svb-as-output-list{grid-template-columns:1fr}
-                #svb-asset-studio-window .svb-as-row-main{grid-template-columns:54px minmax(0,1fr)}
+                #svb-asset-studio-window .svb-as-row-main{grid-template-columns:22px 54px minmax(0,1fr)}
                 #svb-asset-studio-window .svb-as-row-fields,#svb-asset-studio-window .svb-as-additional-list .svb-as-row-fields{grid-template-columns:1fr}
-                #svb-asset-studio-window .svb-as-badge{justify-self:start;grid-column:2}
+                #svb-asset-studio-window .svb-as-badge{justify-self:start;grid-column:3}
                 #svb-asset-studio-window .svb-as-lightbox img{max-height:72vh}
             }
         </style>
@@ -51856,12 +53077,17 @@ async function openAssetStudio() {
                     <div class="svb-as-actions">
                         <button class="svb-as-btn" id="svb-as-export" type="button">JSON 내보내기</button>
                         <button class="svb-as-btn" id="svb-as-import" type="button">JSON 가져오기</button>
+                        <button class="svb-as-btn" id="svb-as-image-backup" type="button">이미지 ZIP 백업</button>
+                        <button class="svb-as-btn" id="svb-as-image-import" type="button">이미지 ZIP 가져오기</button>
+                        <button class="svb-as-btn" id="svb-as-normalize-ext" type="button">확장자 정리</button>
                         <button class="svb-as-btn" id="svb-as-module-export" type="button">모듈 내보내기</button>
                         <button class="svb-as-btn" id="svb-as-module-import" type="button">모듈 가져오기</button>
                         <button class="svb-as-btn" id="svb-as-refresh" type="button">새로고침</button>
                         <button class="svb-as-btn svb-as-close" id="svb-as-close" type="button" title="닫기">×</button>
                     </div>
                     <input id="svb-as-import-file" type="file" accept=".json,application/json" style="display:none">
+                    <input id="svb-as-image-import-file" type="file" accept=".zip,application/zip" style="display:none">
+                    <input id="svb-as-replace-file" type="file" accept="image/*" multiple style="display:none">
                     <input id="svb-as-module-import-file" type="file" accept=".json,application/json" style="display:none">
                     <input id="svb-as-preset-import-file" type="file" accept=".json,application/json" style="display:none">
                 </div>
@@ -51884,6 +53110,21 @@ async function openAssetStudio() {
                                 </div>
                             </div>
                             <div class="svb-as-form">
+                                <div class="svb-as-form-title">선택 관리</div>
+                                <div class="svb-as-grid">
+                                    <select class="svb-as-input svb-as-folder-filter" id="svb-as-add-folder-filter" data-kind="additional"></select>
+                                    <input class="svb-as-input" id="svb-as-search" placeholder="에셋 검색">
+                                </div>
+                                <div class="svb-as-actions">
+                                    <button class="svb-as-btn" data-action="select-visible" data-kind="additional" type="button">표시 선택</button>
+                                    <button class="svb-as-btn" data-action="clear-selection" data-kind="additional" type="button">선택 해제</button>
+                                    <button class="svb-as-btn" data-action="pattern-rename" data-kind="additional" type="button">패턴 변경</button>
+                                    <button class="svb-as-btn" data-action="move-folder" data-kind="additional" type="button">폴더 이동</button>
+                                    <button class="svb-as-btn" data-action="batch-replace" data-kind="additional" type="button">일괄 교체</button>
+                                    <button class="svb-as-btn danger" data-action="delete-selected" data-kind="additional" type="button">선택 삭제</button>
+                                </div>
+                            </div>
+                            <div class="svb-as-form">
                                 <div class="svb-as-form-title">직접 등록</div>
                                 <div class="svb-as-grid three">
                                     <input class="svb-as-input" id="svb-as-add-name" placeholder="에셋 이름">
@@ -51892,7 +53133,6 @@ async function openAssetStudio() {
                                 </div>
                                 <button class="svb-as-btn primary" id="svb-as-add-manual" type="button">추가 에셋 등록</button>
                             </div>
-                            <input class="svb-as-input svb-as-search" id="svb-as-search" placeholder="에셋 검색">
                             <div class="svb-as-list svb-as-additional-list" id="svb-as-additional-list"></div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-emotion-panel" style="display:none">
@@ -51900,6 +53140,18 @@ async function openAssetStudio() {
                                 <div class="svb-as-form-title">기본 감정 프리셋</div>
                                 <div class="svb-as-preset-row">
                                     ${SVB_EMOTION_PRESETS.map(name => `<button class="svb-as-btn" data-emotion-preset="${escapeHtml(name)}" type="button">${escapeHtml(name)}</button>`).join('')}
+                                </div>
+                            </div>
+                            <div class="svb-as-form">
+                                <div class="svb-as-form-title">선택 관리</div>
+                                <select class="svb-as-input svb-as-folder-filter" id="svb-as-emotion-folder-filter" data-kind="emotion"></select>
+                                <div class="svb-as-actions">
+                                    <button class="svb-as-btn" data-action="select-visible" data-kind="emotion" type="button">표시 선택</button>
+                                    <button class="svb-as-btn" data-action="clear-selection" data-kind="emotion" type="button">선택 해제</button>
+                                    <button class="svb-as-btn" data-action="pattern-rename" data-kind="emotion" type="button">패턴 변경</button>
+                                    <button class="svb-as-btn" data-action="move-folder" data-kind="emotion" type="button">폴더 이동</button>
+                                    <button class="svb-as-btn" data-action="batch-replace" data-kind="emotion" type="button">일괄 교체</button>
+                                    <button class="svb-as-btn danger" data-action="delete-selected" data-kind="emotion" type="button">선택 삭제</button>
                                 </div>
                             </div>
                             <div class="svb-as-form">
@@ -52009,10 +53261,23 @@ async function openAssetStudio() {
     });
     addLocal(document.getElementById('svb-as-export'), 'click', exportAssetJson);
     addLocal(document.getElementById('svb-as-import'), 'click', () => document.getElementById('svb-as-import-file')?.click());
+    addLocal(document.getElementById('svb-as-image-backup'), 'click', exportAssetImageBackupZip);
+    addLocal(document.getElementById('svb-as-image-import'), 'click', () => document.getElementById('svb-as-image-import-file')?.click());
+    addLocal(document.getElementById('svb-as-normalize-ext'), 'click', normalizeAssetExtensionsInStudio);
     addLocal(document.getElementById('svb-as-import-file'), 'change', async event => {
         await importAssetJson(event.target.files?.[0]);
         event.target.value = '';
     });
+    addLocal(document.getElementById('svb-as-image-import-file'), 'change', async event => {
+        await importAssetImageBackupZip(event.target.files?.[0]);
+        event.target.value = '';
+    });
+    addLocal(document.getElementById('svb-as-replace-file'), 'change', async event => {
+        await batchReplaceSelectedAssets(pendingBatchReplaceKind, event.target.files);
+        event.target.value = '';
+    });
+    addLocal(document.getElementById('svb-as-add-folder-filter'), 'change', renderAdditionalList);
+    addLocal(document.getElementById('svb-as-emotion-folder-filter'), 'change', renderEmotionList);
     addLocal(document.getElementById('svb-as-module-export'), 'click', exportPersonaEmotionModule);
     addLocal(document.getElementById('svb-as-module-import'), 'click', () => document.getElementById('svb-as-module-import-file')?.click());
     addLocal(document.getElementById('svb-as-module-import-file'), 'change', async event => {
@@ -52084,8 +53349,24 @@ async function openAssetStudio() {
 
     addLocal(studioWindow, 'change', async event => {
         const target = event.target;
+        if (target?.classList?.contains('svb-as-select')) {
+            const kind = target.dataset.kind === 'emotion' ? 'emotion' : 'additional';
+            const idx = Number(target.dataset.idx);
+            if (Number.isInteger(idx)) {
+                const id = assetSelectionId(kind, idx);
+                if (target.checked) selectedAssetIds.add(id);
+                else selectedAssetIds.delete(id);
+            }
+            return;
+        }
         if (!target?.classList?.contains('svb-as-inline')) return;
         try {
+            if (target.classList.contains('svb-as-emotion-name')) {
+                renameAssetFolderKey('emotion', target.dataset.prevName || '', target.value || '');
+            }
+            if (target.classList.contains('svb-as-add-name')) {
+                renameAssetFolderKey('additional', target.dataset.prevName || '', target.value || '');
+            }
             await saveCurrentAssets('변경사항을 저장했습니다.');
             renderAll();
         } catch (error) {
@@ -52119,6 +53400,22 @@ async function openAssetStudio() {
                 if (output) await previewAsset(output);
                 return;
             }
+            if (action === 'copy-output') {
+                const preset = readGenerationPresetFromUI(getSelectedImagePreset());
+                const output = ensureArray(ensureArray(preset.parts)[partIdx]?.outputs)[outputIdx];
+                if (output?.name) {
+                    const tag = output.target === 'emotion' ? `{{emotion::${output.name}}}` : `{{image::${output.name}}}`;
+                    await safeCopyText(tag);
+                    setStatus(`${tag} 태그를 복사했습니다.`, 'success');
+                }
+                return;
+            }
+            if (action === 'download-output') {
+                const preset = readGenerationPresetFromUI(getSelectedImagePreset());
+                const output = ensureArray(ensureArray(preset.parts)[partIdx]?.outputs)[outputIdx];
+                if (output) await downloadAssetImage(output, `generated_${outputIdx + 1}`);
+                return;
+            }
             if (action === 'generate-part') {
                 if (Number.isInteger(partIdx)) await generatePresetPartsFromStudio(false, [partIdx]);
                 return;
@@ -52135,13 +53432,41 @@ async function openAssetStudio() {
                 if (Number.isInteger(partIdx) && Number.isInteger(outputIdx)) await deletePartOutput(partIdx, outputIdx);
                 return;
             }
-            const needsAssetIdx = ['zoom-emotion', 'zoom-additional', 'preview-emotion', 'preview-additional', 'copy-emotion', 'copy-additional', 'delete-emotion', 'delete-additional'].includes(action);
+            const bulkKind = btn.dataset.kind === 'emotion' ? 'emotion' : 'additional';
+            if (action === 'select-visible') {
+                selectVisibleAssets(bulkKind);
+                return;
+            }
+            if (action === 'clear-selection') {
+                clearSelectedAssets(bulkKind);
+                return;
+            }
+            if (action === 'pattern-rename') {
+                await patternRenameSelectedAssets(bulkKind);
+                return;
+            }
+            if (action === 'move-folder') {
+                await moveSelectedAssetsToFolder(bulkKind);
+                return;
+            }
+            if (action === 'batch-replace') {
+                pendingBatchReplaceKind = bulkKind;
+                document.getElementById('svb-as-replace-file')?.click();
+                return;
+            }
+            if (action === 'delete-selected') {
+                await deleteSelectedAssets(bulkKind);
+                return;
+            }
+            const needsAssetIdx = ['zoom-emotion', 'zoom-additional', 'preview-emotion', 'preview-additional', 'copy-emotion', 'copy-additional', 'download-emotion', 'download-additional', 'delete-emotion', 'delete-additional'].includes(action);
             if (needsAssetIdx && (!Number.isInteger(idx) || idx < 0)) return;
             if ((action.includes('emotion') && !emotionAssets[idx]) || (action.includes('additional') && !additionalAssets[idx])) return;
             if (action === 'zoom-emotion' || action === 'preview-emotion') await previewAsset({ ...emotionAssets[idx], ext: svbGetFileExt(emotionAssets[idx]?.path) || 'png' });
             if (action === 'zoom-additional' || action === 'preview-additional') await previewAsset(additionalAssets[idx]);
             if (action === 'copy-emotion') await safeCopyText(`{{emotion::${emotionAssets[idx]?.name || ''}}}`);
             if (action === 'copy-additional') await safeCopyText(`{{image::${additionalAssets[idx]?.name || ''}}}`);
+            if (action === 'download-emotion') await downloadAssetImage({ ...emotionAssets[idx], ext: svbGetFileExt(emotionAssets[idx]?.path) || 'png' }, emotionAssets[idx]?.name || `emotion_${idx + 1}`);
+            if (action === 'download-additional') await downloadAssetImage(additionalAssets[idx], additionalAssets[idx]?.name || `asset_${idx + 1}`);
             if (action === 'delete-emotion') {
                 const name = emotionAssets[idx]?.name || '';
                 if (name && !confirm(`감정 이미지 "${name}"을 삭제할까요?`)) return;
@@ -53164,7 +54489,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.41",
+        name: "SuperVibeBot v1.5.42",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -53173,7 +54498,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.41 Settings",
+        "SuperVibeBot v1.5.42 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -53216,7 +54541,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.41");
+        Logger.info("SuperVibeBot v1.5.42");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
