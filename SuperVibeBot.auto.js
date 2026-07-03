@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.54
-//@version 1.5.54
+//@display-name 🐸 SuperVibeBot v1.5.55
+//@version 1.5.55
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.54는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.55는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.54 Release Notes
+ * SuperVibeBot v1.5.55 Release Notes
+ * - v1.5.55: removes bulk_create character-budget chunk shrinking so rich jobs start with multi-item chunks
+ * - v1.5.55: uses enabled sub-agents by default in work-mode bulk, recovery, and chunk generation paths
+ * - v1.5.55: carries existing and job-local lorebook identities into chunk prompts to avoid repeating the same title with slightly changed text
  * - v1.5.54: removes local duplicate/fingerprint gates from lorebook, regex, trigger, and character patch append saves
  * - v1.5.54: stops pruning stored action/bulk jobs and bulk edit state by local expiration time
  * - v1.5.53: raises auto/unknown/router output fallbacks to 128K and removes lingering low default caps
@@ -3099,12 +3102,6 @@ const SVB_SUBAGENT_MIN_PACKET_CHAR_LIMIT = 36000;
 const SVB_SUBAGENT_MIN_MANAGER_BOARD_CHAR_LIMIT = 4000;
 const SVB_WORKSTREAM_MIN_VISIBLE_EVENT_LIMIT = 10;
 const SVB_WORKSTREAM_MIN_RENDER_EVENT_LIMIT = 8;
-const SVB_BULK_MOBILE_DEFAULT_CHUNK_SIZE = 4;
-const SVB_BULK_LOW_MEMORY_DEFAULT_CHUNK_SIZE = 3;
-const SVB_CREATE_MOBILE_SAVE_BATCH_LIMIT = 20;
-const SVB_CREATE_LOW_MEMORY_SAVE_BATCH_LIMIT = 15;
-const SVB_CREATE_MOBILE_CHUNK_CHAR_LIMIT = 60000;
-const SVB_CREATE_LOW_MEMORY_CHUNK_CHAR_LIMIT = 40000;
 const SVB_CREATE_MOBILE_SAVE_DELAY_MS = 260;
 const SVB_CREATE_BACKGROUND_SAVE_DELAY_MS = 500;
 const KERO_BACKGROUND_STATUS_HOST_ID = "svb-kero-background-status-host";
@@ -3117,13 +3114,13 @@ const KERO_BACKGROUND_STATUS_TOAST_UPDATE_INTERVAL_MS = 1200;
 const KERO_CREATE_BATCH_LIMIT = 200;
 const KERO_BULK_DEFAULT_CHUNK_SIZE = 25;
 const KERO_BULK_CREATE_MAX_ITEMS = Number.MAX_SAFE_INTEGER;
-const KERO_CREATE_PAYLOAD_CHAR_LIMIT = 180000;
+const KERO_CREATE_PAYLOAD_CHAR_LIMIT = 600000;
 const KERO_CREATE_DEFAULT_ITEM_CHAR_LIMIT = 12000;
 const KERO_CREATE_MIN_ITEM_CHAR_LIMIT = 600;
 const KERO_CREATE_MAX_ITEM_CHAR_LIMIT = 60000;
 const KERO_CREATE_DEFAULT_CHUNK_CHAR_LIMIT = 120000;
 const KERO_CREATE_MIN_CHUNK_CHAR_LIMIT = 1800;
-const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 180000;
+const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 600000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
 const KERO_ASSET_ACTION_MAX_ITEMS = 12;
@@ -4958,16 +4955,8 @@ function computeSvbAdaptiveRuntimeLimits(profile = getSvbRuntimeEnvironmentProfi
         : tier === 'low' ? 900
             : tier === 'mobile' ? 650
                 : 160;
-    const createSaveBatchLimit = tier === 'background' || tier === 'low'
-        ? SVB_CREATE_LOW_MEMORY_SAVE_BATCH_LIMIT
-        : tier === 'mobile'
-            ? SVB_CREATE_MOBILE_SAVE_BATCH_LIMIT
-            : KERO_CREATE_BATCH_LIMIT;
-    const createChunkCharLimit = tier === 'background' || tier === 'low'
-        ? SVB_CREATE_LOW_MEMORY_CHUNK_CHAR_LIMIT
-        : tier === 'mobile'
-            ? SVB_CREATE_MOBILE_CHUNK_CHAR_LIMIT
-            : KERO_CREATE_DEFAULT_CHUNK_CHAR_LIMIT;
+    const createSaveBatchLimit = KERO_CREATE_BATCH_LIMIT;
+    const createChunkCharLimit = KERO_CREATE_MAX_CHUNK_CHAR_LIMIT;
     return {
         tier,
         constrained: safeProfile.constrained === true,
@@ -4993,11 +4982,7 @@ function computeSvbAdaptiveRuntimeLimits(profile = getSvbRuntimeEnvironmentProfi
         workstreamVisibleEventLimit: Math.max(SVB_WORKSTREAM_MIN_VISIBLE_EVENT_LIMIT, visibleEvents),
         workstreamRenderEventLimit: Math.max(SVB_WORKSTREAM_MIN_RENDER_EVENT_LIMIT, renderEvents),
         workstreamRenderDelayMs: renderDelayMs,
-        bulkDefaultChunkSize: tier === 'background' || tier === 'low'
-            ? SVB_BULK_LOW_MEMORY_DEFAULT_CHUNK_SIZE
-            : tier === 'mobile'
-                ? SVB_BULK_MOBILE_DEFAULT_CHUNK_SIZE
-                : KERO_BULK_DEFAULT_CHUNK_SIZE,
+        bulkDefaultChunkSize: KERO_BULK_DEFAULT_CHUNK_SIZE,
         createSaveBatchLimit,
         createChunkCharLimit,
         createSaveDelayMs: tier === 'background'
@@ -5021,6 +5006,25 @@ function getSvbAdaptiveRuntimeLimits(options = {}) {
         svbAdaptiveLimitsCacheAt = now;
     }
     return limits;
+}
+
+function resolveKeroBulkCreateChunkSize(total, preferredSize = null) {
+    const adaptiveLimits = getSvbAdaptiveRuntimeLimits();
+    const safeTotal = Math.max(0, Math.floor(Number(total) || 0));
+    const rawPreferred = Number(preferredSize);
+    const preferred = Number.isFinite(rawPreferred) && rawPreferred > 0
+        ? Math.floor(rawPreferred)
+        : adaptiveLimits.bulkDefaultChunkSize;
+    const countCeiling = safeTotal > 0 ? safeTotal : preferred;
+    return Math.max(1, Math.min(adaptiveLimits.createSaveBatchLimit, preferred, countCeiling));
+}
+
+function resolveKeroBulkCreateFallbackChunkSize(total, divisor = 8) {
+    const adaptiveLimits = getSvbAdaptiveRuntimeLimits();
+    const safeTotal = Math.max(0, Math.floor(Number(total) || 0));
+    const safeDivisor = Math.max(1, Math.floor(Number(divisor) || 8));
+    const preferred = Math.max(adaptiveLimits.bulkDefaultChunkSize, Math.ceil(safeTotal / safeDivisor));
+    return resolveKeroBulkCreateChunkSize(safeTotal, preferred);
 }
 
 function formatSvbRuntimeProfileSummary(profile = getSvbRuntimeEnvironmentProfile(), limits = getSvbAdaptiveRuntimeLimits({ profile })) {
@@ -5275,6 +5279,14 @@ function shouldSkipAutoSubmodelsForRuntime(request = '', adaptiveLimits = getSvb
     return Boolean(adaptiveLimits?.backgrounded || adaptiveLimits?.isPocketRisu || adaptiveLimits?.isWebView || adaptiveLimits?.lowMemory);
 }
 
+function hasEnabledKeroSubmodels() {
+    try {
+        return normalizeSubAgentModels(apiHubSubmodels).some((item) => item && item.enabled !== false);
+    } catch (_) {
+        return false;
+    }
+}
+
 function shouldUseSubmodelsForKeroRequest(options = {}) {
     if (options.useSubmodels === true) return true;
     if (options.useSubmodels === false) return false;
@@ -5288,6 +5300,7 @@ function shouldUseSubmodelsForKeroRequest(options = {}) {
     const complexPattern = /(분석|검토|토론|설계|구조|리팩토링|스파게티|오류|문제|버그|테스트|전체|대량|최적화|코딩|스크립트|API|HTML|에셋|프리셋|워크플로|모듈|플러그인|정규식|컨텍스트|완벽|최고|복잡|대규모)/i;
 
     if (isExplicitKeroSubmodelRequest(request)) return true;
+    if (hasEnabledKeroSubmodels()) return true;
     if (simplePattern.test(request) && /(삭제|지워|제거|적용|저장|추가|생성|만들어)/i.test(request)) return false;
     if (complexPattern.test(request)) return true;
     if (mode === "module" || mode === "plugin") return true;
@@ -10007,7 +10020,6 @@ function getKeroDeclaredCreateCount(req = {}, payloadCount = 0) {
 function buildKeroCreateCountCoverageActions(userInput, actions = [], options = {}) {
     if (!hasKeroExplicitMutationIntent(userInput) || isKeroQuestionOnlyRequest(userInput)) return [];
     const added = [];
-    const adaptiveLimits = getSvbAdaptiveRuntimeLimits();
     ensureArray(actions).forEach((action, index) => {
         if (!action || typeof action !== 'object') return;
         const type = normalizeKeroActionTypeName(action.type);
@@ -10022,7 +10034,7 @@ function buildKeroCreateCountCoverageActions(userInput, actions = [], options = 
             target,
             count: remaining,
             requestedCount: remaining,
-            chunkSize: Math.min(adaptiveLimits.bulkDefaultChunkSize, Math.max(1, remaining)),
+            chunkSize: resolveKeroBulkCreateFallbackChunkSize(remaining, 8),
             userRequest: safeString(action.userRequest || action.request || userInput).trim(),
             reason: action.reason || 'create_count_coverage',
             dependsOn: [safeString(action.stepId || action.actionJobId || `coverage-source-${index + 1}`)].filter(Boolean),
@@ -10188,10 +10200,7 @@ function normalizeKeroBulkCreateRequest(action = {}) {
     const resolvedChunkCharLimit = protectRichLorebookBudget
         ? Math.max(chunkCharLimit, Math.min(autoBudget.chunkCharLimit, adaptiveLimits.createChunkCharLimit))
         : chunkCharLimit;
-    const strictBulkChunkLimit = target === 'lorebook' && (fullBuild || perEntity || !!qualityProfile)
-        ? Math.min(adaptiveLimits.createSaveBatchLimit, adaptiveLimits.bulkDefaultChunkSize)
-        : adaptiveLimits.createSaveBatchLimit;
-    const chunkSize = Math.max(1, Math.min(strictBulkChunkLimit, userChunkSize));
+    const chunkSize = resolveKeroBulkCreateChunkSize(count, userChunkSize);
     return { target, count, requestedCount, chunkSize, itemCharLimit: resolvedItemCharLimit, chunkCharLimit: resolvedChunkCharLimit, maxOutputTokens: autoBudget.maxOutputTokens, modelOutputTokens: autoBudget.outputTokens, userRequest, subject, perEntity, qualityProfile, fullBuild };
 }
 
@@ -10200,10 +10209,12 @@ function buildKeroBulkCreateChunks(total, requestedChunkSize, itemCharLimit, chu
     const safeTotal = Math.max(0, Math.floor(Number(total) || 0));
     const safeItemLimit = Math.max(1, Math.floor(Number(itemCharLimit) || KERO_CREATE_DEFAULT_ITEM_CHAR_LIMIT));
     const rawChunkLimit = Math.floor(Number(chunkCharLimit) || KERO_CREATE_DEFAULT_CHUNK_CHAR_LIMIT);
-    const safeChunkLimit = Math.max(safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS, Math.min(rawChunkLimit, adaptiveLimits.createChunkCharLimit));
-    const requested = Math.max(1, Math.floor(Number(requestedChunkSize) || adaptiveLimits.bulkDefaultChunkSize));
-    const budgetChunkSize = Math.max(1, Math.floor((safeChunkLimit - 24) / (safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS)));
-    const effectiveChunkSize = Math.max(1, Math.min(requested, adaptiveLimits.createSaveBatchLimit, budgetChunkSize));
+    const effectiveChunkSize = resolveKeroBulkCreateChunkSize(safeTotal, requestedChunkSize || adaptiveLimits.bulkDefaultChunkSize);
+    const requestedChunkBudget = effectiveChunkSize * (safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS) + 24;
+    const safeChunkLimit = Math.max(
+        safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS,
+        Math.min(KERO_CREATE_MAX_CHUNK_CHAR_LIMIT, adaptiveLimits.createChunkCharLimit, Math.max(rawChunkLimit, requestedChunkBudget))
+    );
     const chunks = [];
     for (let start = 0; start < safeTotal; start += effectiveChunkSize) {
         chunks.push({ start, count: Math.min(effectiveChunkSize, safeTotal - start), retries: 0, itemCharLimit: safeItemLimit, chunkCharLimit: safeChunkLimit });
@@ -13173,7 +13184,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.54',
+            '//@version 1.5.55',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -14158,14 +14169,14 @@ function addSvbRuntimeBulkCreateRangeSelfTest(checks) {
     if (Number(value.completedRemaining || 0) !== 0 || Number(value.completedFailed || 0) !== 0 || value.completedResumable) problems.push('완료 job 잔여/실패 정리 실패');
     if (Number(value.mergedRetryCount || 0) !== 3) problems.push('겹친 실패 range retryCount 병합 실패');
     if (Number(value.defaultChunkSize || 0) !== Number(value.expectedDefaultChunkSize || 0)) problems.push(`기본 chunkSize ${value.defaultChunkSize}`);
-    if (Number(value.strictChunkSize || 0) > Number(value.expectedDefaultChunkSize || 0)) problems.push(`strict chunkSize cap 실패 ${value.strictChunkSize}`);
+    if (Number(value.strictChunkSize || 0) !== 50) problems.push(`explicit chunkSize not preserved ${value.strictChunkSize}`);
     if (Number(value.glmThinkingOutput || 0) < 64000) problems.push(`GLM/Kimi output budget fallback regression ${value.glmThinkingOutput}`);
     if (Number(value.emptyModelOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`empty model output fallback still low ${value.emptyModelOutput}`);
     if (Number(value.autoModelOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`auto model output fallback still low ${value.autoModelOutput}`);
     if (Number(value.unknownRouterOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`unknown/router model output fallback still low ${value.unknownRouterOutput}`);
     if (Number(value.richBudgetItemLimit || 0) <= 2400) problems.push(`rich lorebook item budget capped too low ${value.richBudgetItemLimit}`);
     if (Number(value.richBudgetChunkLimit || 0) <= 16000) problems.push(`rich lorebook chunk budget capped too low ${value.richBudgetChunkLimit}`);
-    if (Number(value.richBudgetEffectiveChunkSize || 0) !== 1) problems.push(`rich lorebook should split by calls instead of shrinking entries ${value.richBudgetEffectiveChunkSize}`);
+    if (Number(value.richBudgetEffectiveChunkSize || 0) !== 10) problems.push(`rich lorebook should keep multi-item chunks ${value.richBudgetEffectiveChunkSize}`);
     if (!value.noSummaryCompressionFalse) problems.push('요약 없이 부정형을 압축 요청으로 오판');
     if (!value.positiveCompressionTrue) problems.push('명시 요약/압축 요청 감지 실패');
     if (safeString(value.fullBuildWarningDependency)) problems.push('full-build bulk warning dependency 허용 실패');
@@ -27220,7 +27231,7 @@ ${currentVars || '{}'}
                 type: 'bulk_create',
                 target,
                 count: remainingCount,
-                chunkSize: Math.min(10, Math.max(2, Math.ceil(remainingCount / 8))),
+                chunkSize: resolveKeroBulkCreateFallbackChunkSize(remainingCount, 8),
                 userRequest: buildKeroCreateCountCoverageUserRequest(request, { ...spec, target, count: requestedCount }, plannedCount, remainingCount, options),
                 jobId: bulkId,
                 bulkJobId: bulkId,
@@ -29400,7 +29411,7 @@ ${currentVars || '{}'}
                     type: 'bulk_create',
                     target,
                     count: remainingCount,
-                    chunkSize: Math.min(adaptiveLimits.bulkDefaultChunkSize, Math.max(2, Math.ceil(remainingCount / 8))),
+                    chunkSize: resolveKeroBulkCreateFallbackChunkSize(remainingCount, 8),
                     userRequest: buildKeroCreateRemainderUserRequest(req, target, payloads, declaredCount, remainingCount),
                     reason: 'create_count_remainder',
                     jobId: remainderJobId,
@@ -29519,10 +29530,7 @@ ${currentVars || '{}'}
         const resolvedChunkCharLimit = protectRichLorebookBudget
             ? Math.max(chunkCharLimit, Math.min(autoBudget.chunkCharLimit, adaptiveLimits.createChunkCharLimit))
             : chunkCharLimit;
-        const strictBulkChunkLimit = target === 'lorebook' && (fullBuild || perEntity || !!qualityProfile)
-            ? Math.min(adaptiveLimits.createSaveBatchLimit, adaptiveLimits.bulkDefaultChunkSize)
-            : adaptiveLimits.createSaveBatchLimit;
-        const chunkSize = Math.max(1, Math.min(strictBulkChunkLimit, userChunkSize));
+        const chunkSize = resolveKeroBulkCreateChunkSize(count, userChunkSize);
         return { target, count, requestedCount, chunkSize, itemCharLimit: resolvedItemCharLimit, chunkCharLimit: resolvedChunkCharLimit, maxOutputTokens: autoBudget.maxOutputTokens, modelOutputTokens: autoBudget.outputTokens, userRequest, subject, perEntity, qualityProfile, fullBuild };
     }
 
@@ -29589,14 +29597,18 @@ ${currentVars || '{}'}
 
     function buildKeroBulkCreateChunks(total, requestedChunkSize, itemCharLimit, chunkCharLimit) {
         const adaptiveLimits = getSvbAdaptiveRuntimeLimits();
+        const safeTotal = Math.max(0, Math.floor(Number(total) || 0));
         const safeItemLimit = Math.max(1, Math.floor(Number(itemCharLimit) || KERO_CREATE_DEFAULT_ITEM_CHAR_LIMIT));
-        const safeChunkLimit = Math.max(safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS, Math.min(Math.floor(Number(chunkCharLimit) || KERO_CREATE_DEFAULT_CHUNK_CHAR_LIMIT), adaptiveLimits.createChunkCharLimit));
-        const requested = Math.max(1, Math.floor(Number(requestedChunkSize) || adaptiveLimits.bulkDefaultChunkSize));
-        const budgetChunkSize = Math.max(1, Math.floor((safeChunkLimit - 24) / (safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS)));
-        const effectiveChunkSize = Math.max(1, Math.min(requested, adaptiveLimits.createSaveBatchLimit, budgetChunkSize));
+        const rawChunkLimit = Math.floor(Number(chunkCharLimit) || KERO_CREATE_DEFAULT_CHUNK_CHAR_LIMIT);
+        const effectiveChunkSize = resolveKeroBulkCreateChunkSize(safeTotal, requestedChunkSize || adaptiveLimits.bulkDefaultChunkSize);
+        const requestedChunkBudget = effectiveChunkSize * (safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS) + 24;
+        const safeChunkLimit = Math.max(
+            safeItemLimit + KERO_CREATE_ENTRY_OVERHEAD_CHARS,
+            Math.min(KERO_CREATE_MAX_CHUNK_CHAR_LIMIT, adaptiveLimits.createChunkCharLimit, Math.max(rawChunkLimit, requestedChunkBudget))
+        );
         const chunks = [];
-        for (let start = 0; start < total; start += effectiveChunkSize) {
-            chunks.push({ start, count: Math.min(effectiveChunkSize, total - start), retries: 0 });
+        for (let start = 0; start < safeTotal; start += effectiveChunkSize) {
+            chunks.push({ start, count: Math.min(effectiveChunkSize, safeTotal - start), retries: 0, itemCharLimit: safeItemLimit, chunkCharLimit: safeChunkLimit });
         }
         return { chunks, effectiveChunkSize };
     }
@@ -29861,16 +29873,27 @@ ${currentVars || '{}'}
         try {
             const char = await getCharacterData();
             const sourceItems = getKeroCreateSourceItems(char, target);
-            if (!sourceItems.length) return '';
-            const limit = Math.max(20, Math.min(120, Math.floor(Number(options.avoidExistingLimit) || 80)));
+            const jobHints = ensureArray(options.createdIdentityHints)
+                .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
+                .filter(Boolean)
+                .slice(-300);
+            if (!sourceItems.length && !jobHints.length) return '';
+            const limit = Math.max(40, Math.min(300, Math.floor(Number(options.avoidExistingLimit) || 200)));
             const samples = sourceItems
                 .slice(-limit)
                 .map((item, index) => summarizeKeroCreateAvoidanceItem(target, item, Math.max(0, sourceItems.length - limit) + index))
                 .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
                 .filter(Boolean);
-            if (!samples.length) return '';
+            if (!samples.length && !jobHints.length) return '';
             const hiddenCount = Math.max(0, sourceItems.length - samples.length);
-            return `\n[중복 회피]\n현재 ${getTargetLabel(target)}에는 이미 ${sourceItems.length}개 항목이 있다. 아래 항목과 comment/name/key/in/out이 같거나 사실상 같은 항목은 만들지 말고, 같은 번호 범위 안에서 완전히 다른 신규 항목으로 대체한다. 중복을 스킵한다고 쓰지 말고 반드시 신규 대체 항목을 ${options.count || '요청 수'}개 채운다.\n${hiddenCount ? `앞선 ${hiddenCount}개 항목은 생략하고 최근/대표 항목만 표시한다.\n` : ''}${samples.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`;
+            const sections = [];
+            if (samples.length) {
+                sections.push(`[기존 ${getTargetLabel(target)} 항목]\n${hiddenCount ? `앞선 ${hiddenCount}개 항목은 생략하고 최근/대표 항목만 표시한다.\n` : ''}${samples.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`);
+            }
+            if (jobHints.length) {
+                sections.push(`[이번 대량 생성 job에서 이미 만든 항목]\n${jobHints.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`);
+            }
+            return `\n[중복 제목/키 회피]\n현재 ${getTargetLabel(target)}에는 이미 ${sourceItems.length}개 항목이 있다. 아래 기존 항목과 이번 job에서 이미 만든 항목의 comment/name/key/in/out identity를 그대로 재사용하지 않는다. 제목만 같고 본문만 조금 바꾼 항목도 실패다. 중복을 스킵한다고 쓰지 말고 반드시 신규 대체 항목을 ${options.count || '요청 수'}개 채운다.\n${sections.join('\n\n')}`;
         } catch (error) {
             Logger.warn('Kero create avoidance guide failed:', error?.message || error);
             return '';
@@ -30006,7 +30029,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const shouldUseBulkSubmodels = svbToBoolean(
             action?.useSubmodels ?? action?.useSubAgents ?? action?.subagents
             ?? options.useSubmodels ?? options.useSubAgents ?? options.subagents,
-            false
+            hasEnabledKeroSubmodels()
         );
         if (!['lorebook', 'regex', 'trigger'].includes(req.target)) {
             if (!silentBulkCreate) await addBotMessage('❌ 대량 생성은 로어북, 정규식, 트리거만 지원합니다.');
@@ -30045,6 +30068,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const completedSummary = summarizeKeroBulkCompletedRanges(completedRanges);
         const failedRanges = normalizeKeroBulkFailedRanges(existingBulkJob.failedRanges, completedRanges);
         const chunks = buildKeroRemainingBulkChunks(persistedChunks.length ? persistedChunks : plan.chunks, completedRanges);
+        const bulkCreatedIdentityHints = ensureArray(existingBulkJob.createdIdentityHints)
+            .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
+            .filter(Boolean)
+            .slice(-300);
         const bulkJobState = {
             ...existingBulkJob,
             id: bulkJobId,
@@ -30058,6 +30085,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             chunks: serializeKeroBulkChunks(chunks),
             completedRanges,
             failedRanges,
+            createdIdentityHints: bulkCreatedIdentityHints.slice(-300),
             autoResumeCount: Math.max(0, Math.floor(Number(existingBulkJob.autoResumeCount) || 0)) + (action?.autoBulkResume === true ? 1 : 0),
             autoResumeAttemptedAt: action?.autoBulkResume === true ? new Date().toISOString() : existingBulkJob.autoResumeAttemptedAt,
             startedAt: existingBulkJob?.startedAt || new Date().toISOString(),
@@ -30075,6 +30103,18 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             if (!persisted) {
                 throw new Error(`대량 생성 job 상태 저장에 실패했습니다: ${bulkJobId}`);
             }
+        }
+        function appendBulkCreatedIdentityHints(items = [], startIndex = 0) {
+            const nextHints = ensureArray(items)
+                .map((item, index) => summarizeKeroCreateAvoidanceItem(req.target, item, startIndex + index))
+                .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
+                .filter(Boolean);
+            if (!nextHints.length) return;
+            bulkCreatedIdentityHints.push(...nextHints);
+            if (bulkCreatedIdentityHints.length > 300) {
+                bulkCreatedIdentityHints.splice(0, bulkCreatedIdentityHints.length - 300);
+            }
+            bulkJobState.createdIdentityHints = bulkCreatedIdentityHints.slice(-300);
         }
         await persistBulkJobState();
 
@@ -30138,7 +30178,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                             fullBuild: req.fullBuild === true,
                             subject: req.subject,
                             perEntity: req.perEntity === true,
-                            qualityProfile: req.qualityProfile
+                            qualityProfile: req.qualityProfile,
+                            createdIdentityHints: bulkCreatedIdentityHints.slice(-300)
                         }
                     );
                     assertBulkCreateAllowed();
@@ -30242,6 +30283,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 assertBulkCreateAllowed();
                 const saved = await persistKeroCreatePayloads(req.target, items, options);
                 assertBulkCreateAllowed();
+                appendBulkCreatedIdentityHints(items, chunk.start);
                 results.success += saved.success || 0;
                 results.created += saved.created || Math.max(0, (saved.success || 0) - (saved.skipped || 0));
                 const missingItemCount = Math.max(0, chunk.count - items.length);
@@ -30278,7 +30320,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     failed: results.failed,
                     skipped: results.skipped,
                     completedRanges: bulkJobState.completedRanges,
-                    failedRanges: bulkJobState.failedRanges
+                    failedRanges: bulkJobState.failedRanges,
+                    createdIdentityHints: bulkJobState.createdIdentityHints
                 });
                 if (shouldLogChunk) {
                     addKeroWorkstreamEvent(
@@ -35381,9 +35424,9 @@ ${metaBlock}
 - 단일 생성: @action {"type":"create","target":"lorebook|regex|trigger","payload":{...}}
 - 여러 항목 생성: 응답 안에 안정적으로 담길 만큼만 create payload 배열로 담고, 길거나 많은 작업은 bulk_create job으로 넘겨 저장 완료 범위를 보존하며 계속 진행한다.
 - 대량 생성: 모델 최대 응답 한계를 넘길 것 같으면 payload 배열을 억지로 출력하지 말고 bulk_create를 사용한다.
-- bulk_create: @action {"type":"bulk_create","target":"lorebook","count":100,"chunkSize":10,"userRequest":"사용자가 요청한 생성 조건 전체"}
+- bulk_create: @action {"type":"bulk_create","target":"lorebook","count":100,"chunkSize":25,"userRequest":"사용자가 요청한 생성 조건 전체"}
 - bulk_create는 슈바봇이 완료 범위를 저장하면서 마지막 처리 지점부터 자동으로 이어간다. "첫 번째만 만들고 나머지는 나중에"라고 말하지 말고 bulk_create를 출력한다.
-- 한 항목 본문이 길어질 요청이면 chunkSize를 1~10까지 낮춘다. 사용자가 요약/압축을 명시하지 않았다면 itemCharLimit/chunkCharLimit를 낮게 박아 내용을 줄이지 않는다. 슈바봇은 모델별 출력 한도에 맞춰 청크를 나누고, 실제 크기 초과 때만 한도를 확장하거나 청크를 분할한다.
+- bulk_create는 기본적으로 여러 항목을 한 번에 처리한다. 사용자가 더 큰 chunkSize를 지정하면 보존하고, 실패하거나 실제 응답 크기를 넘길 때만 슈바봇 런타임이 완료 범위를 보존하며 더 작은 청크로 나눈다.
 - 매우 큰 생성도 임의 상한으로 자르지 않는다. 요청 수량을 bulk_create count에 보존하고, 모델/전송 한계에 닿으면 완료 범위를 기준으로 이어간다.
 - 예시는 형식 설명용이며 분량 기준이 아니다. 실제 payload의 desc, firstMessage, lorebooks.content는 사용자가 요청한 품질과 분량을 충족하는 완성본문으로 작성한다.
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
@@ -42805,7 +42848,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.54 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.55 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -46152,7 +46195,7 @@ function buildKeroLlmChunkQueueFallbackResponse(userText, options = {}) {
     const runnableSpecs = bulkSpecs.filter((spec) => spec?.target && Number(spec.count) >= minBulkCount);
     if (!runnableSpecs.length) return '';
     const useSubmodelsForBulk = isExplicitKeroSubmodelRequest(request)
-        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, false);
+        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels());
     const labelForTarget = (target) => target === 'regex'
         ? '정규식'
         : (target === 'trigger' ? '트리거' : '로어북');
@@ -46165,7 +46208,7 @@ function buildKeroLlmChunkQueueFallbackResponse(userText, options = {}) {
             type: 'bulk_create',
             target,
             count,
-            chunkSize: Math.min(10, Math.max(3, Math.ceil(count / 12))),
+            chunkSize: resolveKeroBulkCreateFallbackChunkSize(count, 12),
             userRequest: buildKeroGatewayBulkCreateUserRequest(request, spec, { referenceDigest }),
             jobId: bulkId,
             bulkJobId: bulkId,
@@ -46220,7 +46263,7 @@ async function buildKeroMissingCharacterActionRecoveryResponse(userText, assista
     );
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false, fullBuild });
     const useRequestedSubmodels = isExplicitKeroSubmodelRequest(request)
-        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, false);
+        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels());
     const systemPrompt = `You are SuperVibeBot's action recovery layer.
 The previous assistant response planned, asked for approval, or produced an incomplete action. The user has delegated execution.
 
@@ -46399,7 +46442,7 @@ async function buildKeroModelAssistedPreplannedLargeRequestResponse(userText, op
     );
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false, fullBuild: true });
     const useRequestedSubmodels = isExplicitKeroSubmodelRequest(request)
-        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, false);
+        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels());
     const systemPrompt = `너는 RisuAI 대형 캐릭터/세계관 작업 선분해기다.
 목표는 거대한 원문 전체를 한 번에 처리하지 않고, 지금 즉시 저장 가능한 첫 실행 단위만 만든 뒤 나머지는 bulk_create 작업으로 이어가게 하는 것이다.
 
@@ -46585,7 +46628,7 @@ async function buildKeroMissingWorkTargetActionRecoveryResponse(userText, assist
             keroMode: 'work',
             workTargetMode: mode,
             disableKeroContext: true,
-            useSubmodels: false,
+            useSubmodels: hasEnabledKeroSubmodels(),
             allowGatewayRecovery: false,
             progressOptions
         });
@@ -46665,7 +46708,7 @@ ${workTargetRule}
 - 긴 설명이나 회의록을 쓰지 말고, 바로 실행 가능한 작은 @action을 만든다.
 - 한 응답에서 모든 로어북/코드/설정을 완성하려 하지 않는다.
 - 로어북/정규식/트리거 생성이 응답 한계를 넘길 수 있으면 개수 기준으로 자르지 말고 bulk_create를 사용한다.
-- bulk_create의 chunkSize는 1~10 사이에서 모델 출력 예산에 맞게 잡는다. 사용자가 요약/압축을 요청하지 않았다면 itemCharLimit을 낮게 박아 내용을 줄이지 말고, 긴 항목은 큰 itemCharLimit 또는 더 작은 chunkSize로 처리한다.
+- bulk_create의 chunkSize는 기본 25개 단위 이상의 다중 항목 처리로 잡는다. 사용자가 더 큰 chunkSize를 지정하면 보존하고, 요약/압축 요청이 없으면 itemCharLimit을 낮게 박아 내용을 줄이지 않는다. 실제 실패나 응답 크기 초과 때만 런타임이 청크를 나눈다.
 - 캐릭터 전체 제작/변환 요청이면 character update로 name, desc, firstMessage, globalNote, backgroundHTML/상태창의 첫 완성 단위를 저장하고, 큰 로어북 묶음은 bulk_create로 넘긴다.
 - personality/성격, scenario/시나리오 필드는 쓰지 말고 desc에 통합한다.
 - 상태창/HTML/CSS를 만들면 프리뷰만 보여주지 말고 backgroundHTML 또는 regexScripts에 실제 저장 payload를 넣는다.
@@ -46746,7 +46789,7 @@ async function runKeroGatewayRecovery(userText, options = {}, error = null) {
     const recoveryPrompt = buildKeroGatewayRecoveryPrompt(userText, options);
     const recoveryOptions = {
         ...options,
-        useSubmodels: false,
+        useSubmodels: svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels()),
         gatewayRecovery: true,
         allowGatewayRecovery: false,
         disableKeroContext: true,
@@ -47660,7 +47703,7 @@ async function buildSubmodelConsultationBlock(systemPrompt, userText, options = 
     if (!configuredSubmodels.length) return "";
     const adaptiveLimits = getSvbAdaptiveRuntimeLimits({ force: true });
     const submodelRequestText = options.userRequest || userText;
-    if (shouldSkipAutoSubmodelsForRuntime(submodelRequestText, adaptiveLimits)) {
+    if (options.useSubmodels !== true && shouldSkipAutoSubmodelsForRuntime(submodelRequestText, adaptiveLimits)) {
         const subAgentProgressOptions = normalizeKeroProgressOptions(options);
         addKeroWorkstreamEvent(
             '서브에이전트 자동 생략',
@@ -55516,7 +55559,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.54",
+        name: "SuperVibeBot v1.5.55",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -55525,7 +55568,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.54 Settings",
+        "SuperVibeBot v1.5.55 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -55568,7 +55611,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.54");
+        Logger.info("SuperVibeBot v1.5.55");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

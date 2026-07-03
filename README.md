@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.54`
+Latest version: `1.5.55`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.55
+
+- Removes bulk-create character-budget chunk shrinking so rich lorebook jobs start with multi-item chunks.
+- Uses enabled sub-agents by default in work-mode bulk, recovery, and chunk generation paths.
+- Carries existing and job-local lorebook identities into chunk prompts to avoid repeating the same title with slightly changed text.
 
 ## 1.5.54
 
