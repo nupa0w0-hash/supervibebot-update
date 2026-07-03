@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.44
-//@version 1.5.44
+//@display-name 🐸 SuperVibeBot v1.5.45
+//@version 1.5.45
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.44는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.45는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.44 Release Notes
+ * SuperVibeBot v1.5.45 Release Notes
+ * - v1.5.45: adds Wellspring reference-image locking for consistent character asset batches
+ * - v1.5.45: exposes reference_image/reference_image_base64 placeholders to workflow/custom image templates
  * - v1.5.44: adds preset-level character consistency prompts for stable profile/emotion/standing asset batches
  * - v1.5.44: exposes character_prompt/identity_prompt placeholders to ComfyUI/custom workflow templates
  * - v1.5.43: adds Asset Studio preset-level fixed positive/negative prompt tags that always wrap generated prompts
@@ -177,7 +179,7 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.41: lets Kero choose a built-in stylePreset per asset request while keeping the 2D/safe prompt sanitizer
  * - v1.5.40: forces Kero image asset prompts into 2D anime illustration style and strips realism/photo/3D trigger terms before API calls
  * - v1.5.40: makes Image API calls prefer nativeFetch over deprecated risuFetch when nativeFetch is available
- * - v1.5.39: fixes image API JSON body handling for risuFetch so Wellspring NAI receives an object instead of a quoted JSON string
+ * - v1.5.39: fixes image API JSON body handling for risuFetch so Wellspring receives an object instead of a quoted JSON string
  * - v1.5.38: makes Kero asset generation prompt-first instead of Asset Studio preset-part driven
  * - v1.5.38: adds local image prompting guidance for ComfyUI, SDXL/ADXL, and Animagine-style anime XL models
  * - v1.5.38: stops Kero asset execution from falling back to image preset positive prompts when an asset prompt is missing
@@ -187,9 +189,9 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.36: adds Asset Studio quick-start controls for Wellspring selection, default preset recovery, and common emotion/standing image preset creation
  * - v1.5.36: shows the active image profile/preset connection summary before generation
  * - v1.5.36: lets Asset Studio prompt for a missing Wellspring ws-key when enabling the Wellspring profile
- * - v1.5.35: adds a Wellspring NAI image provider preset for https://wellspring.encrypt.gay/v1/images/nai/generate-image
+ * - v1.5.35: adds a Wellspring image provider preset for https://wellspring.encrypt.gay/v1/images/nai/generate-image
  * - v1.5.35: verifies Wellspring ws-key/profile access through /v1/images/profile instead of a generic HEAD check
- * - v1.5.35: treats Wellspring NAI and generic NAI presets as compatible in Asset Studio generation
+ * - v1.5.35: treats Wellspring and generic compatible presets as compatible in Asset Studio generation
  * - v1.5.34: adds a Kero "수정 전 확인" toggle that defers save actions to the approval/reject proposal panel
  * - v1.5.34: stops question/usage/analysis requests from being converted into lorebook/regex/trigger save actions
  * - v1.5.34: parses module_update-style action aliases while rejecting module updates contaminated with character-only fields
@@ -2726,7 +2728,7 @@ const IMAGE_API_PROVIDERS = Object.freeze({
         responseParser: "auto"
     },
     "wellspring-nai": {
-        label: "Wellspring NAI",
+        label: "Wellspring",
         responseParser: "auto",
         usesRemoteProfileOptions: true
     },
@@ -2773,7 +2775,7 @@ const DEFAULT_IMAGE_API_PROFILE = Object.freeze({
 });
 const WELLSPRING_IMAGE_API_PROFILE = Object.freeze({
     id: WELLSPRING_IMAGE_API_PROFILE_ID,
-    name: "Wellspring NAI",
+    name: "Wellspring",
     provider: "wellspring-nai",
     endpoint: WELLSPRING_IMAGE_API_ENDPOINT,
     apiKey: "",
@@ -13164,7 +13166,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.44',
+            '//@version 1.5.45',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -21047,6 +21049,32 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
     merged.promptSuffix = safeString(merged.promptSuffix || merged.positiveSuffix || defaults.promptSuffix || defaults.positiveSuffix || merged.defaultPromptSuffix || merged.defaultPositiveSuffix).trim();
     merged.negativePrefix = safeString(merged.negativePrefix || defaults.negativePrefix || merged.defaultNegativePrefix || merged.ucPrefix).trim();
     merged.negativeSuffix = safeString(merged.negativeSuffix || defaults.negativeSuffix || merged.defaultNegativeSuffix || merged.ucSuffix).trim();
+    merged.referenceImagePath = safeString(
+        merged.referenceImagePath
+        || merged.characterReferenceImagePath
+        || merged.identityImagePath
+        || merged.referenceImage
+        || defaults.referenceImagePath
+        || defaults.characterReferenceImagePath
+    ).trim();
+    merged.referenceImageName = safeString(
+        merged.referenceImageName
+        || merged.characterReferenceImageName
+        || merged.identityImageName
+        || defaults.referenceImageName
+    ).trim();
+    merged.referenceStrength = Number.isFinite(Number(merged.referenceStrength))
+        ? Math.max(0, Math.min(1, Number(merged.referenceStrength)))
+        : (Number.isFinite(Number(defaults.referenceStrength)) ? Math.max(0, Math.min(1, Number(defaults.referenceStrength))) : 0.65);
+    merged.referenceInformationExtracted = Number.isFinite(Number(merged.referenceInformationExtracted))
+        ? Math.max(0, Math.min(1, Number(merged.referenceInformationExtracted)))
+        : (Number.isFinite(Number(defaults.referenceInformationExtracted)) ? Math.max(0, Math.min(1, Number(defaults.referenceInformationExtracted))) : 1);
+    merged.wellspringPresetId = safeString(merged.wellspringPresetId || merged.remotePresetId || defaults.wellspringPresetId || defaults.remotePresetId).trim();
+    merged.wellspringWorkflowId = safeString(merged.wellspringWorkflowId || merged.workflowId || merged.remoteWorkflowId || defaults.wellspringWorkflowId || defaults.workflowId || defaults.remoteWorkflowId).trim();
+    merged.wellspringCharacterId = safeString(merged.wellspringCharacterId || merged.characterId || merged.remoteCharacterId || defaults.wellspringCharacterId || defaults.characterId || defaults.remoteCharacterId).trim();
+    merged.wellspringPayloadJson = typeof merged.wellspringPayloadJson === "string"
+        ? merged.wellspringPayloadJson
+        : (typeof merged.remotePayloadJson === "string" ? merged.remotePayloadJson : (defaults.wellspringPayloadJson || ""));
     merged.ratioId = safeString(merged.ratioId || defaults.ratio).trim() || defaultPreset.ratioId || "1:1";
     merged.ratios = ensureArray(merged.ratios).length ? merged.ratios : IMAGE_API_RATIO_PRESETS;
     merged.steps = Math.max(1, Math.min(150, Number(merged.steps) || Number(defaultPreset.steps) || 26));
@@ -21465,6 +21493,82 @@ function svbBytesToImageResult(bytes, ext = "") {
     return { bytes: realBytes, ext: detected, mime, dataUrl: `data:${mime};base64,${btoa(binary)}` };
 }
 
+function svbBytesToBase64(bytes) {
+    const realBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    let binary = "";
+    for (let i = 0; i < realBytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...realBytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+}
+
+async function svbReadImageReferenceFromPath(path, options = {}) {
+    const cleanPath = safeString(path).trim();
+    if (!cleanPath) return null;
+    const fallbackExt = safeString(options.ext || svbGetFileExt(options.name) || svbGetFileExt(cleanPath) || "png").replace(/^\./, "").toLowerCase() || "png";
+    const fallbackMime = svbAssetMimeFromExt(fallbackExt);
+    let imageResult = null;
+    if (cleanPath.startsWith("data:")) {
+        imageResult = svbDataUrlToImageResult(cleanPath, fallbackExt);
+    } else {
+        const data = await svbReadRisuAssetBytes(cleanPath);
+        if (!data) throw new Error(`참조 이미지를 읽지 못했습니다: ${cleanPath}`);
+        if (typeof data === "string") {
+            const text = data.trim();
+            imageResult = text.startsWith("data:")
+                ? svbDataUrlToImageResult(text, fallbackExt)
+                : svbDataUrlToImageResult(`data:${fallbackMime};base64,${text.replace(/\s+/g, "")}`, fallbackExt);
+        } else {
+            const bytes = data instanceof Uint8Array ? data : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
+            if (!bytes) throw new Error(`참조 이미지 데이터 형식을 처리하지 못했습니다: ${cleanPath}`);
+            imageResult = svbBytesToImageResult(bytes, fallbackExt);
+        }
+    }
+    const base64 = svbBytesToBase64(imageResult.bytes);
+    const mime = imageResult.mime || fallbackMime;
+    const strengthValue = Number(options.strength);
+    const informationValue = Number(options.informationExtracted);
+    return {
+        path: cleanPath,
+        name: safeString(options.name || cleanPath.split("/").pop()).trim(),
+        ext: imageResult.ext || fallbackExt,
+        mime,
+        base64,
+        dataUrl: `data:${mime};base64,${base64}`,
+        strength: Number.isFinite(strengthValue) ? Math.max(0, Math.min(1, strengthValue)) : 0.65,
+        informationExtracted: Number.isFinite(informationValue) ? Math.max(0, Math.min(1, informationValue)) : 1
+    };
+}
+
+function svbFirstImageReference(options = {}) {
+    return ensureArray(options.referenceImages).find(item => item && (item.base64 || item.dataUrl || item.image || item.path)) || null;
+}
+
+function svbParseImagePayloadExtraJson(text = "", label = "이미지 추가 payload") {
+    const clean = safeString(text).trim();
+    if (!clean) return {};
+    let data;
+    try {
+        data = JSON.parse(clean);
+    } catch (error) {
+        throw new Error(`${label} JSON 파싱 실패: ${error?.message || error}`);
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error(`${label}는 JSON 객체여야 합니다.`);
+    }
+    return data;
+}
+
+function svbMergeImagePayloadExtra(payload, extra = {}) {
+    if (!payload || !extra || typeof extra !== "object" || Array.isArray(extra)) return payload;
+    const { parameters, ...topLevel } = extra;
+    Object.assign(payload, topLevel);
+    if (parameters && typeof parameters === "object" && !Array.isArray(parameters)) {
+        payload.parameters = { ...(payload.parameters || {}), ...parameters };
+    }
+    return payload;
+}
+
 function svbReadUInt16LE(bytes, offset) {
     return bytes[offset] | (bytes[offset + 1] << 8);
 }
@@ -21661,13 +21765,28 @@ function svbReplaceImageTemplate(text, vars) {
     });
 }
 
-function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps) {
+function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps, options = {}) {
     const seed = Math.floor(Math.random() * 2 ** 32);
     const model = profile.modelIgnored ? (profile.model || "nai-diffusion-3") : (profile.model || "nai-diffusion-3");
     const scale = Number.isFinite(Number(profile.scale)) ? Number(profile.scale) : 5;
     const cfgRescale = Number.isFinite(Number(profile.cfgRescale)) ? Number(profile.cfgRescale) : 0;
     const ucPreset = Number.isFinite(Number(profile.ucPreset)) ? Number(profile.ucPreset) : 3;
-    return {
+    const references = ensureArray(options.referenceImages)
+        .map((reference) => {
+            const base64 = safeString(reference?.base64 || reference?.image || "").replace(/^data:[^,]+,/, "").replace(/\s+/g, "");
+            const strengthValue = Number(reference?.strength);
+            const informationValue = Number(reference?.informationExtracted);
+            return base64 ? {
+                base64,
+                strength: Number.isFinite(strengthValue) ? Math.max(0, Math.min(1, strengthValue)) : 0.65,
+                informationExtracted: Number.isFinite(informationValue) ? Math.max(0, Math.min(1, informationValue)) : 1
+            } : null;
+        })
+        .filter(Boolean);
+    const referenceImages = references.map(reference => reference.base64);
+    const referenceStrengths = references.map(reference => reference.strength);
+    const referenceInformation = references.map(reference => reference.informationExtracted);
+    const payload = {
         input: prompt,
         model,
         action: "generate",
@@ -21696,8 +21815,9 @@ function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps) {
             legacy_uc: false,
             v4_prompt: { caption: { base_caption: prompt, char_captions: [] }, use_coords: false, use_order: true },
             v4_negative_prompt: { caption: { base_caption: negative, char_captions: [] }, legacy_uc: false },
-            reference_image_multiple: [],
-            reference_strength_multiple: [],
+            reference_image_multiple: referenceImages,
+            reference_strength_multiple: referenceStrengths,
+            reference_information_extracted_multiple: referenceInformation,
             seed,
             extra_noise_seed: Math.floor(Math.random() * 2 ** 32),
             prefer_brownian: true,
@@ -21709,13 +21829,22 @@ function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps) {
             director_reference_strength_values: []
         }
     };
+    if (isWellspringImageProvider(profile.provider)) {
+        const wellspringExtra = {};
+        if (safeString(options.wellspringPresetId).trim()) wellspringExtra.presetId = safeString(options.wellspringPresetId).trim();
+        if (safeString(options.wellspringWorkflowId).trim()) wellspringExtra.workflowId = safeString(options.wellspringWorkflowId).trim();
+        if (safeString(options.wellspringCharacterId).trim()) wellspringExtra.characterId = safeString(options.wellspringCharacterId).trim();
+        svbMergeImagePayloadExtra(payload, wellspringExtra);
+        svbMergeImagePayloadExtra(payload, svbParseImagePayloadExtraJson(options.wellspringPayloadJson, "Wellspring 추가 payload"));
+    }
+    return payload;
 }
 
 async function svbGenerateNaiCompatibleImage(profile, options) {
     assertImageApiEndpoint(profile);
     const ratio = getImageApiRatio(profile, options.ratioId);
     const steps = Math.max(10, Math.min(30, Number(options.steps || profile.steps) || 26));
-    const payload = svbBuildNaiCompatiblePayload(profile, options.prompt, options.negative, ratio, steps);
+    const payload = svbBuildNaiCompatiblePayload(profile, options.prompt, options.negative, ratio, steps, options);
     const headers = { Accept: "image/*, application/zip, application/json" };
     if (profile.apiKey) headers.Authorization = `Bearer ${profile.apiKey}`;
     const raw = await svbImageFetchRaw(profile.endpoint, { method: "POST", headers, body: payload }, profile.name, profile.timeoutMs);
@@ -21737,6 +21866,19 @@ function svbReplaceComfyWorkflowValues(value, vars, key = "") {
             .replaceAll("{{identity_prompt}}", vars.characterPrompt || "")
             .replaceAll("{{character_negative}}", vars.characterNegative || "")
             .replaceAll("{{identity_negative}}", vars.characterNegative || "")
+            .replaceAll("{{reference_image}}", vars.referenceImageDataUrl || "")
+            .replaceAll("{{reference_image_data_url}}", vars.referenceImageDataUrl || "")
+            .replaceAll("{{reference_image_base64}}", vars.referenceImageBase64 || "")
+            .replaceAll("{{reference_image_mime}}", vars.referenceImageMime || "")
+            .replaceAll("{{reference_image_name}}", vars.referenceImageName || "")
+            .replaceAll("{{character_image}}", vars.referenceImageDataUrl || "")
+            .replaceAll("{{character_image_data_url}}", vars.referenceImageDataUrl || "")
+            .replaceAll("{{character_image_base64}}", vars.referenceImageBase64 || "")
+            .replaceAll("{{reference_strength}}", String(vars.referenceStrength ?? ""))
+            .replaceAll("{{reference_information_extracted}}", String(vars.referenceInformationExtracted ?? ""))
+            .replaceAll("{{wellspring_preset_id}}", vars.wellspringPresetId || "")
+            .replaceAll("{{wellspring_workflow_id}}", vars.wellspringWorkflowId || "")
+            .replaceAll("{{wellspring_character_id}}", vars.wellspringCharacterId || "")
             .replaceAll("{{width}}", String(vars.width))
             .replaceAll("{{height}}", String(vars.height))
             .replaceAll("{{steps}}", String(vars.steps))
@@ -21765,11 +21907,21 @@ async function svbGenerateComfyImage(profile, options) {
     } catch (error) {
         throw new Error("ComfyUI workflow JSON 파싱 실패: " + error.message);
     }
+    const reference = svbFirstImageReference(options);
     const prompt = svbReplaceComfyWorkflowValues(workflow, {
         prompt: options.prompt,
         negative: options.negative,
         characterPrompt: options.characterPrompt || "",
         characterNegative: options.characterNegative || "",
+        referenceImageDataUrl: reference?.dataUrl || "",
+        referenceImageBase64: reference?.base64 || "",
+        referenceImageMime: reference?.mime || "",
+        referenceImageName: reference?.name || "",
+        referenceStrength: reference?.strength ?? "",
+        referenceInformationExtracted: reference?.informationExtracted ?? "",
+        wellspringPresetId: options.wellspringPresetId || "",
+        wellspringWorkflowId: options.wellspringWorkflowId || "",
+        wellspringCharacterId: options.wellspringCharacterId || "",
         width: ratio.width,
         height: ratio.height,
         steps,
@@ -21810,6 +21962,7 @@ async function svbGenerateCustomHttpImage(profile, options) {
     const ratio = getImageApiRatio(profile, options.ratioId);
     const steps = Math.max(1, Number(options.steps || profile.steps) || 26);
     const seed = Math.floor(Math.random() * 2 ** 32);
+    const reference = svbFirstImageReference(options);
     const templateVars = {
         prompt: options.prompt,
         negative: options.negative,
@@ -21817,6 +21970,19 @@ async function svbGenerateCustomHttpImage(profile, options) {
         identity_prompt: options.characterPrompt || "",
         character_negative: options.characterNegative || "",
         identity_negative: options.characterNegative || "",
+        reference_image: reference?.dataUrl || "",
+        reference_image_data_url: reference?.dataUrl || "",
+        reference_image_base64: reference?.base64 || "",
+        reference_image_mime: reference?.mime || "",
+        reference_image_name: reference?.name || "",
+        character_image: reference?.dataUrl || "",
+        character_image_data_url: reference?.dataUrl || "",
+        character_image_base64: reference?.base64 || "",
+        reference_strength: reference?.strength ?? "",
+        reference_information_extracted: reference?.informationExtracted ?? "",
+        wellspring_preset_id: options.wellspringPresetId || "",
+        wellspring_workflow_id: options.wellspringWorkflowId || "",
+        wellspring_character_id: options.wellspringCharacterId || "",
         width: ratio.width,
         height: ratio.height,
         steps,
@@ -21861,7 +22027,14 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
         prompt,
         negative: safeString(options.negative || "text, logo, watermark, low quality").trim(),
         ratioId: options.ratioId || normalized.ratioId,
-        steps: options.steps || normalized.steps
+        steps: options.steps || normalized.steps,
+        characterPrompt: safeString(options.characterPrompt).trim(),
+        characterNegative: safeString(options.characterNegative).trim(),
+        referenceImages: ensureArray(options.referenceImages),
+        wellspringPresetId: safeString(options.wellspringPresetId).trim(),
+        wellspringWorkflowId: safeString(options.wellspringWorkflowId).trim(),
+        wellspringCharacterId: safeString(options.wellspringCharacterId).trim(),
+        wellspringPayloadJson: safeString(options.wellspringPayloadJson)
     };
     if (isNaiFamilyImageProvider(normalized.provider)) return await svbGenerateNaiCompatibleImage(normalized, request);
     if (normalized.provider === "comfyui") return await svbGenerateComfyImage(normalized, request);
@@ -21874,12 +22047,26 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     const basePrompt = safeString(options.prompt).trim() || normalizedPreset.prompt;
     const baseNegative = safeString(options.negative).trim() || normalizedPreset.negative;
     const composed = svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative);
+    const referenceImages = [...ensureArray(options.referenceImages)];
+    const referenceImagePath = safeString(options.referenceImagePath || normalizedPreset.referenceImagePath).trim();
+    if (!referenceImages.length && referenceImagePath) {
+        referenceImages.push(await svbReadImageReferenceFromPath(referenceImagePath, {
+            name: normalizedPreset.referenceImageName,
+            strength: normalizedPreset.referenceStrength,
+            informationExtracted: normalizedPreset.referenceInformationExtracted
+        }));
+    }
     const result = await svbGenerateImageWithProfile(runtimeProfile, {
         ...options,
         prompt: composed.prompt,
         negative: composed.negative,
         characterPrompt: normalizedPreset.characterPrompt,
         characterNegative: normalizedPreset.characterNegative,
+        referenceImages,
+        wellspringPresetId: normalizedPreset.wellspringPresetId,
+        wellspringWorkflowId: normalizedPreset.wellspringWorkflowId,
+        wellspringCharacterId: normalizedPreset.wellspringCharacterId,
+        wellspringPayloadJson: normalizedPreset.wellspringPayloadJson,
         ratioId: options.ratioId || runtimeProfile.ratioId,
         steps: options.steps || runtimeProfile.steps
     });
@@ -30535,7 +30722,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         }
         profile = normalizeImageApiProfile(profile);
         if (!safeString(profile.endpoint).trim()) {
-            throw new Error('이미지 API URL이 비어 있습니다. 설정 > 이미지 API 설정 또는 에셋 스튜디오에서 Wellspring/NAI 프로필을 먼저 저장해주세요.');
+            throw new Error('이미지 API URL이 비어 있습니다. 설정 > 이미지 API 설정 또는 에셋 스튜디오에서 Wellspring 프로필을 먼저 저장해주세요.');
         }
         if (isWellspringImageProvider(profile.provider) && !safeString(profile.apiKey).trim()) {
             throw new Error('Wellspring ws-key가 비어 있습니다. 설정 > 이미지 API 설정에서 ws-key를 저장한 뒤 에셋 생성을 다시 실행해주세요.');
@@ -34736,7 +34923,10 @@ ${metaBlock}
 - 그림체는 stylePreset 또는 stylePrompt로 고정할 수 있다. 내장 stylePreset: clean-anime, soft-pastel, sharp-keyvisual, dark-fantasy, watercolor, ink-manhwa, retro-cel, game-card.
 - 에셋 스튜디오 프리셋의 캐릭터 고정 프롬프트(characterPrompt/identityPrompt)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 같은 인물의 프로필/감정/스탠딩 묶음을 만들 때는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 캐릭터 고정 프롬프트에 두고, 케로의 각 asset prompt에는 표정/포즈/장면 차이만 명확히 쓴다.
 - 에셋 스튜디오 프리셋의 기본 고정 태그(promptPrefix/promptSuffix/negativePrefix/negativeSuffix)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 사용자가 그곳에 그림체 태그를 넣어둔 경우 같은 태그를 케로 prompt에 과도하게 반복하지 않는다.
+- 에셋 스튜디오 프리셋의 Wellspring 참조 이미지(referenceImagePath)가 설정되어 있으면 시스템이 최종 이미지 호출 직전에 해당 리수 에셋을 읽어 참조 이미지로 전달한다. 같은 캐릭터의 프로필/감정/스탠딩 묶음을 만들 때는 참조 이미지를 캐릭터 기준으로 보고, 케로 prompt는 표정/포즈/장면 차이에 집중한다.
 - ComfyUI/custom workflow 템플릿은 {{prompt}}에 최종 합성 프롬프트를 받는다. 캐릭터 전용 노드가 있으면 {{character_prompt}} 또는 {{identity_prompt}}, 네거티브 쪽은 {{character_negative}} 또는 {{identity_negative}}를 쓴다.
+- Wellspring/커스텀 워크플로우가 이미지 입력 변수를 요구하면 {{reference_image_base64}}, {{reference_image_data_url}}, {{character_image_base64}}, {{character_image_data_url}}, {{reference_strength}}를 사용할 수 있다.
+- Wellspring 서버의 characterId/workflowId/presetId가 확인된 경우에는 에셋 스튜디오 프리셋의 Wellspring 워크플로우 입력에 저장된 값을 사용한다. 필드명을 모르면 지어내지 말고 사용자가 Wellspring에서 확인한 ID/추가 payload를 넣도록 안내한다.
 - 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
 - "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
@@ -35906,7 +36096,7 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
         upsertImageApiProfile(profile);
         await saveImageApiSettings();
         syncImageApiSettingsToUI(profile);
-        setImageApiStatus("Wellspring NAI 프로필을 불러왔습니다. ws-key를 입력하고 연결 테스트를 실행하세요.", "success");
+        setImageApiStatus("Wellspring 프로필을 불러왔습니다. ws-key를 입력하고 연결 테스트를 실행하세요.", "success");
     });
     document.getElementById("Super-Vibe-Bot-image-api-delete")?.addEventListener("click", async () => {
         if (imageApiProfiles.length <= 1) {
@@ -42067,7 +42257,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.44 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.45 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -51268,6 +51458,35 @@ async function openAssetStudio() {
         return imageGenerationPresets.find(item => item.id === presetId) || getActiveImageGenerationPreset();
     }
 
+    function collectReferenceImageChoices() {
+        const choices = [{ value: '', label: '참조 이미지 사용 안 함', name: '' }];
+        additionalAssets.forEach((asset) => {
+            const path = safeString(asset.path).trim();
+            if (path && isPreviewableAsset(asset)) {
+                choices.push({ value: path, label: `추가 · ${asset.name || path}`, name: asset.name || path });
+            }
+        });
+        emotionAssets.forEach((asset) => {
+            const path = safeString(asset.path).trim();
+            if (path && isPreviewableAsset({ ...asset, ext: svbGetFileExt(asset.path) || 'png' })) {
+                choices.push({ value: path, label: `감정 · ${asset.name || path}`, name: asset.name || path });
+            }
+        });
+        return choices;
+    }
+
+    function renderReferenceImagePicker(value = '') {
+        const picker = document.getElementById('svb-as-reference-image-picker');
+        if (!picker) return;
+        const current = safeString(value || document.getElementById('svb-as-reference-image-path')?.value || getSelectedImagePreset().referenceImagePath).trim();
+        const choices = collectReferenceImageChoices();
+        if (current && !choices.some(choice => choice.value === current)) {
+            choices.push({ value: current, label: `직접 입력 · ${current.split('/').pop() || current.slice(0, 36)}`, name: current.split('/').pop() || current });
+        }
+        picker.innerHTML = choices.map(choice => `<option value="${escapeHtml(choice.value)}" data-asset-name="${escapeHtml(choice.name)}">${escapeHtml(choice.label)}</option>`).join('');
+        picker.value = choices.some(choice => choice.value === current) ? current : '';
+    }
+
     function renderGenerationControls() {
         const profileSelect = document.getElementById('svb-as-gen-profile');
         const presetSelect = document.getElementById('svb-as-gen-preset');
@@ -51321,6 +51540,14 @@ async function openAssetStudio() {
         const promptSuffix = document.getElementById('svb-as-prompt-suffix');
         const negativePrefix = document.getElementById('svb-as-negative-prefix');
         const negativeSuffix = document.getElementById('svb-as-negative-suffix');
+        const referencePath = document.getElementById('svb-as-reference-image-path');
+        const referenceStrength = document.getElementById('svb-as-reference-strength');
+        const referenceInfo = document.getElementById('svb-as-reference-info');
+        const wellspringPresetId = document.getElementById('svb-as-wellspring-preset-id');
+        const wellspringWorkflowId = document.getElementById('svb-as-wellspring-workflow-id');
+        const wellspringCharacterId = document.getElementById('svb-as-wellspring-character-id');
+        const wellspringPayloadJson = document.getElementById('svb-as-wellspring-payload-json');
+        renderReferenceImagePicker(preset.referenceImagePath);
         if (presetName && !presetName.value) presetName.value = preset.name || '';
         if (presetModel && !presetModel.value) presetModel.value = preset.model || '';
         if (presetWorkflow && !presetWorkflow.value) presetWorkflow.value = preset.workflow || '';
@@ -51335,6 +51562,13 @@ async function openAssetStudio() {
         if (promptSuffix && !promptSuffix.value) promptSuffix.value = preset.promptSuffix || '';
         if (negativePrefix && !negativePrefix.value) negativePrefix.value = preset.negativePrefix || '';
         if (negativeSuffix && !negativeSuffix.value) negativeSuffix.value = preset.negativeSuffix || '';
+        if (referencePath && !referencePath.value) referencePath.value = preset.referenceImagePath || '';
+        if (referenceStrength && !referenceStrength.value) referenceStrength.value = String(preset.referenceStrength ?? 0.65);
+        if (referenceInfo && !referenceInfo.value) referenceInfo.value = String(preset.referenceInformationExtracted ?? 1);
+        if (wellspringPresetId && !wellspringPresetId.value) wellspringPresetId.value = preset.wellspringPresetId || '';
+        if (wellspringWorkflowId && !wellspringWorkflowId.value) wellspringWorkflowId.value = preset.wellspringWorkflowId || '';
+        if (wellspringCharacterId && !wellspringCharacterId.value) wellspringCharacterId.value = preset.wellspringCharacterId || '';
+        if (wellspringPayloadJson && !wellspringPayloadJson.value) wellspringPayloadJson.value = preset.wellspringPayloadJson || '';
         renderGenerationConnectionSummary();
         renderGenerationPartList();
     }
@@ -51360,6 +51594,14 @@ async function openAssetStudio() {
         const promptSuffix = document.getElementById('svb-as-prompt-suffix');
         const negativePrefix = document.getElementById('svb-as-negative-prefix');
         const negativeSuffix = document.getElementById('svb-as-negative-suffix');
+        const referencePath = document.getElementById('svb-as-reference-image-path');
+        const referenceStrength = document.getElementById('svb-as-reference-strength');
+        const referenceInfo = document.getElementById('svb-as-reference-info');
+        const wellspringPresetId = document.getElementById('svb-as-wellspring-preset-id');
+        const wellspringWorkflowId = document.getElementById('svb-as-wellspring-workflow-id');
+        const wellspringCharacterId = document.getElementById('svb-as-wellspring-character-id');
+        const wellspringPayloadJson = document.getElementById('svb-as-wellspring-payload-json');
+        renderReferenceImagePicker(normalized.referenceImagePath);
         if (ratio) ratio.value = normalized.ratioId || '1:1';
         if (steps) steps.value = String(normalized.steps || 26);
         if (prompt) prompt.value = normalized.prompt || '';
@@ -51379,6 +51621,13 @@ async function openAssetStudio() {
         if (promptSuffix) promptSuffix.value = normalized.promptSuffix || '';
         if (negativePrefix) negativePrefix.value = normalized.negativePrefix || '';
         if (negativeSuffix) negativeSuffix.value = normalized.negativeSuffix || '';
+        if (referencePath) referencePath.value = normalized.referenceImagePath || '';
+        if (referenceStrength) referenceStrength.value = String(normalized.referenceStrength ?? 0.65);
+        if (referenceInfo) referenceInfo.value = String(normalized.referenceInformationExtracted ?? 1);
+        if (wellspringPresetId) wellspringPresetId.value = normalized.wellspringPresetId || '';
+        if (wellspringWorkflowId) wellspringWorkflowId.value = normalized.wellspringWorkflowId || '';
+        if (wellspringCharacterId) wellspringCharacterId.value = normalized.wellspringCharacterId || '';
+        if (wellspringPayloadJson) wellspringPayloadJson.value = normalized.wellspringPayloadJson || '';
         const profile = getSelectedImageProfile();
         const providersCompatible = areImageProvidersCompatible(profile.provider, normalized.provider);
         const warning = !providersCompatible
@@ -51403,7 +51652,10 @@ async function openAssetStudio() {
         const characterLockOn = [preset.characterPrompt, preset.characterNegative].some(value => safeString(value).trim());
         const fixedTagsOn = [preset.promptPrefix, preset.promptSuffix, preset.negativePrefix, preset.negativeSuffix]
             .some(value => safeString(value).trim());
-        const fixedTagNote = [characterLockOn ? '캐릭터 고정' : '', fixedTagsOn ? '고정 태그' : ''].filter(Boolean).join(' · ');
+        const referenceOn = !!safeString(preset.referenceImagePath).trim();
+        const wellspringRouteOn = [preset.wellspringPresetId, preset.wellspringWorkflowId, preset.wellspringCharacterId, preset.wellspringPayloadJson]
+            .some(value => safeString(value).trim());
+        const fixedTagNote = [referenceOn ? '참조 이미지' : '', wellspringRouteOn ? 'Wellspring 고급' : '', characterLockOn ? '캐릭터 고정' : '', fixedTagsOn ? '고정 태그' : ''].filter(Boolean).join(' · ');
         summary.innerHTML = `
             <strong>${escapeHtml(profile.name)}</strong>
             <span>${escapeHtml(preset.name)} · 파트 ${parts.length}개 · ${escapeHtml(remoteNote)}${fixedTagNote ? ` · ${escapeHtml(fixedTagNote)}` : ''}</span>
@@ -51433,6 +51685,7 @@ async function openAssetStudio() {
     function buildQuickGenerationPreset(kind) {
         const def = SVB_ASSET_QUICK_IMAGE_PRESETS[kind] || SVB_ASSET_QUICK_IMAGE_PRESETS["core-emotions"];
         const profile = normalizeImageApiProfile(getSelectedImageProfile());
+        const currentPreset = normalizeImageGenerationPreset(readGenerationPresetFromUI(getSelectedImagePreset()));
         const provider = isWellspringImageProvider(profile.provider) ? "wellspring-nai" : (profile.provider || def.provider || "nai-compatible");
         const presetId = `quick-${kind}`;
         const parts = ensureArray(def.emotions).map((emotion, index) => normalizeImagePresetPart({
@@ -51461,6 +51714,20 @@ async function openAssetStudio() {
             requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
             responseParser: "auto",
             jsonPath: "",
+            characterPrompt: currentPreset.characterPrompt,
+            characterNegative: currentPreset.characterNegative,
+            promptPrefix: currentPreset.promptPrefix,
+            promptSuffix: currentPreset.promptSuffix,
+            negativePrefix: currentPreset.negativePrefix,
+            negativeSuffix: currentPreset.negativeSuffix,
+            referenceImagePath: currentPreset.referenceImagePath,
+            referenceImageName: currentPreset.referenceImageName,
+            referenceStrength: currentPreset.referenceStrength,
+            referenceInformationExtracted: currentPreset.referenceInformationExtracted,
+            wellspringPresetId: currentPreset.wellspringPresetId,
+            wellspringWorkflowId: currentPreset.wellspringWorkflowId,
+            wellspringCharacterId: currentPreset.wellspringCharacterId,
+            wellspringPayloadJson: currentPreset.wellspringPayloadJson,
             allowEmptyParts: true,
             parts,
             notes: "Asset Studio 빠른 시작 프리셋입니다. 파트별 프롬프트를 수정한 뒤 프리셋 저장을 누르면 그대로 유지됩니다."
@@ -51553,6 +51820,10 @@ async function openAssetStudio() {
             const node = document.getElementById(id);
             return node ? node.value : fallback;
         };
+        const referencePicker = document.getElementById('svb-as-reference-image-picker');
+        const selectedReferenceName = safeString(referencePicker?.selectedOptions?.[0]?.dataset?.assetName).trim();
+        const referenceStrengthValue = document.getElementById('svb-as-reference-strength')?.value;
+        const referenceInfoValue = document.getElementById('svb-as-reference-info')?.value;
         return normalizeImageGenerationPreset({
             ...base,
             name: readValue('svb-as-preset-name', base.name),
@@ -51566,6 +51837,14 @@ async function openAssetStudio() {
             promptSuffix: readValue('svb-as-prompt-suffix', base.promptSuffix),
             negativePrefix: readValue('svb-as-negative-prefix', base.negativePrefix),
             negativeSuffix: readValue('svb-as-negative-suffix', base.negativeSuffix),
+            referenceImagePath: readValue('svb-as-reference-image-path', base.referenceImagePath),
+            referenceImageName: selectedReferenceName || base.referenceImageName,
+            referenceStrength: referenceStrengthValue === undefined || referenceStrengthValue === '' ? base.referenceStrength : Number(referenceStrengthValue),
+            referenceInformationExtracted: referenceInfoValue === undefined || referenceInfoValue === '' ? base.referenceInformationExtracted : Number(referenceInfoValue),
+            wellspringPresetId: readValue('svb-as-wellspring-preset-id', base.wellspringPresetId),
+            wellspringWorkflowId: readValue('svb-as-wellspring-workflow-id', base.wellspringWorkflowId),
+            wellspringCharacterId: readValue('svb-as-wellspring-character-id', base.wellspringCharacterId),
+            wellspringPayloadJson: readValue('svb-as-wellspring-payload-json', base.wellspringPayloadJson),
             ratioId: readValue('svb-as-gen-ratio', base.ratioId),
             steps: Number(document.getElementById('svb-as-gen-steps')?.value) || base.steps,
             workflow: readValue('svb-as-preset-workflow', base.workflow),
@@ -53281,7 +53560,24 @@ async function openAssetStudio() {
                                         <textarea class="svb-as-input" id="svb-as-negative-prefix" placeholder="Negative 앞에 항상 붙일 금지 태그"></textarea>
                                         <textarea class="svb-as-input" id="svb-as-negative-suffix" placeholder="Negative 뒤에 항상 붙일 금지 태그"></textarea>
                                     </div>
-                                    <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{character_negative}} 변수를 별도 노드에 넣을 수 있습니다.</div>
+                                    <div class="svb-as-grid">
+                                        <select class="svb-as-input" id="svb-as-reference-image-picker"></select>
+                                        <input class="svb-as-input" id="svb-as-reference-image-path" placeholder="Wellspring 참조 이미지 경로 또는 data URL">
+                                    </div>
+                                    <div class="svb-as-grid">
+                                        <label class="svb-as-mini-field">참조 강도<input class="svb-as-input" id="svb-as-reference-strength" type="number" min="0" max="1" step="0.05" placeholder="0.65"></label>
+                                        <label class="svb-as-mini-field">정보 추출<input class="svb-as-input" id="svb-as-reference-info" type="number" min="0" max="1" step="0.05" placeholder="1"></label>
+                                    </div>
+                                    <details class="svb-as-part-more">
+                                        <summary>Wellspring 워크플로우 입력</summary>
+                                        <div class="svb-as-grid">
+                                            <input class="svb-as-input" id="svb-as-wellspring-preset-id" placeholder="Wellspring presetId">
+                                            <input class="svb-as-input" id="svb-as-wellspring-workflow-id" placeholder="Wellspring workflowId">
+                                        </div>
+                                        <input class="svb-as-input" id="svb-as-wellspring-character-id" placeholder="Wellspring characterId">
+                                        <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"workflowId":"...","characterId":"...","parameters":{"someField":"..."}}'></textarea>
+                                    </details>
+                                    <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring 참조 이미지는 생성 호출에 같이 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
                                 </details>
                                 <div class="svb-as-batch-head">
                                     <div>
@@ -53408,6 +53704,18 @@ async function openAssetStudio() {
     });
     addLocal(document.getElementById('svb-as-use-wellspring'), 'click', activateWellspringFromStudio);
     addLocal(document.getElementById('svb-as-restore-default-presets'), 'click', restoreDefaultGenerationPresetsFromStudio);
+    addLocal(document.getElementById('svb-as-reference-image-picker'), 'change', event => {
+        const pathInput = document.getElementById('svb-as-reference-image-path');
+        if (pathInput) pathInput.value = event.target.value || '';
+        renderGenerationConnectionSummary();
+        setStatus(event.target.value ? 'Wellspring 참조 이미지를 선택했습니다. 프리셋 저장을 누르면 유지됩니다.' : 'Wellspring 참조 이미지를 사용하지 않습니다.', 'info');
+    });
+    ['svb-as-reference-image-path', 'svb-as-reference-strength', 'svb-as-reference-info', 'svb-as-wellspring-preset-id', 'svb-as-wellspring-workflow-id', 'svb-as-wellspring-character-id', 'svb-as-wellspring-payload-json'].forEach((id) => {
+        addLocal(document.getElementById(id), 'change', () => {
+            if (id === 'svb-as-reference-image-path') renderReferenceImagePicker(document.getElementById(id)?.value || '');
+            renderGenerationConnectionSummary();
+        });
+    });
     studioWindow.querySelectorAll('[data-quick-image-preset]').forEach(btn => {
         addLocal(btn, 'click', () => applyQuickGenerationPreset(btn.dataset.quickImagePreset));
     });
@@ -54585,7 +54893,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.44",
+        name: "SuperVibeBot v1.5.45",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -54594,7 +54902,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.44 Settings",
+        "SuperVibeBot v1.5.45 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -54637,7 +54945,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.44");
+        Logger.info("SuperVibeBot v1.5.45");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
@@ -54754,5 +55062,3 @@ function bindAllResultApplyButtons() {
         });
     }
 }
-
-
