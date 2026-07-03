@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.40
-//@version 1.5.40
+//@display-name 🐸 SuperVibeBot v1.5.41
+//@version 1.5.41
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.40는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.41는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.40 Release Notes
+ * SuperVibeBot v1.5.41 Release Notes
+ * - v1.5.41: adds Kero asset style presets and custom stylePrompt support for reusable 2D image prompt packs
+ * - v1.5.41: lets Kero choose a built-in stylePreset per asset request while keeping the 2D/safe prompt sanitizer
  * - v1.5.40: forces Kero image asset prompts into 2D anime illustration style and strips realism/photo/3D trigger terms before API calls
  * - v1.5.40: makes Image API calls prefer nativeFetch over deprecated risuFetch when nativeFetch is available
  * - v1.5.39: fixes image API JSON body handling for risuFetch so Wellspring NAI receives an object instead of a quoted JSON string
@@ -3091,6 +3093,16 @@ const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
 const KERO_ASSET_ACTION_MAX_ITEMS = 12;
 const KERO_ASSET_ACTION_MAX_COUNT_PER_ITEM = 4;
+const KERO_ASSET_STYLE_PRESETS = Object.freeze({
+    'clean-anime': 'clean anime key visual, crisp lineart, balanced character proportions, clear readable silhouette, bright controlled colors, soft cel shading',
+    'soft-pastel': 'soft pastel anime illustration, gentle color palette, airy background, delicate lineart, warm ambient light, calm emotional expression',
+    'sharp-keyvisual': 'sharp anime key visual, bold line weight, high contrast character silhouette, vivid accent colors, dramatic cloth shapes, polished game character art',
+    'dark-fantasy': 'dark fantasy anime illustration, ornate costume details, muted jewel-tone palette, controlled shadows, mystical atmosphere, elegant character design',
+    watercolor: 'watercolor anime illustration, translucent color washes, soft paper texture feeling, gentle edges, lyrical atmosphere, delicate character rendering',
+    'ink-manhwa': 'inked manhwa style, clean black lineart, elegant hatching accents, restrained color accents, expressive eyes, graphic panel-ready character art',
+    'retro-cel': 'retro cel anime style, hand-painted cel feeling, simple bold shadows, nostalgic color palette, clean 1990s animation character design',
+    'game-card': 'anime game card illustration, premium character splash art, ornate outfit readability, dynamic but clean pose, decorative fantasy details, polished 2D rendering'
+});
 const KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT = 3;
 const KERO_BULK_NO_PROGRESS_RETRY_LIMIT = 3;
 const KERO_GATEWAY_RECOVERY_USER_TEXT_LIMIT = 4000;
@@ -9790,7 +9802,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13110,7 +13122,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.40',
+            '//@version 1.5.41',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -26049,7 +26061,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -30331,7 +30343,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return [payload];
         }
         const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target'].forEach((key) => {
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
         });
         return Object.keys(direct).length ? [direct] : [];
@@ -30374,6 +30386,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 ratioId,
                 steps,
                 count,
+                stylePreset: safeString(source.stylePreset || source.style || source.styleId || payloadObj.stylePreset || payloadObj.style || payloadObj.styleId || action.stylePreset || action.style || action.styleId).trim(),
+                stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
                 profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
                 presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim()
             });
@@ -30469,10 +30483,34 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         return out.join(', ');
     }
 
-    function normalizeKeroAsset2dPositivePrompt(prompt = '') {
+    function normalizeKeroAssetStyleKey(stylePreset = '') {
+        const raw = safeString(stylePreset).trim().toLowerCase();
+        if (!raw) return 'clean-anime';
+        const normalized = raw.replace(/[\s_]+/g, '-');
+        if (KERO_ASSET_STYLE_PRESETS[normalized]) return normalized;
+        if (/pastel|soft|gentle|warm/.test(normalized)) return 'soft-pastel';
+        if (/dark|gothic|shadow|fantasy/.test(normalized)) return 'dark-fantasy';
+        if (/water|paint|aquarelle/.test(normalized)) return 'watercolor';
+        if (/ink|manhwa|webtoon|comic/.test(normalized)) return 'ink-manhwa';
+        if (/retro|cel|90/.test(normalized)) return 'retro-cel';
+        if (/card|splash|gacha|game/.test(normalized)) return 'game-card';
+        if (/sharp|key|vivid|bold/.test(normalized)) return 'sharp-keyvisual';
+        return 'clean-anime';
+    }
+
+    function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '') {
+        const presetPrompt = KERO_ASSET_STYLE_PRESETS[normalizeKeroAssetStyleKey(stylePreset)] || KERO_ASSET_STYLE_PRESETS['clean-anime'];
+        return joinKeroAssetPromptFragments(presetPrompt, stripKeroAssetRealismRiskFragments(stylePrompt));
+    }
+
+    function normalizeKeroAsset2dPositivePrompt(prompt = '', stylePreset = '', stylePrompt = '') {
         const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
         const twoDBase = '2D anime illustration, anime style, cel-shaded character art, clean lineart, flat color shading';
-        return joinKeroAssetPromptFragments(twoDBase, safePrompt || 'solo character asset, upper body, looking at viewer, detailed eyes, clean background');
+        return joinKeroAssetPromptFragments(
+            twoDBase,
+            buildKeroAssetStylePrompt(stylePreset, stylePrompt),
+            safePrompt || 'solo character asset, upper body, looking at viewer, detailed eyes, clean background'
+        );
     }
 
     function normalizeKeroAsset2dNegativePrompt(negative = '', profile = {}, preset = {}) {
@@ -30547,7 +30585,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             };
             const profile = pickKeroAssetImageProfile(item.profileId);
             const preset = pickKeroAssetImagePreset(item.presetId, profile);
-            const prompt = normalizeKeroAsset2dPositivePrompt(svbRenderImagePromptTemplate(item.prompt, vars).trim());
+            const prompt = normalizeKeroAsset2dPositivePrompt(
+                svbRenderImagePromptTemplate(item.prompt, vars).trim(),
+                item.stylePreset,
+                svbRenderImagePromptTemplate(item.stylePrompt, vars).trim()
+            );
             const negative = normalizeKeroAsset2dNegativePrompt(svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim(), profile, preset);
             const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
             const steps = item.steps || preset.steps || profile.steps || 26;
@@ -30556,7 +30598,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
                 await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
                 created += 1;
-                createdAssets.push({ target: item.target, name, prompt, ratioId, steps });
+                createdAssets.push({ target: item.target, name, prompt, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps });
             } catch (error) {
                 failed += 1;
                 failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
@@ -34222,7 +34264,7 @@ ${metaBlock}
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
-- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
@@ -34236,6 +34278,9 @@ ${metaBlock}
 - 에셋 prompt는 영어 중심으로 쓴다. 이름/고유명은 그대로 두되, 외형/의상/구도/표정/조명/배경/스타일을 구체적으로 작성한다.
 - 슈바봇 케로 에셋은 무조건 2D anime/illustration 계열이다. 실사/사진/현실풍을 만들지 않는다.
 - prompt와 negative 양쪽 모두에 photo, photograph, photography, photorealistic, realistic, hyperrealistic, live action, real person, cosplay, DSLR, 3D, CGI, render, cinematic 같은 실사/사진/3D 차단 유발 단어를 쓰지 않는다. 차단 회피를 위해 negative에 금지어를 넣는 방식도 금지다.
+- 그림체는 stylePreset 또는 stylePrompt로 고정할 수 있다. 내장 stylePreset: clean-anime, soft-pastel, sharp-keyvisual, dark-fantasy, watercolor, ink-manhwa, retro-cel, game-card.
+- 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
+- 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
 - "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
@@ -41564,7 +41609,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.40 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.41 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -45021,6 +45066,7 @@ function buildKeroMissingAssetFallbackResponse(userText, assistantText = '', opt
     const assets = names.map((name) => ({
         assetType: 'additional',
         name: `${name}_profile`,
+        stylePreset: 'clean-anime',
         prompt: `2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, ${name}, looking at viewer, clear face, detailed eyes, distinctive character silhouette, role-specific outfit, polished fantasy simulation character asset, clean readable background, soft cel-shaded lighting`,
         negative: 'lowres, worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, text, logo, watermark, blurry, cropped face, duplicate character',
         ratioId: '13:19',
@@ -53118,7 +53164,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.40",
+        name: "SuperVibeBot v1.5.41",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -53127,7 +53173,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.40 Settings",
+        "SuperVibeBot v1.5.41 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -53170,7 +53216,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.40");
+        Logger.info("SuperVibeBot v1.5.41");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
