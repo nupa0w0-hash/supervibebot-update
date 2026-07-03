@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.50`
+Latest version: `1.5.51`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.51
+
+- Treats delegated requests such as "알아서", "최종완료", and "끝까지" as execution authorization instead of asking for preference confirmation.
+- Replaces loose bulk-count parsing so numbered lists are not mistaken for lorebook counts.
+- Sends missing, clarification-only, or underfilled full-build responses back through LLM action recovery before any local chunk-queue fallback.
 
 ## 1.5.50
 
