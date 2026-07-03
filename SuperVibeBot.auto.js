@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.42
-//@version 1.5.42
+//@display-name 🐸 SuperVibeBot v1.5.43
+//@version 1.5.43
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.42는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.43는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.42 Release Notes
+ * SuperVibeBot v1.5.43 Release Notes
+ * - v1.5.43: adds Asset Studio preset-level fixed positive/negative prompt tags that always wrap generated prompts
+ * - v1.5.43: applies fixed prompt tags to Asset Studio single generation, batch parts, and Kero asset generation
  * - v1.5.42: upgrades Asset Studio with AssetGod-style image ZIP backup/import and embedded asset metadata
  * - v1.5.42: adds extension/name cleanup, per-asset image download, and generated-output tag copy/download actions
  * - v1.5.42: changes generated preset outputs into a larger gallery grid for easier review after Wellspring/API batches
@@ -13160,7 +13162,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.42',
+            '//@version 1.5.43',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -20661,6 +20663,14 @@ function svbJoinPromptFragments(...values) {
     return fragments.join(", ");
 }
 
+function svbApplyImagePresetPromptDefaults(preset = {}, prompt = "", negative = "") {
+    const normalized = normalizeImageGenerationPreset(preset);
+    return {
+        prompt: svbJoinPromptFragments(normalized.promptPrefix, prompt, normalized.promptSuffix),
+        negative: svbJoinPromptFragments(normalized.negativePrefix, negative, normalized.negativeSuffix)
+    };
+}
+
 function svbCollectSdStudioPieceMap(data = {}) {
     const map = new Map();
     const addPiece = (libraryName, piece = {}) => {
@@ -21029,6 +21039,10 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
         || safeString(defaultPreset.prompt).trim();
     merged.negative = safeString(merged.negative || merged.negativePrompt || defaults.negativePrompt || merged.uc).trim()
         || safeString(defaultPreset.negative).trim();
+    merged.promptPrefix = safeString(merged.promptPrefix || merged.positivePrefix || defaults.promptPrefix || defaults.positivePrefix || merged.defaultPromptPrefix || merged.defaultPositivePrefix).trim();
+    merged.promptSuffix = safeString(merged.promptSuffix || merged.positiveSuffix || defaults.promptSuffix || defaults.positiveSuffix || merged.defaultPromptSuffix || merged.defaultPositiveSuffix).trim();
+    merged.negativePrefix = safeString(merged.negativePrefix || defaults.negativePrefix || merged.defaultNegativePrefix || merged.ucPrefix).trim();
+    merged.negativeSuffix = safeString(merged.negativeSuffix || defaults.negativeSuffix || merged.defaultNegativeSuffix || merged.ucSuffix).trim();
     merged.ratioId = safeString(merged.ratioId || defaults.ratio).trim() || defaultPreset.ratioId || "1:1";
     merged.ratios = ensureArray(merged.ratios).length ? merged.ratios : IMAGE_API_RATIO_PRESETS;
     merged.steps = Math.max(1, Math.min(150, Number(merged.steps) || Number(defaultPreset.steps) || 26));
@@ -21839,12 +21853,23 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
 }
 
 async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {}) {
-    const runtimeProfile = buildImageProfileForGenerationPreset(profile, preset);
-    return await svbGenerateImageWithProfile(runtimeProfile, {
+    const normalizedPreset = normalizeImageGenerationPreset(preset);
+    const runtimeProfile = buildImageProfileForGenerationPreset(profile, normalizedPreset);
+    const basePrompt = safeString(options.prompt).trim() || normalizedPreset.prompt;
+    const baseNegative = safeString(options.negative).trim() || normalizedPreset.negative;
+    const composed = svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative);
+    const result = await svbGenerateImageWithProfile(runtimeProfile, {
         ...options,
+        prompt: composed.prompt,
+        negative: composed.negative,
         ratioId: options.ratioId || runtimeProfile.ratioId,
         steps: options.steps || runtimeProfile.steps
     });
+    return {
+        ...result,
+        prompt: composed.prompt,
+        negative: composed.negative
+    };
 }
 
 function getWellspringImageApiBase(endpoint) {
@@ -30662,7 +30687,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
                 await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
                 created += 1;
-                createdAssets.push({ target: item.target, name, prompt, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps });
+                createdAssets.push({ target: item.target, name, prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps });
             } catch (error) {
                 failed += 1;
                 failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
@@ -34691,6 +34716,7 @@ ${metaBlock}
 - 슈바봇 케로 에셋은 무조건 2D anime/illustration 계열이다. 실사/사진/현실풍을 만들지 않는다.
 - prompt와 negative 양쪽 모두에 photo, photograph, photography, photorealistic, realistic, hyperrealistic, live action, real person, cosplay, DSLR, 3D, CGI, render, cinematic 같은 실사/사진/3D 차단 유발 단어를 쓰지 않는다. 차단 회피를 위해 negative에 금지어를 넣는 방식도 금지다.
 - 그림체는 stylePreset 또는 stylePrompt로 고정할 수 있다. 내장 stylePreset: clean-anime, soft-pastel, sharp-keyvisual, dark-fantasy, watercolor, ink-manhwa, retro-cel, game-card.
+- 에셋 스튜디오 프리셋의 기본 고정 태그(promptPrefix/promptSuffix/negativePrefix/negativeSuffix)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 사용자가 그곳에 그림체 태그를 넣어둔 경우 같은 태그를 케로 prompt에 과도하게 반복하지 않는다.
 - 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
 - "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
@@ -42021,7 +42047,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.42 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.43 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -51269,6 +51295,10 @@ async function openAssetStudio() {
         const presetPath = document.getElementById('svb-as-preset-path');
         const presetMethod = document.getElementById('svb-as-preset-method');
         const presetHeaders = document.getElementById('svb-as-preset-headers');
+        const promptPrefix = document.getElementById('svb-as-prompt-prefix');
+        const promptSuffix = document.getElementById('svb-as-prompt-suffix');
+        const negativePrefix = document.getElementById('svb-as-negative-prefix');
+        const negativeSuffix = document.getElementById('svb-as-negative-suffix');
         if (presetName && !presetName.value) presetName.value = preset.name || '';
         if (presetModel && !presetModel.value) presetModel.value = preset.model || '';
         if (presetWorkflow && !presetWorkflow.value) presetWorkflow.value = preset.workflow || '';
@@ -51277,6 +51307,10 @@ async function openAssetStudio() {
         if (presetPath && !presetPath.value) presetPath.value = preset.path || '';
         if (presetMethod && !presetMethod.value) presetMethod.value = preset.method || 'POST';
         if (presetHeaders && !presetHeaders.value) presetHeaders.value = preset.headersTemplate || '';
+        if (promptPrefix && !promptPrefix.value) promptPrefix.value = preset.promptPrefix || '';
+        if (promptSuffix && !promptSuffix.value) promptSuffix.value = preset.promptSuffix || '';
+        if (negativePrefix && !negativePrefix.value) negativePrefix.value = preset.negativePrefix || '';
+        if (negativeSuffix && !negativeSuffix.value) negativeSuffix.value = preset.negativeSuffix || '';
         renderGenerationConnectionSummary();
         renderGenerationPartList();
     }
@@ -51296,6 +51330,10 @@ async function openAssetStudio() {
         const path = document.getElementById('svb-as-preset-path');
         const method = document.getElementById('svb-as-preset-method');
         const headers = document.getElementById('svb-as-preset-headers');
+        const promptPrefix = document.getElementById('svb-as-prompt-prefix');
+        const promptSuffix = document.getElementById('svb-as-prompt-suffix');
+        const negativePrefix = document.getElementById('svb-as-negative-prefix');
+        const negativeSuffix = document.getElementById('svb-as-negative-suffix');
         if (ratio) ratio.value = normalized.ratioId || '1:1';
         if (steps) steps.value = String(normalized.steps || 26);
         if (prompt) prompt.value = normalized.prompt || '';
@@ -51309,6 +51347,10 @@ async function openAssetStudio() {
         if (path) path.value = normalized.path || '';
         if (method) method.value = normalized.method || 'POST';
         if (headers) headers.value = normalized.headersTemplate || '';
+        if (promptPrefix) promptPrefix.value = normalized.promptPrefix || '';
+        if (promptSuffix) promptSuffix.value = normalized.promptSuffix || '';
+        if (negativePrefix) negativePrefix.value = normalized.negativePrefix || '';
+        if (negativeSuffix) negativeSuffix.value = normalized.negativeSuffix || '';
         const profile = getSelectedImageProfile();
         const providersCompatible = areImageProvidersCompatible(profile.provider, normalized.provider);
         const warning = !providersCompatible
@@ -51330,9 +51372,12 @@ async function openAssetStudio() {
         const remoteNote = isWellspringImageProvider(runtimeProvider)
             ? 'Wellspring 프로필의 체크포인트·LoRA·워크플로우를 사용'
             : `${providerLabel} 호출`;
+        const fixedTagsOn = [preset.promptPrefix, preset.promptSuffix, preset.negativePrefix, preset.negativeSuffix]
+            .some(value => safeString(value).trim());
+        const fixedTagNote = fixedTagsOn ? ' · 고정 태그 적용' : '';
         summary.innerHTML = `
             <strong>${escapeHtml(profile.name)}</strong>
-            <span>${escapeHtml(preset.name)} · 파트 ${parts.length}개 · ${escapeHtml(remoteNote)}</span>
+            <span>${escapeHtml(preset.name)} · 파트 ${parts.length}개 · ${escapeHtml(remoteNote)}${fixedTagNote}</span>
         `;
     }
 
@@ -51486,6 +51531,10 @@ async function openAssetStudio() {
             model: readValue('svb-as-preset-model', base.model),
             prompt: readValue('svb-as-gen-prompt', base.prompt),
             negative: readValue('svb-as-gen-negative', base.negative),
+            promptPrefix: readValue('svb-as-prompt-prefix', base.promptPrefix),
+            promptSuffix: readValue('svb-as-prompt-suffix', base.promptSuffix),
+            negativePrefix: readValue('svb-as-negative-prefix', base.negativePrefix),
+            negativeSuffix: readValue('svb-as-negative-suffix', base.negativeSuffix),
             ratioId: readValue('svb-as-gen-ratio', base.ratioId),
             steps: Number(document.getElementById('svb-as-gen-steps')?.value) || base.steps,
             workflow: readValue('svb-as-preset-workflow', base.workflow),
@@ -51685,8 +51734,8 @@ async function openAssetStudio() {
                 const result = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
                 const output = await saveGeneratedBatchAssetToState(result, job.part, name);
                 output.partId = job.part.id;
-                output.prompt = prompt;
-                output.negative = negative;
+                output.prompt = result.prompt || prompt;
+                output.negative = result.negative || negative;
                 output.ratioId = ratioId;
                 output.steps = steps;
                 job.part.outputs = [...ensureArray(job.part.outputs), output];
@@ -53187,6 +53236,18 @@ async function openAssetStudio() {
                                     <button class="svb-as-btn" id="svb-as-preset-export" type="button">프리셋 내보내기</button>
                                     <button class="svb-as-btn" id="svb-as-preset-import" type="button">프리셋 가져오기</button>
                                 </div>
+                                <details class="svb-as-details" open>
+                                    <summary class="svb-as-form-title">기본 고정 태그</summary>
+                                    <div class="svb-as-grid">
+                                        <textarea class="svb-as-input" id="svb-as-prompt-prefix" placeholder="Positive 앞에 항상 붙일 그림체/품질 태그"></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-prompt-suffix" placeholder="Positive 뒤에 항상 붙일 마무리 태그"></textarea>
+                                    </div>
+                                    <div class="svb-as-grid">
+                                        <textarea class="svb-as-input" id="svb-as-negative-prefix" placeholder="Negative 앞에 항상 붙일 금지 태그"></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-negative-suffix" placeholder="Negative 뒤에 항상 붙일 금지 태그"></textarea>
+                                    </div>
+                                    <div class="svb-as-help">파트별 프롬프트와 케로가 만든 프롬프트에 이 태그가 자동으로 합쳐집니다. 그림체 프롬프트팩, 모델 기본 태그, LoRA trigger word를 여기에 고정하세요.</div>
+                                </details>
                                 <div class="svb-as-batch-head">
                                     <div>
                                         <strong>프리셋 구성</strong>
@@ -54489,7 +54550,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.42",
+        name: "SuperVibeBot v1.5.43",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -54498,7 +54559,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.42 Settings",
+        "SuperVibeBot v1.5.43 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -54541,7 +54602,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.42");
+        Logger.info("SuperVibeBot v1.5.43");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
