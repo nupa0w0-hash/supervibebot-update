@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.36
-//@version 1.5.36
+//@display-name 🐸 SuperVibeBot v1.5.37
+//@version 1.5.37
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.36는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.37는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.36 Release Notes
+ * SuperVibeBot v1.5.37 Release Notes
+ * - v1.5.37: lets Kero create image assets through the configured Image API profile and register them to emotionImages/additionalAssets
+ * - v1.5.37: teaches Kero the asset create @action schema so profile/standing asset requests do not end as "cannot do it" answers
+ * - v1.5.37: verifies Kero asset actions by tracking character asset list changes after generation
  * - v1.5.36: adds Asset Studio quick-start controls for Wellspring selection, default preset recovery, and common emotion/standing image preset creation
  * - v1.5.36: shows the active image profile/preset connection summary before generation
  * - v1.5.36: lets Asset Studio prompt for a missing Wellspring ws-key when enabling the Wellspring profile
@@ -1151,7 +1154,7 @@ function hasKeroActionDirectiveText(text) {
     const source = safeString(text);
     if (!source.trim()) return false;
     if (/(?:^|\n|[\s:：>])\s*(?:[-*]\s*)?@?action\b\s*[:{\[]/i.test(source)) return true;
-    return /"type"\s*:\s*"(?:improve|apply|create|bulk_create|update|patch|delete)"/i.test(source)
+    return /"type"\s*:\s*"(?:improve|apply|create|generate|make|bulk_create|asset_generate|generate_asset|asset_generation|image_generate|generate_image|image_generation|update|patch|delete)"/i.test(source)
         && /"target"\s*:/i.test(source);
 }
 
@@ -1183,7 +1186,7 @@ function shouldTreatKeroActionExceptionAsWarning(error, action = {}) {
         return false;
     }
     return /자동 적용이 완료되지 않았|적용이 완료되지|저장 실패|저장 오류|캐릭터 저장|캐릭터 데이터 없음|저장 위치|개선 실패|AI 개선 실패|API|모델|응답|파싱|timeout|fetch|네트워크|게이트웨이|abort|초과|초기화 실패/i.test(message)
-        || ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'firstMessage', 'alternateGreetings', 'authorNote', 'creatorComment', 'translatorNote', 'chatLorebook'].includes(target);
+        || ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'asset', 'firstMessage', 'alternateGreetings', 'authorNote', 'creatorComment', 'translatorNote', 'chatLorebook'].includes(target);
 }
 
 function getFriendlyModelErrorMessage(error) {
@@ -3080,6 +3083,8 @@ const KERO_CREATE_MIN_CHUNK_CHAR_LIMIT = 1800;
 const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 180000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
+const KERO_ASSET_ACTION_MAX_ITEMS = 12;
+const KERO_ASSET_ACTION_MAX_COUNT_PER_ITEM = 4;
 const KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT = 3;
 const KERO_BULK_NO_PROGRESS_RETRY_LIMIT = 3;
 const KERO_GATEWAY_RECOVERY_USER_TEXT_LIMIT = 4000;
@@ -9531,6 +9536,16 @@ function normalizeKeroActionTypeName(type) {
         append: 'create',
         generate: 'create',
         make: 'create',
+        assetgenerate: 'create',
+        generateasset: 'create',
+        imagegenerate: 'create',
+        generateimage: 'create',
+        assetcreate: 'create',
+        createasset: 'create',
+        imagecreate: 'create',
+        createimage: 'create',
+        assetgeneration: 'create',
+        imagegeneration: 'create',
         bulkcreate: 'bulk_create',
         bulkadd: 'bulk_create',
         delete: 'delete',
@@ -9609,6 +9624,24 @@ function normalizeKeroActionTargetName(target) {
         chatlorebook: 'chatLorebook',
         chatlore: 'chatLorebook',
         locallore: 'chatLorebook',
+        asset: 'asset',
+        assets: 'asset',
+        image: 'asset',
+        images: 'asset',
+        imageasset: 'asset',
+        imageassets: 'asset',
+        generatedasset: 'asset',
+        generatedassets: 'asset',
+        profileasset: 'asset',
+        profileassets: 'asset',
+        standingasset: 'asset',
+        standingassets: 'asset',
+        emotionasset: 'asset',
+        emotionassets: 'asset',
+        emotionimage: 'asset',
+        emotionimages: 'asset',
+        additionalasset: 'asset',
+        additionalassets: 'asset',
         module: 'module',
         plugin: 'plugin'
     };
@@ -9646,6 +9679,7 @@ function getTargetLabel(target) {
         alternateGreetings: '추가 첫 메시지',
         translatorNote: '번역가의 노트',
         chatLorebook: '챗 로어북',
+        asset: '이미지 에셋',
         module: '모듈',
         plugin: '플러그인'
     };
@@ -9696,7 +9730,7 @@ function inferKeroActionTypeTargetFromAlias(value = '') {
     if (!raw) return { type: '', target: '' };
     const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
     const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
-    const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'module', 'plugin']);
+    const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
     for (let index = 0; index < parts.length; index += 1) {
         const first = parts[index];
         const second = parts[index + 1] || '';
@@ -9738,12 +9772,19 @@ function normalizeKeroRawActionShape(entry) {
         if (!safeString(normalized.type).trim() && inferred.type) normalized.type = inferred.type;
         if (!safeString(normalized.target).trim() && inferred.target) normalized.target = inferred.target;
     }
-    const type = normalizeKeroActionTypeName(normalized.type);
-    const target = normalizeKeroActionTargetName(normalized.target);
+    const rawTypeKey = safeString(normalized.type).trim().toLowerCase().replace(/[\s_-]+/g, '');
+    let type = normalizeKeroActionTypeName(normalized.type);
+    let target = normalizeKeroActionTargetName(normalized.target);
+    if (/^(?:asset|image)(?:generate|generation|create)$|^(?:generate|generation|create)(?:asset|image)$/.test(rawTypeKey) && target !== 'asset') {
+        target = 'asset';
+        normalized.target = 'asset';
+    }
     if (!normalized.payload && type && target && alias) {
         const payload = {};
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+        } else if (target === 'asset') {
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -9885,6 +9926,10 @@ function normalizeKeroParsedActionForExecution(action) {
             return { ...normalized, type: 'bulk_create' };
         }
         if (['improve', 'apply', 'create', 'bulk_create', 'delete'].includes(type)) return normalized;
+        return null;
+    }
+    if (target === 'asset') {
+        if (type === 'create') return normalized;
         return null;
     }
     if (target === 'character') {
@@ -10581,9 +10626,13 @@ function getKeroActionVerificationSnapshot(char) {
         lorebookSignature: getKeroSnapshotSignature(ensureArray(getCharacterField(char, 'globalLore'))),
         regexSignature: getKeroSnapshotSignature(ensureArray(getCharacterField(char, 'customscript'))),
         triggerSignature: getKeroSnapshotSignature(ensureArray(getCharacterField(char, 'triggerscript'))),
+        emotionAssetSignature: getKeroSnapshotSignature(normalizeEmotionAssets(getCharacterField(char, 'emotionImages'))),
+        additionalAssetSignature: getKeroSnapshotSignature(normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'))),
         lorebookCount: ensureArray(getCharacterField(char, 'globalLore')).length,
         regexCount: ensureArray(getCharacterField(char, 'customscript')).length,
-        triggerCount: ensureArray(getCharacterField(char, 'triggerscript')).length
+        triggerCount: ensureArray(getCharacterField(char, 'triggerscript')).length,
+        emotionAssetCount: normalizeEmotionAssets(getCharacterField(char, 'emotionImages')).length,
+        additionalAssetCount: normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets')).length
     };
 }
 
@@ -10956,6 +11005,26 @@ function summarizeKeroActionVerification(action, beforeSnapshot, afterSnapshot, 
         return { status: 'warning', ok: false, detail: '검증 스냅샷을 확보하지 못했습니다.', warnings: ['snapshot_missing'] };
     }
 
+    if (target === 'asset') {
+        const emotionDelta = Number(afterSnapshot.emotionAssetCount || 0) - Number(beforeSnapshot.emotionAssetCount || 0);
+        const additionalDelta = Number(afterSnapshot.additionalAssetCount || 0) - Number(beforeSnapshot.additionalAssetCount || 0);
+        const totalDelta = Math.max(0, emotionDelta) + Math.max(0, additionalDelta);
+        const signatureChanged = beforeSnapshot.emotionAssetSignature !== afterSnapshot.emotionAssetSignature
+            || beforeSnapshot.additionalAssetSignature !== afterSnapshot.additionalAssetSignature;
+        const requested = Number(result.requested || action?.requested || action?.count || action?.total || 0);
+        const created = Number(result.created || totalDelta || 0);
+        if (result.failed > 0) {
+            return { status: 'warning', ok: false, detail: result.detail || `이미지 에셋 일부 생성 실패: ${result.failed}개`, warnings: ['asset_partial_failure'] };
+        }
+        if (totalDelta > 0 || (created > 0 && signatureChanged)) {
+            return { status: 'verified', ok: true, detail: `이미지 에셋 ${totalDelta || created}개 등록 확인`, warnings: [] };
+        }
+        if (requested > 0 && created < requested) {
+            return { status: 'warning', ok: false, detail: `이미지 에셋 요청 ${requested}장 중 등록 확인 ${created}장입니다.`, warnings: ['asset_count_shortfall'] };
+        }
+        return { status: 'warning', ok: false, detail: '이미지 에셋 목록 변화가 확인되지 않았습니다.', warnings: ['asset_snapshot_unchanged'] };
+    }
+
     const countKey = getKeroActionCountKey(target);
     if (countKey) {
         const delta = Number(afterSnapshot[countKey] || 0) - Number(beforeSnapshot[countKey] || 0);
@@ -11087,7 +11156,7 @@ function shouldVerifyKeroActionEffect(action) {
     const target = safeString(action?.target);
     const shouldVerifyImprove = type === 'improve' && action?.autoApply !== false;
     if (!['create', 'bulk_create', 'delete', 'apply', 'update', 'patch'].includes(type) && !shouldVerifyImprove) return false;
-    return ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger'].includes(target)
+    return ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'asset'].includes(target)
         || isKeroCharacterPatchAction(action)
         || isTextFieldStudioTarget(target);
 }
@@ -11100,6 +11169,9 @@ function isKeroTransientVerificationWarning(verification) {
         'text_snapshot_unchanged',
         'list_snapshot_unchanged',
         'create_all_skipped',
+        'asset_partial_failure',
+        'asset_count_shortfall',
+        'asset_snapshot_unchanged',
         'character_snapshot_unchanged',
         'character_patch_snapshot_incomplete',
         'character_patch_section_unchanged',
@@ -12032,6 +12104,16 @@ function addSvbRuntimeActionParserSelfTest(checks) {
                     displayName: '진단 플러그인',
                     script: 'console.log("diagnostic");'
                 }
+            },
+            {
+                '@action': 'asset_generate',
+                assets: [
+                    {
+                        name: 'diagnostic_profile',
+                        prompt: 'diagnostic character portrait, clean profile asset',
+                        assetType: 'additional'
+                    }
+                ]
             }
         ];
         const tagged = `케로 진단 액션\n@action ${JSON.stringify(actionSource)}`;
@@ -12116,6 +12198,9 @@ function addSvbRuntimeActionParserSelfTest(checks) {
                     : true,
                 hasPluginPayload: target === 'plugin'
                     ? !!(safeString(payload.name || action?.name || action?.pluginName).trim() && safeString(payload.script || action?.script).trim())
+                    : true,
+                hasAssetPayload: target === 'asset'
+                    ? ensureArray(payload.assets || payload.items || payload.images || payload.prompts).some((item) => safeString(item?.prompt || item?.positive || item?.caption).trim())
                     : true
             };
         });
@@ -12162,7 +12247,8 @@ function addSvbRuntimeActionParserSelfTest(checks) {
         'update:character',
         'bulk_create:lorebook',
         'update:module',
-        'update:plugin'
+        'update:plugin',
+        'create:asset'
     ];
     const toKeySet = (rows) => new Set(ensureArray(rows).map((row) => `${safeString(row?.type)}:${safeString(row?.target)}`));
     const taggedKeys = toKeySet(value.tagged);
@@ -12178,12 +12264,14 @@ function addSvbRuntimeActionParserSelfTest(checks) {
         || row?.hasBulkPayload === false
         || row?.hasModulePayload === false
         || row?.hasPluginPayload === false
+        || row?.hasAssetPayload === false
     ));
     const badBarePayload = ensureArray(value.bare).filter((row) => (
         row?.hasCharacterPayload === false
         || row?.hasBulkPayload === false
         || row?.hasModulePayload === false
         || row?.hasPluginPayload === false
+        || row?.hasAssetPayload === false
     ));
     const problems = [];
     if (missingTagged.length) problems.push(`@action 누락 ${missingTagged.join(', ')}`);
@@ -13016,7 +13104,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.36',
+            '//@version 1.5.37',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -25899,7 +25987,7 @@ ${currentVars || '{}'}
         if (!raw) return { type: '', target: '' };
         const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
         const validTypes = new Set(['apply', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
-        const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'module', 'plugin']);
+        const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
         for (let index = 0; index < parts.length; index += 1) {
             const first = parts[index];
             const second = parts[index + 1] || '';
@@ -25941,12 +26029,19 @@ ${currentVars || '{}'}
             if (!safeString(normalized.type).trim() && inferred.type) normalized.type = inferred.type;
             if (!safeString(normalized.target).trim() && inferred.target) normalized.target = inferred.target;
         }
-        const type = normalizeKeroActionTypeName(normalized.type);
-        const target = normalizeKeroActionTargetName(normalized.target);
+        const rawTypeKey = safeString(normalized.type).trim().toLowerCase().replace(/[\s_-]+/g, '');
+        let type = normalizeKeroActionTypeName(normalized.type);
+        let target = normalizeKeroActionTargetName(normalized.target);
+        if (/^(?:asset|image)(?:generate|generation|create)$|^(?:generate|generation|create)(?:asset|image)$/.test(rawTypeKey) && target !== 'asset') {
+            target = 'asset';
+            normalized.target = 'asset';
+        }
         if (!normalized.payload && type && target && alias) {
             const payload = {};
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            } else if (target === 'asset') {
+                ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -26132,6 +26227,16 @@ ${currentVars || '{}'}
             append: 'create',
             generate: 'create',
             make: 'create',
+            assetgenerate: 'create',
+            generateasset: 'create',
+            imagegenerate: 'create',
+            generateimage: 'create',
+            assetcreate: 'create',
+            createasset: 'create',
+            imagecreate: 'create',
+            createimage: 'create',
+            assetgeneration: 'create',
+            imagegeneration: 'create',
             bulkcreate: 'bulk_create',
             bulkadd: 'bulk_create',
             delete: 'delete',
@@ -26210,6 +26315,24 @@ ${currentVars || '{}'}
             chatlorebook: 'chatLorebook',
             chatlore: 'chatLorebook',
             locallore: 'chatLorebook',
+            asset: 'asset',
+            assets: 'asset',
+            image: 'asset',
+            images: 'asset',
+            imageasset: 'asset',
+            imageassets: 'asset',
+            generatedasset: 'asset',
+            generatedassets: 'asset',
+            profileasset: 'asset',
+            profileassets: 'asset',
+            standingasset: 'asset',
+            standingassets: 'asset',
+            emotionasset: 'asset',
+            emotionassets: 'asset',
+            emotionimage: 'asset',
+            emotionimages: 'asset',
+            additionalasset: 'asset',
+            additionalassets: 'asset',
             module: 'module',
             plugin: 'plugin'
         };
@@ -26305,6 +26428,10 @@ ${currentVars || '{}'}
                 return { ...normalized, type: 'bulk_create' };
             }
             if (['improve', 'apply', 'create', 'bulk_create', 'delete'].includes(type)) return normalized;
+            return null;
+        }
+        if (target === 'asset') {
+            if (type === 'create') return normalized;
             return null;
         }
         if (target === 'character') {
@@ -27904,6 +28031,12 @@ ${currentVars || '{}'}
         }
 
         if (type === 'create') {
+            if (target === 'asset') {
+                const items = normalizeKeroAssetCreatePayloads(action);
+                const total = items.reduce((sum, item) => sum + Math.max(1, Number(item.count || 1) || 1), 0);
+                const names = items.slice(0, 8).map((item) => `${item.target === 'emotion' ? '감정' : '추가'}:${item.name}`).join(', ');
+                return `이미지 에셋 ${items.length}종 · 생성 ${total}장${names ? `\n${names}${items.length > 8 ? ' ...' : ''}` : ''}`;
+            }
             const payload = action.payload;
             const payloads = normalizeKeroCreatePayloads(payload);
             if (payloads.length > 1) return `${payloads.length}개 항목 생성`;
@@ -29807,6 +29940,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             alternateGreetings: '추가 첫 메시지',
             translatorNote: '번역가의 노트',
             chatLorebook: '챗 로어북',
+            asset: '이미지 에셋',
             module: '모듈',
             plugin: '플러그인'
         };
@@ -30159,6 +30293,229 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         return { handled: true, success: true, keepProposal: false };
     }
 
+    function getKeroAssetPayloadObject(action = {}) {
+        return isPlainObject(action?.payload) ? action.payload : {};
+    }
+
+    function collectKeroAssetCreateSources(action = {}) {
+        const payload = action?.payload;
+        const payloadObj = isPlainObject(payload) ? payload : {};
+        const arraySources = [
+            payload,
+            payloadObj.assets,
+            payloadObj.items,
+            payloadObj.images,
+            payloadObj.prompts,
+            payloadObj.parts,
+            action.assets,
+            action.items,
+            action.images,
+            action.prompts,
+            action.parts
+        ];
+        for (const source of arraySources) {
+            if (Array.isArray(source) && source.length) return source;
+        }
+        if (isPlainObject(payload) && (
+            payload.prompt || payload.positive || payload.positivePrompt || payload.caption || payload.imagePrompt
+            || payload.name || payload.assetName || payload.slotName || payload.emotionTarget || payload.emotion
+        )) {
+            return [payload];
+        }
+        const direct = {};
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target'].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
+        });
+        return Object.keys(direct).length ? [direct] : [];
+    }
+
+    function normalizeKeroAssetCreatePayloads(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const sources = collectKeroAssetCreateSources(action);
+        const items = [];
+        sources.forEach((entry, index) => {
+            const source = isPlainObject(entry) ? entry : { prompt: entry };
+            if (source.enabled === false || source.disabled === true) return;
+            const rawTarget = safeString(source.target || source.assetType || source.asset_type || source.kind || source.type || payloadObj.target || payloadObj.assetType || '').trim().toLowerCase();
+            const target = /^(emotion|emote|expression|감정|표정)$/.test(rawTarget) || source.emotion || source.emotionTarget || source.emotionName
+                ? 'emotion'
+                : 'additional';
+            const fallbackName = target === 'emotion' ? `감정_${index + 1}` : `asset_${index + 1}`;
+            const rawName = safeString(
+                source.name || source.assetName || source.asset_name || source.slotName || source.slot
+                || source.emotionTarget || source.emotion || source.emotionName || source.label || source.title
+                || fallbackName
+            ).trim() || fallbackName;
+            const prompt = safeString(
+                source.prompt || source.positive || source.positivePrompt || source.caption || source.imagePrompt
+                || source.description || source.content || source.text
+            ).trim();
+            const negative = safeString(source.negative || source.negativePrompt || source.uc || payloadObj.negative || payloadObj.negativePrompt || action.negative || action.negativePrompt).trim();
+            const rawCount = Number(source.count || source.batchSize || source.batch || source.n || source.samples || payloadObj.count || action.count || 1);
+            const count = Math.max(1, Math.min(KERO_ASSET_ACTION_MAX_COUNT_PER_ITEM, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1));
+            const ratioId = safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim();
+            const rawSteps = Number(source.steps || payloadObj.steps || action.steps || 0);
+            const steps = Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0;
+            items.push({
+                index,
+                target,
+                name: target === 'emotion' ? rawName : svbNormalizeAssetName(rawName, fallbackName),
+                label: safeString(source.label || source.title || rawName).trim() || rawName,
+                prompt,
+                negative,
+                ratioId,
+                steps,
+                count,
+                profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
+                presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim()
+            });
+        });
+        return items;
+    }
+
+    function findKeroImageProfile(profileId = '') {
+        const id = safeString(profileId).trim();
+        if (!id) return null;
+        const lower = id.toLowerCase();
+        return normalizeImageApiProfiles(imageApiProfiles).find((profile) => {
+            return safeString(profile.id).toLowerCase() === lower
+                || safeString(profile.name).toLowerCase() === lower
+                || safeString(profile.provider).toLowerCase() === lower;
+        }) || null;
+    }
+
+    function findKeroImagePreset(presetId = '') {
+        const id = safeString(presetId).trim();
+        if (!id) return null;
+        const lower = id.toLowerCase();
+        return normalizeImageGenerationPresets(imageGenerationPresets).find((preset) => {
+            return safeString(preset.id).toLowerCase() === lower
+                || safeString(preset.name).toLowerCase() === lower
+                || safeString(preset.provider).toLowerCase() === lower;
+        }) || null;
+    }
+
+    function pickKeroAssetImageProfile(profileId = '') {
+        let profile = findKeroImageProfile(profileId) || getActiveImageApiProfile();
+        const configuredWellspring = normalizeImageApiProfiles(imageApiProfiles).find((item) =>
+            (isWellspringImageProvider(item.provider) || safeString(item.endpoint).includes('wellspring.encrypt.gay'))
+            && safeString(item.endpoint).trim()
+        );
+        if ((!profile || !safeString(profile.endpoint).trim()) && configuredWellspring) {
+            profile = configuredWellspring;
+        }
+        profile = normalizeImageApiProfile(profile);
+        if (!safeString(profile.endpoint).trim()) {
+            throw new Error('이미지 API URL이 비어 있습니다. 설정 > 이미지 API 설정 또는 에셋 스튜디오에서 Wellspring/NAI 프로필을 먼저 저장해주세요.');
+        }
+        if (isWellspringImageProvider(profile.provider) && !safeString(profile.apiKey).trim()) {
+            throw new Error('Wellspring ws-key가 비어 있습니다. 설정 > 이미지 API 설정에서 ws-key를 저장한 뒤 에셋 생성을 다시 실행해주세요.');
+        }
+        return profile;
+    }
+
+    function pickKeroAssetImagePreset(presetId = '', profile = null) {
+        let preset = findKeroImagePreset(presetId);
+        if (!preset && profile && isWellspringImageProvider(profile.provider)) {
+            preset = findKeroImagePreset(WELLSPRING_IMAGE_GENERATION_PRESET_ID);
+        }
+        preset = preset || getActiveImageGenerationPreset();
+        return normalizeImageGenerationPreset(preset);
+    }
+
+    function getKeroAssetOutputName(item, index = 0, total = 1) {
+        const base = safeString(item?.name).trim() || (item?.target === 'emotion' ? 'emotion' : 'asset');
+        if (total <= 1) return item?.target === 'emotion' ? base : svbNormalizeAssetName(base, 'asset');
+        const suffix = String(index + 1).padStart(2, '0');
+        return item?.target === 'emotion'
+            ? `${base}_${suffix}`
+            : svbNormalizeAssetName(`${base}_${suffix}`, 'asset');
+    }
+
+    async function runKeroAssetCreateAction(action = {}, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const char = await getCharacterData();
+        if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
+
+        const items = normalizeKeroAssetCreatePayloads(action);
+        if (!items.length) {
+            await addBotMessage('❌ 생성할 이미지 에셋 payload가 없습니다. prompt와 name을 포함한 assets/items 배열이 필요합니다.');
+            return { success: false, failed: 1, detail: '에셋 생성 항목 없음' };
+        }
+        if (items.length > KERO_ASSET_ACTION_MAX_ITEMS) {
+            const detail = `한 번의 에셋 생성 액션은 최대 ${KERO_ASSET_ACTION_MAX_ITEMS}종까지 지원합니다. 요청을 나눠서 실행해주세요.`;
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: items.length, detail };
+        }
+        const missingPrompt = items.filter((item) => !safeString(item.prompt).trim());
+        if (missingPrompt.length) {
+            const detail = `이미지 프롬프트가 비어 있는 에셋 ${missingPrompt.length}개가 있어 실행하지 않았습니다.`;
+            await addBotMessage(`❌ ${detail}`);
+            return { success: false, failed: missingPrompt.length, detail };
+        }
+
+        await loadImageApiSettings();
+        await loadImageGenerationPresets();
+
+        const jobs = [];
+        items.forEach((item) => {
+            for (let index = 0; index < item.count; index += 1) {
+                jobs.push({ item, index, total: item.count });
+            }
+        });
+        const requested = jobs.length;
+        let created = 0;
+        let failed = 0;
+        const createdAssets = [];
+        const failedAssets = [];
+        addKeroWorkstreamEvent('이미지 에셋 생성', `이미지 API로 ${requested}장 생성 후 캐릭터 에셋에 등록합니다.`, 'action', actionProgressOptions);
+
+        for (const job of jobs) {
+            assertKeroActionNotTimedOut(action, '이미지 에셋 생성');
+            if (typeof options.abortCheck === 'function' && options.abortCheck()) {
+                throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 생성을 중단했습니다.');
+            }
+            const item = job.item;
+            const name = getKeroAssetOutputName(item, job.index, job.total);
+            const vars = {
+                character: getCharacterDisplayName(char),
+                char: getCharacterDisplayName(char),
+                emotion: item.target === 'emotion' ? (item.name || item.label) : item.label,
+                part: item.label,
+                name,
+                asset: name
+            };
+            const profile = pickKeroAssetImageProfile(item.profileId);
+            const preset = pickKeroAssetImagePreset(item.presetId, profile);
+            const prompt = svbRenderImagePromptTemplate(item.prompt || preset.prompt, vars).trim();
+            const negative = svbRenderImagePromptTemplate(item.negative || preset.negative, vars).trim();
+            const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
+            const steps = item.steps || preset.steps || profile.steps || 26;
+            updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
+            try {
+                const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
+                await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                created += 1;
+                createdAssets.push({ target: item.target, name, prompt, ratioId, steps });
+            } catch (error) {
+                failed += 1;
+                failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
+                Logger.error('Kero asset generation failed:', error);
+                break;
+            }
+        }
+
+        updateKeroProgress(created + failed, requested, failed ? '이미지 에셋 생성 확인 필요' : '이미지 에셋 생성 완료', actionProgressOptions);
+        if (failed) {
+            const firstError = failedAssets[0]?.error || '알 수 없는 오류';
+            const detail = `이미지 에셋 ${created}/${requested}장 저장 후 중단: ${firstError}`;
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: created > 0 ? true : false, requested, created, failed, detail, createdAssets, failedAssets };
+        }
+        await addBotMessage(`✅ 이미지 에셋 ${created}장을 생성하고 캐릭터에 등록했습니다.`);
+        return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료`, createdAssets };
+    }
+
     async function executeKeroAction(action, options = {}) {
         const target = action?.target;
         const type = action?.type;
@@ -30180,6 +30537,14 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
         const workTargetResult = await executeKeroWorkTargetAction(action, { ...options, ...actionAbortOptions });
         if (workTargetResult?.handled) return workTargetResult;
+
+        if (target === 'asset') {
+            if (type !== 'create') {
+                await addBotMessage('이미지 에셋 작업은 create 액션만 지원합니다.');
+                return { success: false, detail: '이미지 에셋 지원 타입 아님' };
+            }
+            return await runKeroAssetCreateAction(action, { ...options, ...actionAbortOptions, progressOptions: actionProgressOptions });
+        }
 
         if (isKeroCharacterPatchTarget(target)) {
             if (!['update', 'patch'].includes(type)) {
@@ -30563,6 +30928,15 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return await executeKeroAction(action, options);
         }
 
+        if (target === 'asset') {
+            if (type !== 'create') {
+                await addBotMessage('이미지 에셋 작업은 create 액션만 지원합니다.');
+                return { success: false, detail: '이미지 에셋 지원 타입 아님' };
+            }
+            addKeroWorkstreamEvent('이미지 에셋 생성 실행', `${getTargetLabel(target)} ${getKeroActionLabel(type)} 직접 실행`, 'action', actionProgressOptions);
+            return await executeKeroAction(action, options);
+        }
+
         const allowedTargets = ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger'];
         if (!allowedTargets.includes(target) && !isTextFieldStudioTarget(target)) return { success: false, detail: '지원하지 않는 대상' };
         if (isTextFieldStudioTarget(target) && !['improve', 'apply'].includes(type)) {
@@ -30628,7 +31002,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             firstMessage: '첫 메시지',
             alternateGreetings: '추가 첫 메시지',
             translatorNote: '번역가의 노트',
-            chatLorebook: '챗 로어북'
+            chatLorebook: '챗 로어북',
+            asset: '이미지 에셋'
         };
         return labels[target] || target;
     }
@@ -33787,6 +34162,11 @@ ${metaBlock}
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
+- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","assets":[{"assetType":"additional","name":"character_profile","prompt":"best quality, solo character portrait, clear face, fantasy profile asset","negative":"text, logo, watermark, low quality, bad anatomy","ratioId":"13:19","steps":26}]}}
+- 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
+- profileId/presetId를 모르면 생략해도 된다. 시스템은 활성 이미지 API 프로필/프리셋을 쓰고, Wellspring 프로필이 설정되어 있으면 Wellspring 기본 프리셋을 사용할 수 있다.
+- 인물 기본 프로필 에셋, 대표 인물 프로필 이미지, 스탠딩 이미지처럼 캐릭터가 아닌 이미지 파일을 만드는 요청은 lorebook/regex/trigger가 아니라 target:"asset"이다.
+- assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
 - //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch가 가능해야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com의 main 브랜치 JS URL을 우선 사용한다.
 - raw.githubusercontent.com 브랜치 경로와 GitHub raw refs 경로는 캐시/지연으로 업데이트가 안 보일 수 있으므로 자동 업데이트 기본값으로 추천하지 않는다.
@@ -33833,6 +34213,7 @@ ${metaBlock}
 - 캐릭터 제작/재작성 요청에서는 100토큰짜리 요약으로 끝내지 않는다. desc는 정체성, 외형, 말투, 관계, 갈등, 운용 단서를 담고, 로어북은 핵심 항목별로 바로 주입 가능한 상세 설정을 제공한다.
 - 서로 다른 대상/시스템을 건드리는 작업은 @action JSON 배열로 순서대로 담는다. 예: character update 후 lorebook bulk_create, plugin update 후 검토용 regex create 등.
 - 상태창/HTML/CSS를 만들면 프리뷰용 <ui-design>을 보여줄 수 있지만, 반드시 같은 결과를 적절한 @action payload(backgroundHTML, regexScripts 등)에도 넣어 실제 저장되게 한다.
+- 이미지 에셋을 만들면 프롬프트 설명만 하지 말고 target:"asset" create @action에 assets 배열을 담아 실제 생성/등록되게 한다.
 - 여러 항목 생성이 주목적인 요청이면 create payload 배열 또는 bulk_create를 사용한다. 여러 항목 삭제는 delete @action 배열/idx 배열로 묶는다.
 - 사용자가 "먼저 계획만", "제안만", "확인 받고"라고 말한 경우 또는 필수 정보가 실제로 없어서 저장 대상을 확정할 수 없는 경우에만 실행 전 질문한다.
 - payload가 너무 커질 것 같으면 모델 응답 한계에 맞춰 저장 가능한 첫 단위부터 실행하고, 남은 작업은 이어서 진행할 작업 큐/다음 단계로 명시한다. "첫 번째만 하고 끝"내지 않는다.
@@ -33854,6 +34235,7 @@ ${metaBlock}
 ### 📝 용어 매핑 (중요! - 사용자가 이런 말을 하면 해당 target으로!)
 - "지시문", "시스템 프롬프트", "명령어", "지시사항" → globalNote 또는 desc (로어북 아님!!!)
 - "세계관", "배경", "설정집", "백과사전" → lorebook
+- "에셋", "프로필 에셋", "프로필 이미지", "스탠딩 이미지", "감정 이미지" → asset
 - "캐릭터 설명", "외형", "성격", "페르소나" → desc
 - "시나리오", "스토리", "상황 설정" → desc
 ⚠️ "지시문 개선해줘"라고 하면 절대 로어북에 넣지 마! globalNote나 desc야!
@@ -41108,7 +41490,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.36 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.37 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -44516,11 +44898,81 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
     return `${reasonText} ${detail}\n@action ${actionText}`;
 }
 
+function isKeroAssetCreateRequest(text = '') {
+    const source = safeString(text);
+    return /(에셋|asset|이미지|image|프로필\s*(?:에셋|이미지|사진|portrait)|스탠딩|standing|감정\s*(?:이미지|에셋)|emotion\s*image|profile\s*(?:asset|image|portrait))/i.test(source)
+        && isKeroCreateLikeRequest(source);
+}
+
+function extractKeroAssetFallbackNames(userText = '', assistantText = '') {
+    const source = `${safeString(userText)}\n${safeString(assistantText)}`;
+    const names = [];
+    const seen = new Set();
+    const stopWords = new Set([
+        '개굴', '주인님', '요청', '프로필', '에셋', '이미지', '로어북', '상세', '인물', '캐릭터',
+        '변수', '정규식', '트리거', '백그라운드', '추가', '기본', '생성', '등록', '가능', '직접',
+        '대신', '간결', '요약', '상태', '현재', '방법', '형태', '감정', '스탠딩'
+    ]);
+    const addName = (value) => {
+        const name = safeString(value).replace(/[^\uAC00-\uD7A3A-Za-z0-9_-]/g, '').trim();
+        if (!name || name.length < 2 || name.length > 24) return;
+        if (/^\d+$/.test(name)) return;
+        if (stopWords.has(name)) return;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(name);
+    };
+    const parenMatches = source.match(/[([]([^()[\]]{4,260})[)\]]/g) || [];
+    parenMatches.forEach((block) => {
+        const inner = block.slice(1, -1);
+        if (!/[,，、·]/.test(inner)) return;
+        inner.split(/[,，、·/|]+/).forEach(addName);
+    });
+    if (!names.length) {
+        const listMatches = source.match(/(?:인물|캐릭터|등장인물|프로필)[^\n:：]*[:：]\s*([^\n]{4,260})/gi) || [];
+        listMatches.forEach((line) => {
+            line.replace(/^.*[:：]\s*/, '').split(/[,，、·/|]+/).forEach(addName);
+        });
+    }
+    return names.slice(0, KERO_ASSET_ACTION_MAX_ITEMS);
+}
+
+function buildKeroMissingAssetFallbackResponse(userText, assistantText = '', options = {}) {
+    const request = safeString(options.userRequest || userText).trim();
+    if (!request || !isKeroAssetCreateRequest(request)) return '';
+    if (isKeroQuestionOnlyRequest(request)) return '';
+    const names = extractKeroAssetFallbackNames(request, assistantText);
+    if (!names.length) return '';
+    const assets = names.map((name) => ({
+        assetType: 'additional',
+        name: `${name}_profile`,
+        prompt: `best quality, solo character profile portrait, ${name}, clear face, upper body, polished fantasy simulation character asset, clean background`,
+        negative: 'text, logo, watermark, low quality, bad anatomy, extra fingers, blurry',
+        ratioId: '13:19',
+        steps: 26
+    }));
+    const action = {
+        type: 'create',
+        target: 'asset',
+        payload: {
+            profileId: WELLSPRING_IMAGE_API_PROFILE_ID,
+            presetId: WELLSPRING_IMAGE_GENERATION_PRESET_ID,
+            assets
+        },
+        reason: 'missing_asset_action_local_fallback',
+        userRequest: request
+    };
+    return `모델 응답에 실행 가능한 에셋 @action이 없어, 이름 목록을 기준으로 기본 프로필 에셋 생성 액션을 보강합니다.\n@action ${JSON.stringify(action)}`;
+}
+
 function buildKeroMissingActionFallbackResponse(userText, assistantText = '', options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     if (['module', 'plugin'].includes(fallbackMode)) return '';
     if (!shouldAttemptKeroMissingActionFallback(request, options)) return '';
+    const assetFallback = buildKeroMissingAssetFallbackResponse(userText, assistantText, options);
+    if (assetFallback) return assetFallback;
     const fullBuild = isKeroGatewayFullCharacterBuildRequest(request);
     if (!request || (!isKeroCreateLikeRequest(request) && !fullBuild)) return '';
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
@@ -52594,7 +53046,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.36",
+        name: "SuperVibeBot v1.5.37",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -52603,7 +53055,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.36 Settings",
+        "SuperVibeBot v1.5.37 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -52646,7 +53098,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.36");
+        Logger.info("SuperVibeBot v1.5.37");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
