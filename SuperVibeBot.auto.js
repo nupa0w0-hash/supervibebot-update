@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.38
-//@version 1.5.38
+//@display-name 🐸 SuperVibeBot v1.5.39
+//@version 1.5.39
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.38는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.39는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,8 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.38 Release Notes
+ * SuperVibeBot v1.5.39 Release Notes
+ * - v1.5.39: fixes image API JSON body handling for risuFetch so Wellspring NAI receives an object instead of a quoted JSON string
  * - v1.5.38: makes Kero asset generation prompt-first instead of Asset Studio preset-part driven
  * - v1.5.38: adds local image prompting guidance for ComfyUI, SDXL/ADXL, and Animagine-style anime XL models
  * - v1.5.38: stops Kero asset execution from falling back to image preset positive prompts when an asset prompt is missing
@@ -13107,7 +13108,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.38',
+            '//@version 1.5.39',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -21271,10 +21272,11 @@ function joinImageApiUrl(base, path = "") {
     return `${cleanBase}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-function svbPrepareFetchOptions(options = {}, rawResponse = false) {
+function svbPrepareFetchOptions(options = {}, rawResponse = false, settings = {}) {
     const prepared = { ...options, headers: { ...(options.headers || {}) } };
+    const stringifyJsonBody = settings.stringifyJsonBody !== false;
     if (prepared.body && typeof prepared.body === "object" && !(prepared.body instanceof FormData) && !(prepared.body instanceof Blob) && !(prepared.body instanceof ArrayBuffer) && !(prepared.body instanceof Uint8Array)) {
-        prepared.body = JSON.stringify(prepared.body);
+        if (stringifyJsonBody) prepared.body = JSON.stringify(prepared.body);
         prepared.headers["Content-Type"] = prepared.headers["Content-Type"] || "application/json";
     }
     prepared.rawResponse = rawResponse;
@@ -21298,11 +21300,12 @@ async function svbImageFetchRaw(url, options = {}, label = "이미지 API", time
             }))
             : null;
     const fetchFn = risuFetch || nativeFetch || fetch;
+    const usingRisuFetch = !!risuFetch;
     const canAbort = !!nativeFetch || fetchFn === fetch;
     const abortLink = createSvbAbortLink(options?.signal || null, `${label} 요청`);
     const controller = abortLink.controller;
     const effectiveSignal = abortLink.signal || options?.signal || null;
-    const requestOptions = svbPrepareFetchOptions(options, true);
+    const requestOptions = svbPrepareFetchOptions(options, true, { stringifyJsonBody: !usingRisuFetch });
     if (effectiveSignal && canAbort) requestOptions.signal = effectiveSignal;
     else if (!canAbort) delete requestOptions.signal;
     let timer = null;
@@ -41514,7 +41517,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.38 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.39 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -53068,7 +53071,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.38",
+        name: "SuperVibeBot v1.5.39",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -53077,7 +53080,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.38 Settings",
+        "SuperVibeBot v1.5.39 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -53120,7 +53123,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.38");
+        Logger.info("SuperVibeBot v1.5.39");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
