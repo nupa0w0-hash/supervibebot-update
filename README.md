@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.34`
+Latest version: `1.5.35`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.35
+
+- Adds a Wellspring NAI image provider preset for `https://wellspring.encrypt.gay/v1/images/nai/generate-image`.
+- Adds a one-click `Wellspring 추가` image API profile and ws-key/profile connection check.
+- Treats Wellspring NAI and generic NAI presets as compatible in Asset Studio generation.
 
 ## 1.5.34
 

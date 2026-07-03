@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.34
-//@version 1.5.34
+//@display-name 🐸 SuperVibeBot v1.5.35
+//@version 1.5.35
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.34는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.35는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.34 Release Notes
+ * SuperVibeBot v1.5.35 Release Notes
+ * - v1.5.35: adds a Wellspring NAI image provider preset for https://wellspring.encrypt.gay/v1/images/nai/generate-image
+ * - v1.5.35: verifies Wellspring ws-key/profile access through /v1/images/profile instead of a generic HEAD check
+ * - v1.5.35: treats Wellspring NAI and generic NAI presets as compatible in Asset Studio generation
  * - v1.5.34: adds a Kero "수정 전 확인" toggle that defers save actions to the approval/reject proposal panel
  * - v1.5.34: stops question/usage/analysis requests from being converted into lorebook/regex/trigger save actions
  * - v1.5.34: parses module_update-style action aliases while rejecting module updates contaminated with character-only fields
@@ -2690,10 +2693,20 @@ const IMAGE_API_TEMPLATE_INPUT_ID = "Super-Vibe-Bot-image-api-template";
 const IMAGE_API_STATUS_ID = "Super-Vibe-Bot-image-api-status";
 const IMAGE_API_PREVIEW_ID = "Super-Vibe-Bot-image-api-preview";
 const FFLATE_UMD_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js";
+const WELLSPRING_IMAGE_API_ENDPOINT = "https://wellspring.encrypt.gay/v1/images/nai/generate-image";
+const WELLSPRING_IMAGE_PROFILE_ENDPOINT = "/v1/images/profile";
+const WELLSPRING_IMAGE_PRESETS_ENDPOINT = "/v1/images/presets";
+const WELLSPRING_IMAGE_API_PROFILE_ID = "wellspring-nai-compatible";
+const WELLSPRING_IMAGE_GENERATION_PRESET_ID = "wellspring-profile-basic";
 const IMAGE_API_PROVIDERS = Object.freeze({
     "nai-compatible": {
         label: "NovelAI 호환",
         responseParser: "auto"
+    },
+    "wellspring-nai": {
+        label: "Wellspring NAI",
+        responseParser: "auto",
+        usesRemoteProfileOptions: true
     },
     comfyui: {
         label: "ComfyUI",
@@ -2736,6 +2749,25 @@ const DEFAULT_IMAGE_API_PROFILE = Object.freeze({
     ratios: IMAGE_API_RATIO_PRESETS,
     notes: "NovelAI 호환 generate-image URL과 Key/Token을 직접 입력해서 사용하는 기본 커스텀 프로필입니다."
 });
+const WELLSPRING_IMAGE_API_PROFILE = Object.freeze({
+    id: WELLSPRING_IMAGE_API_PROFILE_ID,
+    name: "Wellspring NAI",
+    provider: "wellspring-nai",
+    endpoint: WELLSPRING_IMAGE_API_ENDPOINT,
+    apiKey: "",
+    apiKeyLabel: "Wellspring ws-key",
+    model: "",
+    modelIgnored: true,
+    workflow: "",
+    requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
+    responseParser: "auto",
+    jsonPath: "",
+    timeoutMs: 180000,
+    steps: 26,
+    ratioId: "1:1",
+    ratios: IMAGE_API_RATIO_PRESETS,
+    notes: "Wellspring /images 프로필의 프리셋·체크포인트·LoRA·비율·워크플로우를 사용합니다. 슈바봇 모델 값은 비워둬도 됩니다."
+});
 const DEFAULT_IMAGE_GENERATION_PRESET_ID = "nai-character-basic";
 const DEFAULT_IMAGE_PRESET_PARTS = Object.freeze([
     { id: "standing-neutral", label: "기본 스탠딩", assetType: "emotion", emotionTarget: "기본", prompt: "{{character}}, neutral expression, standing pose", count: 1 },
@@ -2761,6 +2793,22 @@ const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
         jsonPath: "",
         parts: DEFAULT_IMAGE_PRESET_PARTS,
         notes: "NovelAI 호환 서버에서 캐릭터/감정 에셋을 만들 때 쓰는 기본 프리셋입니다."
+    },
+    {
+        id: WELLSPRING_IMAGE_GENERATION_PRESET_ID,
+        name: "Wellspring 프로필 기본",
+        provider: "wellspring-nai",
+        model: "",
+        prompt: "best quality, {{character}}, {{emotion}}, standing pose",
+        negative: "text, logo, watermark, low quality, bad anatomy, extra fingers",
+        ratioId: "13:19",
+        steps: 26,
+        workflow: "",
+        requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
+        responseParser: "auto",
+        jsonPath: "",
+        parts: DEFAULT_IMAGE_PRESET_PARTS,
+        notes: "Wellspring 쪽 프로필에서 체크포인트·LoRA·워크플로우·비율을 결정하는 기본 프리셋입니다."
     },
     {
         id: "comfyui-workflow-basic",
@@ -12965,7 +13013,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.34',
+            '//@version 1.5.35',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -20217,6 +20265,50 @@ function getImageApiProviderLabel(provider) {
     return IMAGE_API_PROVIDERS[provider]?.label || provider || "이미지 API";
 }
 
+function normalizeImageApiProviderId(provider, endpoint = "") {
+    const value = safeString(provider).trim().toLowerCase();
+    const url = safeString(endpoint).trim().toLowerCase();
+    if (url.includes("wellspring.encrypt.gay/v1/images/nai/generate-image")) return "wellspring-nai";
+    if (IMAGE_API_PROVIDERS[value]) return value;
+    if (/wellspring/.test(value)) return "wellspring-nai";
+    return "nai-compatible";
+}
+
+function isWellspringImageProvider(provider) {
+    return safeString(provider).trim() === "wellspring-nai";
+}
+
+function isNaiFamilyImageProvider(provider) {
+    const value = safeString(provider).trim();
+    return value === "nai-compatible" || value === "wellspring-nai";
+}
+
+function areImageProvidersCompatible(left, right) {
+    const leftValue = safeString(left).trim();
+    const rightValue = safeString(right).trim();
+    if (!leftValue || !rightValue) return true;
+    if (leftValue === rightValue) return true;
+    return isNaiFamilyImageProvider(leftValue) && isNaiFamilyImageProvider(rightValue);
+}
+
+function resolveImageGenerationProvider(profileProvider, presetProvider) {
+    const profileValue = safeString(profileProvider).trim();
+    const presetValue = safeString(presetProvider).trim();
+    if (isWellspringImageProvider(profileValue) && presetValue === "nai-compatible") return profileValue;
+    return presetValue || profileValue || "nai-compatible";
+}
+
+function getDefaultImageApiEndpointForProvider(provider) {
+    if (provider === "comfyui") return "http://127.0.0.1:8188";
+    if (isWellspringImageProvider(provider)) return WELLSPRING_IMAGE_API_ENDPOINT;
+    return "";
+}
+
+function getDefaultImageApiNameForProvider(provider, index = 0) {
+    if (isWellspringImageProvider(provider)) return WELLSPRING_IMAGE_API_PROFILE.name;
+    return `${getImageApiProviderLabel(provider)} ${index + 1}`;
+}
+
 function getImageApiRatio(profile, ratioId = "") {
     const ratios = ensureArray(profile?.ratios).length ? profile.ratios : IMAGE_API_RATIO_PRESETS;
     return ratios.find((ratio) => ratio.id === ratioId) || ratios.find((ratio) => ratio.id === profile?.ratioId) || ratios[0] || IMAGE_API_RATIO_PRESETS[0];
@@ -20232,28 +20324,30 @@ function createDefaultImageApiProfile(overrides = {}) {
 
 function normalizeImageApiProfile(profile = {}, index = 0) {
     const legacyDefaultProfile = safeString(profile.id).trim().toLowerCase() === ["chan", "seop-nai-compatible"].join("");
-    const provider = IMAGE_API_PROVIDERS[profile.provider] ? profile.provider : "nai-compatible";
+    const provider = normalizeImageApiProviderId(profile.provider, profile.endpoint || profile.baseUrl);
+    const isWellspringDefault = isWellspringImageProvider(provider) && (!profile.id || profile.id === WELLSPRING_IMAGE_API_PROFILE_ID);
     const base = provider === "nai-compatible" && (profile.id === DEFAULT_IMAGE_API_PROFILE.id || legacyDefaultProfile)
         ? DEFAULT_IMAGE_API_PROFILE
+        : (isWellspringDefault ? WELLSPRING_IMAGE_API_PROFILE
         : {
             id: svbImageId(),
-            name: `${getImageApiProviderLabel(provider)} ${index + 1}`,
+            name: getDefaultImageApiNameForProvider(provider, index),
             provider,
-            endpoint: provider === "comfyui" ? "http://127.0.0.1:8188" : "",
+            endpoint: getDefaultImageApiEndpointForProvider(provider),
             apiKey: "",
-            apiKeyLabel: "API Key",
+            apiKeyLabel: isWellspringImageProvider(provider) ? WELLSPRING_IMAGE_API_PROFILE.apiKeyLabel : "API Key",
             model: "",
-            modelIgnored: false,
+            modelIgnored: isWellspringImageProvider(provider),
             workflow: "",
             requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
             responseParser: IMAGE_API_PROVIDERS[provider]?.responseParser || "auto",
             jsonPath: "",
-            timeoutMs: 120000,
+            timeoutMs: isWellspringImageProvider(provider) ? WELLSPRING_IMAGE_API_PROFILE.timeoutMs : 120000,
             steps: 26,
             ratioId: "1:1",
             ratios: IMAGE_API_RATIO_PRESETS,
-            notes: ""
-        };
+            notes: isWellspringImageProvider(provider) ? WELLSPRING_IMAGE_API_PROFILE.notes : ""
+        });
     const merged = { ...base, ...(profile || {}), provider };
     if (legacyDefaultProfile) {
         merged.id = DEFAULT_IMAGE_API_PROFILE.id;
@@ -20281,8 +20375,13 @@ function normalizeImageApiProfile(profile = {}, index = 0) {
     merged.steps = Math.max(10, Math.min(30, Number(merged.steps) || 26));
     merged.ratios = ensureArray(merged.ratios).length ? merged.ratios : IMAGE_API_RATIO_PRESETS;
     merged.ratioId = safeString(merged.ratioId).trim() || "1:1";
-    if (!merged.endpoint && provider === "comfyui") merged.endpoint = "http://127.0.0.1:8188";
-    if (provider === "nai-compatible" && merged.id === DEFAULT_IMAGE_API_PROFILE.id) {
+    if (!merged.endpoint) merged.endpoint = getDefaultImageApiEndpointForProvider(provider);
+    if (isWellspringImageProvider(provider)) {
+        merged.endpoint = merged.endpoint || WELLSPRING_IMAGE_API_ENDPOINT;
+        merged.apiKeyLabel = WELLSPRING_IMAGE_API_PROFILE.apiKeyLabel;
+        merged.modelIgnored = true;
+        merged.notes = safeString(merged.notes).trim() || WELLSPRING_IMAGE_API_PROFILE.notes;
+    } else if (provider === "nai-compatible" && merged.id === DEFAULT_IMAGE_API_PROFILE.id) {
         merged.modelIgnored = true;
         merged.notes = DEFAULT_IMAGE_API_PROFILE.notes;
     } else if (provider !== "nai-compatible") {
@@ -20768,7 +20867,7 @@ function normalizeImagePresetParts(preset = {}) {
 
 function normalizeImageGenerationPreset(preset = {}, index = 0) {
     const providerValue = preset.provider || preset.providerConfig?.provider;
-    const provider = IMAGE_API_PROVIDERS[providerValue] ? providerValue : "nai-compatible";
+    const provider = normalizeImageApiProviderId(providerValue);
     const defaultPreset = DEFAULT_IMAGE_GENERATION_PRESETS.find((item) => item.id === preset.id)
         || getDefaultImageGenerationPresetForProvider(provider)
         || DEFAULT_IMAGE_GENERATION_PRESETS[0];
@@ -20960,9 +21059,10 @@ async function svbReadSafeJsonFile(file, label = "JSON", maxBytes = 12 * 1024 * 
 function buildImageProfileForGenerationPreset(profile, preset) {
     const normalizedProfile = normalizeImageApiProfile(profile);
     const normalizedPreset = normalizeImageGenerationPreset(preset);
+    const provider = resolveImageGenerationProvider(normalizedProfile.provider, normalizedPreset.provider);
     return normalizeImageApiProfile({
         ...normalizedProfile,
-        provider: normalizedPreset.provider || normalizedProfile.provider,
+        provider,
         model: normalizedPreset.model || normalizedProfile.model,
         workflow: normalizedPreset.workflow || normalizedProfile.workflow,
         requestTemplate: normalizedPreset.requestTemplate || normalizedProfile.requestTemplate,
@@ -21011,7 +21111,11 @@ function syncImageApiSettingsToUI(profile = getActiveImageApiProfile()) {
     setValue(IMAGE_API_WORKFLOW_INPUT_ID, normalized.workflow);
     setValue(IMAGE_API_TEMPLATE_INPUT_ID, normalized.requestTemplate);
     const modelHint = document.getElementById("Super-Vibe-Bot-image-api-model-hint");
-    if (modelHint) modelHint.textContent = normalized.modelIgnored ? "이 프로필은 서버 쪽 설정을 사용하므로 모델 값이 무시됩니다." : "필요한 provider에서만 사용됩니다.";
+    if (modelHint) {
+        modelHint.textContent = isWellspringImageProvider(normalized.provider)
+            ? "Wellspring /images 프로필에서 프리셋·체크포인트·LoRA·비율·워크플로우를 결정합니다. 모델 칸은 비워도 됩니다."
+            : (normalized.modelIgnored ? "이 프로필은 서버 쪽 설정을 사용하므로 모델 값이 무시됩니다." : "필요한 provider에서만 사용됩니다.");
+    }
 }
 
 function readImageApiProfileFromUI() {
@@ -21061,7 +21165,7 @@ function setImageApiStatus(message, type = "info", previewDataUrl = "") {
 }
 
 function setImageApiBusy(isBusy) {
-    ["Super-Vibe-Bot-image-api-save", "Super-Vibe-Bot-image-api-test-connection", "Super-Vibe-Bot-image-api-test-call", "Super-Vibe-Bot-image-api-add", "Super-Vibe-Bot-image-api-delete"].forEach((id) => {
+    ["Super-Vibe-Bot-image-api-save", "Super-Vibe-Bot-image-api-test-connection", "Super-Vibe-Bot-image-api-test-call", "Super-Vibe-Bot-image-api-add", "Super-Vibe-Bot-image-api-add-wellspring", "Super-Vibe-Bot-image-api-delete"].forEach((id) => {
         const btn = document.getElementById(id);
         if (btn) btn.disabled = !!isBusy;
     });
@@ -21443,7 +21547,8 @@ async function svbGenerateNaiCompatibleImage(profile, options) {
     const ratio = getImageApiRatio(profile, options.ratioId);
     const steps = Math.max(10, Math.min(30, Number(options.steps || profile.steps) || 26));
     const payload = svbBuildNaiCompatiblePayload(profile, options.prompt, options.negative, ratio, steps);
-    const headers = profile.apiKey ? { Authorization: `Bearer ${profile.apiKey}` } : {};
+    const headers = { Accept: "image/*, application/zip, application/json" };
+    if (profile.apiKey) headers.Authorization = `Bearer ${profile.apiKey}`;
     const raw = await svbImageFetchRaw(profile.endpoint, { method: "POST", headers, body: payload }, profile.name, profile.timeoutMs);
     if (!raw.ok) {
         const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
@@ -21579,7 +21684,7 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
         ratioId: options.ratioId || normalized.ratioId,
         steps: options.steps || normalized.steps
     };
-    if (normalized.provider === "nai-compatible") return await svbGenerateNaiCompatibleImage(normalized, request);
+    if (isNaiFamilyImageProvider(normalized.provider)) return await svbGenerateNaiCompatibleImage(normalized, request);
     if (normalized.provider === "comfyui") return await svbGenerateComfyImage(normalized, request);
     return await svbGenerateCustomHttpImage(normalized, request);
 }
@@ -21593,9 +21698,48 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     });
 }
 
+function getWellspringImageApiBase(endpoint) {
+    try {
+        const parsed = new URL(safeString(endpoint).trim() || WELLSPRING_IMAGE_API_ENDPOINT);
+        return parsed.origin;
+    } catch (error) {
+        return "https://wellspring.encrypt.gay";
+    }
+}
+
+async function runWellspringImageApiConnectionTest(profile) {
+    if (!safeString(profile.apiKey).trim()) {
+        throw new Error("Wellspring ws-key를 입력해주세요.");
+    }
+    const headers = { Authorization: `Bearer ${profile.apiKey}` };
+    const base = getWellspringImageApiBase(profile.endpoint);
+    const profileData = await svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_PROFILE_ENDPOINT), {
+        method: "GET",
+        headers
+    }, `${profile.name} 프로필`, 30000);
+    let presetCount = null;
+    try {
+        const presetsData = await svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_PRESETS_ENDPOINT), {
+            method: "GET",
+            headers
+        }, `${profile.name} 프리셋`, 30000);
+        const candidates = presetsData?.presets || presetsData?.items || presetsData?.data || presetsData;
+        presetCount = Array.isArray(candidates) ? candidates.length : null;
+    } catch (error) {
+        Logger.warn("Wellspring preset list check failed:", error?.message || error);
+    }
+    const profileName = safeString(profileData?.name || profileData?.profile?.name || profileData?.preset?.name).trim();
+    const presetText = Number.isFinite(Number(presetCount)) ? ` · 프리셋 ${presetCount}개` : "";
+    setImageApiStatus(`${profile.name} 연결 성공. Wellspring 프로필${profileName ? `: ${profileName}` : ""}${presetText}`, "success");
+}
+
 async function runImageApiConnectionTest() {
     const profile = await saveImageApiProfileFromUI();
     assertImageApiEndpoint(profile);
+    if (isWellspringImageProvider(profile.provider)) {
+        await runWellspringImageApiConnectionTest(profile);
+        return;
+    }
     if (profile.provider === "comfyui") {
         await svbImageFetchJson(joinImageApiUrl(profile.endpoint, "/system_stats"), { method: "GET" }, `${profile.name} 연결`, 30000);
         setImageApiStatus(`${profile.name} 연결 성공. ComfyUI 응답을 확인했습니다.`, "success");
@@ -21692,6 +21836,7 @@ function createImageApiSettingsSection() {
                     el("div", { class: "image-api-toolbar" }, [
                         profileSelect,
                         el("button", { class: "backup-btn", id: "Super-Vibe-Bot-image-api-add", text: "프로필 추가" }),
+                        el("button", { class: "backup-btn", id: "Super-Vibe-Bot-image-api-add-wellspring", text: "Wellspring 추가" }),
                         el("button", { class: "backup-btn", id: "Super-Vibe-Bot-image-api-delete", text: "삭제" }),
                         el("button", { class: "backup-btn", id: "Super-Vibe-Bot-image-api-export", text: "JSON 내보내기" }),
                         el("button", { class: "backup-btn", id: "Super-Vibe-Bot-image-api-import", text: "JSON 가져오기" })
@@ -21707,7 +21852,7 @@ function createImageApiSettingsSection() {
                         ]),
                         el("div", { class: "image-api-wide" }, [
                             el("label", { for: IMAGE_API_ENDPOINT_INPUT_ID, text: "연동 URL / Base URL" }),
-                            el("input", { id: IMAGE_API_ENDPOINT_INPUT_ID, class: "setting-input", type: "text", placeholder: "NovelAI 호환: generate-image URL / ComfyUI: http://127.0.0.1:8188" })
+                            el("input", { id: IMAGE_API_ENDPOINT_INPUT_ID, class: "setting-input", type: "text", placeholder: "Wellspring: https://wellspring.encrypt.gay/v1/images/nai/generate-image / ComfyUI: http://127.0.0.1:8188" })
                         ]),
                         el("div", {}, [
                             el("label", { for: IMAGE_API_KEY_INPUT_ID, text: "API Key / Token" }),
@@ -34751,9 +34896,11 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
         const next = normalizeImageApiProfile({
             ...existing,
             provider,
-            endpoint: provider === existing.provider ? existing.endpoint : (provider === "comfyui" ? "http://127.0.0.1:8188" : ""),
+            endpoint: provider === existing.provider ? existing.endpoint : getDefaultImageApiEndpointForProvider(provider),
             responseParser: IMAGE_API_PROVIDERS[provider]?.responseParser || "auto",
-            name: existing.id === DEFAULT_IMAGE_API_PROFILE.id && provider === "nai-compatible" ? DEFAULT_IMAGE_API_PROFILE.name : existing.name
+            name: isWellspringImageProvider(provider)
+                ? WELLSPRING_IMAGE_API_PROFILE.name
+                : (existing.id === DEFAULT_IMAGE_API_PROFILE.id && provider === "nai-compatible" ? DEFAULT_IMAGE_API_PROFILE.name : existing.name)
         });
         syncImageApiSettingsToUI(next);
         setImageApiStatus(`${getImageApiProviderLabel(provider)} 설정 형식을 적용했습니다.`, "info");
@@ -34777,6 +34924,23 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
         await saveImageApiSettings();
         syncImageApiSettingsToUI(profile);
         setImageApiStatus("새 이미지 API 프로필을 추가했습니다.", "success");
+    });
+    document.getElementById("Super-Vibe-Bot-image-api-add-wellspring")?.addEventListener("click", async () => {
+        const existing = imageApiProfiles.find((item) => (
+            item.id === WELLSPRING_IMAGE_API_PROFILE_ID
+            || isWellspringImageProvider(item.provider)
+            || safeString(item.endpoint).includes("wellspring.encrypt.gay")
+        ));
+        const profile = createDefaultImageApiProfile({
+            ...WELLSPRING_IMAGE_API_PROFILE,
+            id: existing?.id || WELLSPRING_IMAGE_API_PROFILE_ID,
+            apiKey: existing?.apiKey || "",
+            endpoint: existing?.endpoint || WELLSPRING_IMAGE_API_ENDPOINT
+        });
+        upsertImageApiProfile(profile);
+        await saveImageApiSettings();
+        syncImageApiSettingsToUI(profile);
+        setImageApiStatus("Wellspring NAI 프로필을 불러왔습니다. ws-key를 입력하고 연결 테스트를 실행하세요.", "success");
     });
     document.getElementById("Super-Vibe-Bot-image-api-delete")?.addEventListener("click", async () => {
         if (imageApiProfiles.length <= 1) {
@@ -40937,7 +41101,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.34 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.35 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -49884,11 +50048,12 @@ async function openAssetStudio() {
         if (method) method.value = normalized.method || 'POST';
         if (headers) headers.value = normalized.headersTemplate || '';
         const profile = getSelectedImageProfile();
-        const warning = profile.provider !== normalized.provider
+        const providersCompatible = areImageProvidersCompatible(profile.provider, normalized.provider);
+        const warning = !providersCompatible
             ? `선택한 연결 프로필(${getImageApiProviderLabel(profile.provider)})과 프리셋(${getImageApiProviderLabel(normalized.provider)}) 공급자가 다릅니다. 프리셋 기준으로 호출합니다.`
             : `${normalized.name} 프리셋을 적용했습니다.`;
         renderGenerationPartList();
-        setStatus(warning, profile.provider !== normalized.provider ? 'error' : 'info');
+        setStatus(warning, providersCompatible ? 'info' : 'error');
     }
 
     function readGenerationPartsFromUI(base = getSelectedImagePreset()) {
@@ -52253,7 +52418,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.34",
+        name: "SuperVibeBot v1.5.35",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -52262,7 +52427,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.34 Settings",
+        "SuperVibeBot v1.5.35 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -52305,7 +52470,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.34");
+        Logger.info("SuperVibeBot v1.5.35");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
