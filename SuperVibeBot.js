@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.45
-//@version 1.5.45
+//@display-name 🐸 SuperVibeBot v1.5.46
+//@version 1.5.46
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.45는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.46는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.45 Release Notes
+ * SuperVibeBot v1.5.46 Release Notes
+ * - v1.5.46: prevents explicit desc-only edit requests from escalating into full character updates or lorebook bulk creation
+ * - v1.5.46: recovers module/plugin work when model output only contains wrong-target actions, with explicit mixed-target consent support
  * - v1.5.45: adds Wellspring reference-image locking for consistent character asset batches
  * - v1.5.45: exposes reference_image/reference_image_base64 placeholders to workflow/custom image templates
  * - v1.5.44: adds preset-level character consistency prompts for stable profile/emotion/standing asset batches
@@ -8922,6 +8924,7 @@ function isKeroFullCharacterBuildRequest(input = '') {
     }
     const text = safeString(input);
     if (!text.trim()) return false;
+    if (isKeroExplicitSingleCharacterFieldEditRequest(text)) return false;
     const fullBuildWords = /(전체|처음부터|캐릭터\s*패키지|풀\s*빌드|풀빌드|리메이크|만들|제작|생성|worldbuild|full\s*build|make|build)/i;
     const targetWords = /(봇|캐릭터|시뮬|sim|bot|character)/i;
     const contentWords = /(디스크립션|description|desc|첫\s*메시지|first\s*message|로어북|lorebook|상태창|status|css|html|세계관|인물|관계)/i;
@@ -12513,6 +12516,21 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             buildKeroMissingActionFallbackResponse(usageQuestion, '정규식 사용법 답변', { userRequest: usageQuestion }),
             buildKeroMissingImproveFallbackResponse(usageQuestion, '정규식 사용법 답변', { userRequest: usageQuestion })
         ].filter(Boolean).join('\n');
+        const singleDescRequest = '봇의 설명(desc)를 수정해줘. XML 태그와 마크다운 형식은 유지하고 분위기만 차분하게 바꿔줘.';
+        const singleDescFallback = buildKeroMissingImproveFallbackResponse(
+            singleDescRequest,
+            '설명만 다듬으면 됩니다.',
+            { userRequest: singleDescRequest }
+        );
+        const singleDescActions = parseKeroAction(singleDescFallback).actions || [];
+        const singleDescAction = singleDescActions[0] || {};
+        const singleDescFullFallback = buildKeroMissingActionFallbackResponse(singleDescRequest, '', { userRequest: singleDescRequest });
+        const singleDescPreplan = buildKeroPreplannedLargeRequestResponse(singleDescRequest, {
+            keroMode: 'work',
+            workTargetMode: 'character',
+            userRequest: singleDescRequest
+        });
+        const singleDescBulkSpecs = inferKeroBulkCreateSpecsFromText(singleDescRequest, { allowSmallCreate: true, fullBuild: false });
         let malformedFieldActionBlocked = false;
         try {
             recoverKeroActionDirectivesFromFieldText('본문\n@action { broken', 'self test field', [], { silentRecoveryEvent: true });
@@ -12531,6 +12549,12 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             usageQuestionIsQuestionOnly: isKeroQuestionOnlyRequest(usageQuestion) === true,
             usageQuestionNoMutationIntent: hasKeroExplicitMutationIntent(usageQuestion) === false,
             usageQuestionNoFallback: !usageQuestionFallback,
+            singleDescDetected: isKeroExplicitSingleCharacterFieldEditRequest(singleDescRequest, 'desc'),
+            singleDescNotFullBuild: !isKeroGatewayFullCharacterBuildRequest(singleDescRequest),
+            singleDescFallbackOnlyDesc: singleDescActions.length === 1 && normalizeKeroActionTargetName(singleDescAction?.target) === 'desc',
+            singleDescNoCharacterSeedFallback: !singleDescFullFallback,
+            singleDescNoPreplan: !singleDescPreplan,
+            singleDescNoBulkSpecs: singleDescBulkSpecs.length === 0,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
             fullBuildProbeType: typeof fullBuildProbe === 'boolean'
@@ -12552,6 +12576,12 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.usageQuestionIsQuestionOnly) problems.push('usage question was not detected as question-only');
     if (!value.usageQuestionNoMutationIntent) problems.push('usage question was misdetected as mutation intent');
     if (!value.usageQuestionNoFallback) problems.push('usage question created missing-action fallback');
+    if (!value.singleDescDetected) problems.push('single desc edit was not detected');
+    if (!value.singleDescNotFullBuild) problems.push('single desc edit was misdetected as full build');
+    if (!value.singleDescFallbackOnlyDesc) problems.push('single desc edit did not create exactly one desc action');
+    if (!value.singleDescNoCharacterSeedFallback) problems.push('single desc edit created character seed fallback');
+    if (!value.singleDescNoPreplan) problems.push('single desc edit triggered large-request preplan');
+    if (!value.singleDescNoBulkSpecs) problems.push('single desc edit inferred bulk specs');
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
     if (!value.fullBuildProbeType) problems.push('gateway full-build probe did not return boolean');
@@ -13166,7 +13196,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.45',
+            '//@version 1.5.46',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -14434,6 +14464,55 @@ function addSvbRuntimeLocalActionParserSelfTest(checks, localFunctions = {}) {
     ));
 }
 
+function addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions = {}) {
+    const result = readSvbRuntimeValue('work target mixed filter self test', () => {
+        const localFilter = resolveSvbRuntimeLocalFunction(localFunctions, 'getKeroWorkTargetActionFilterResult');
+        const localMixedIntent = resolveSvbRuntimeLocalFunction(localFunctions, 'shouldAllowKeroMixedWorkTargets');
+        if (typeof localFilter !== 'function' || typeof localMixedIntent !== 'function') {
+            return { skipped: true };
+        }
+        const moduleAction = {
+            type: 'update',
+            target: 'module',
+            payload: { id: 'diagnostic-module', description: 'module update' }
+        };
+        const characterAction = {
+            type: 'improve',
+            target: 'desc',
+            userRequest: 'diagnostic desc update'
+        };
+        const normal = localFilter([characterAction], 'module', { allowMixedWorkTargets: false });
+        const mixed = localFilter([moduleAction, characterAction], 'module', { allowMixedWorkTargets: true });
+        return {
+            skipped: false,
+            detectsExplicitMixed: localMixedIntent('캐릭터와 모듈 복합 작업 허용하고 둘 다 수정해줘') === true,
+            rejectsNegativeMixed: localMixedIntent('캐릭터는 건드리지 말고 모듈만 수정해줘') === false,
+            normalBlocksCharacter: normal.kept.length === 0 && normal.blocked.length === 1,
+            mixedKeepsBoth: mixed.kept.length === 2 && mixed.blocked.length === 0
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, 'work target mixed filter self test', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    if (value.skipped) {
+        checks.push(makeSvbRuntimeCheck(true, 'work target mixed filter self test', 'Kero UI local work-target filter is not mounted in this diagnostic context', 'ok'));
+        return;
+    }
+    const problems = [];
+    if (!value.detectsExplicitMixed) problems.push('explicit mixed target consent was not detected');
+    if (!value.rejectsNegativeMixed) problems.push('negative character mention allowed mixed target');
+    if (!value.normalBlocksCharacter) problems.push('module mode did not block character action by default');
+    if (!value.mixedKeepsBoth) problems.push('explicit mixed mode did not keep module and character actions');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        'work target mixed filter self test',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'module/plugin work target protection remains strict by default and explicit mixed consent keeps character-scoped actions',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
 function runSvbRuntimeSelfCheck(options = {}) {
     const checks = [];
     const localFunctions = options.localFunctions || {};
@@ -14456,6 +14535,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeFunctionCheck(checks, '도구 이벤트 바인딩 bindKeroToolsEvents', () => runtimeFunction('bindKeroToolsEvents'));
     addSvbRuntimeActionParserSelfTest(checks);
     addSvbRuntimeLocalActionParserSelfTest(checks, localFunctions);
+    addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions);
     addSvbRuntimeSteeringQueueSelfTest(checks);
     addSvbRuntimeControlRoutingSelfTest(checks);
     addSvbRuntimeMissingImproveFallbackSelfTest(checks);
@@ -26783,6 +26863,7 @@ ${currentVars || '{}'}
     function isKeroFullCharacterBuildRequest(input = '') {
         const text = safeString(input).toLowerCase();
         if (!text) return false;
+        if (isKeroExplicitSingleCharacterFieldEditRequest(text)) return false;
         const targetSignal = /(캐릭터|봇|bot|시뮬봇|sim|캐릭터\s*전체|이\s*봇|this\s*bot)/i.test(text);
         const workSignal = /(만들|제작|생성|변환|바꾸|업그레이드|리메이크|전체|제대로|알아서|최대한|완성|풀\s*빌드|풀\s*세팅|풀세팅|완성본|패키지)/i.test(text);
         const strongFullBuildSignal = /(전체\s*(수정|개조|제작|생성|완성)|처음부터|맨땅부터|이름부터|설정까지|완성본|풀\s*빌드|풀\s*세팅|풀세팅|캐릭터\s*패키지|대형\s*(제작|생성|수정)|최고로|최대한의\s*성과)/i.test(text);
@@ -27202,6 +27283,8 @@ ${currentVars || '{}'}
     function getKeroExplicitCharacterFieldTargets(userInput = '') {
         if (/(적용하지\s*마|저장하지\s*마|제안만|보기만|예시만|미리보기만|분석만|검토만)/i.test(safeString(userInput))) return [];
         if (!isKeroCreateLikeRequest(userInput) && !isKeroImproveLikeRequest(userInput)) return [];
+        const singleFieldTarget = getKeroExplicitSingleCharacterFieldEditTarget(userInput);
+        if (singleFieldTarget) return [singleFieldTarget];
         const allowed = new Set(['desc', 'globalNote', 'background', 'vars', ...Object.keys(TEXT_FIELD_STUDIO_CONFIGS)]);
         return inferKeroImproveTargetsFromText(userInput).filter((target) => allowed.has(target));
     }
@@ -27675,17 +27758,59 @@ ${currentVars || '{}'}
         return null;
     }
 
-    function filterKeroActionsForWorkTargetMode(actions = [], mode = currentWorkTargetMode, progressOptions = {}) {
+    function isKeroCharacterScopedActionTarget(target = '') {
+        return new Set([
+            'character',
+            'desc',
+            'globalNote',
+            'background',
+            'vars',
+            'authorNote',
+            'creatorComment',
+            'firstMessage',
+            'alternateGreetings',
+            'translatorNote',
+            'chatLorebook',
+            'lorebook',
+            'regex',
+            'trigger',
+            'asset'
+        ]).has(normalizeKeroActionTargetName(target));
+    }
+
+    function shouldAllowKeroMixedWorkTargets(userInput = '') {
+        const source = safeString(userInput);
+        if (!source.trim()) return false;
+        if (/(캐릭터|character)[^\n]{0,36}(건드리지|수정하지|바꾸지|제외|빼고|말고)|(?:건드리지|수정하지|바꾸지|제외|빼고|말고)[^\n]{0,36}(캐릭터|character)/i.test(source)) {
+            return false;
+        }
+        const pairSignal = /(?:캐릭터|character)\s*(?:와|과|랑|하고|및|\+|\/)\s*(?:모듈|module)|(?:모듈|module)\s*(?:와|과|랑|하고|및|\+|\/)\s*(?:캐릭터|character)/i.test(source);
+        const mixedSignal = /복합\s*작업|양쪽\s*(?:작업|수정)|둘\s*다\s*(?:작업|수정|건드|허용|진행)|동시에\s*(?:작업|수정)|mixed\s*(?:target|work)|allow\s*mixed/i.test(source);
+        const consentSignal = /허용|진행|작업|수정|동시에|같이|함께|둘\s*다|양쪽|both|mixed|allow/i.test(source);
+        return (pairSignal || mixedSignal) && consentSignal;
+    }
+
+    function getKeroWorkTargetActionFilterResult(actions = [], mode = currentWorkTargetMode, options = {}) {
         const normalizedMode = normalizeWorkTargetMode(mode);
         const list = ensureArray(actions).filter((action) => action && typeof action === 'object');
-        if (!['module', 'plugin'].includes(normalizedMode)) return list;
+        if (!['module', 'plugin'].includes(normalizedMode)) return { kept: list, blocked: [] };
+        const allowMixedWorkTargets = options.allowMixedWorkTargets === true;
         const kept = [];
         const blocked = [];
         list.forEach((action) => {
             const target = normalizeKeroActionTargetName(action?.target);
+            const actionAllowsMixed = allowMixedWorkTargets || action?._allowMixedWorkTargets === true || action?.allowMixedWorkTargets === true;
             if (target === normalizedMode) kept.push(action);
+            else if (actionAllowsMixed && isKeroCharacterScopedActionTarget(target)) kept.push(action);
             else blocked.push(action);
         });
+        return { kept, blocked };
+    }
+
+    function filterKeroActionsForWorkTargetMode(actions = [], mode = currentWorkTargetMode, progressOptions = {}, options = {}) {
+        const normalizedMode = normalizeWorkTargetMode(mode);
+        const { kept, blocked } = getKeroWorkTargetActionFilterResult(actions, mode, options);
+        if (!['module', 'plugin'].includes(normalizedMode)) return kept;
         if (blocked.length) {
             const blockedLabels = blocked
                 .map((action) => `${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)}`)
@@ -27716,9 +27841,16 @@ ${currentVars || '{}'}
         keroActionQueue = keroActionQueue.catch((error) => {
             Logger.warn('Previous Kero action queue failed; continuing with next request:', error?.message || error);
         }).then(async () => {
-            const targetFilteredActions = filterKeroActionsForWorkTargetMode(actions, options.workTargetMode || currentWorkTargetMode, actionProgressOptions);
+            if (options.allowMixedWorkTargets === true) {
+                ensureArray(actions).forEach((action) => {
+                    if (action && typeof action === 'object') action._allowMixedWorkTargets = true;
+                });
+            }
+            const targetFilteredActions = filterKeroActionsForWorkTargetMode(actions, options.workTargetMode || currentWorkTargetMode, actionProgressOptions, {
+                allowMixedWorkTargets: options.allowMixedWorkTargets === true
+            });
             if (!targetFilteredActions.length) {
-                const detail = '현재 작업 대상과 다른 액션만 감지되어 실행하지 않았습니다. 모듈/플러그인 작업에서는 해당 대상 전용 액션만 저장할 수 있습니다.';
+                const detail = '현재 작업 대상과 다른 액션만 감지되어 실행하지 않았습니다. 모듈/플러그인 작업에서는 기본적으로 해당 대상 전용 액션만 저장합니다. 캐릭터까지 함께 수정하려면 "캐릭터+모듈 복합 작업 허용"처럼 명시해 주세요.';
                 if (currentKeroMission) {
                     const blockedStep = {
                         id: `target-protection-${Date.now()}`,
@@ -32359,7 +32491,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             runKeroBulkCreate,
             autoResumeKeroBulkJobsUntilSettled,
             parseKeroAction,
-            normalizeKeroActionTargetName
+            normalizeKeroActionTargetName,
+            getKeroWorkTargetActionFilterResult,
+            shouldAllowKeroMixedWorkTargets
         });
 
         bindSafeClick(document.getElementById('kero-runtime-diagnostics-btn'), async () => {
@@ -34184,8 +34318,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
             removeLoadingMessage();
             const parsed = parseKeroAction(response || '');
-            const shouldRunMutationFromRequest = isWorkMode && shouldAttemptKeroMissingActionFallback(modelVisibleUserInput || modelUserInput, { userRequest: modelVisibleUserInput || modelUserInput });
-            if (isWorkMode && parsed.actions?.length && !shouldRunMutationFromRequest && isKeroQuestionOnlyRequest(modelVisibleUserInput || modelUserInput)) {
+            const taskRequestText = modelVisibleUserInput || modelUserInput;
+            const isWorkTargetActionMode = ['module', 'plugin'].includes(normalizeWorkTargetMode(taskWorkTargetMode));
+            const allowMixedWorkTargets = isWorkMode && shouldAllowKeroMixedWorkTargets(taskRequestText);
+            const shouldRunMutationFromRequest = isWorkMode && shouldAttemptKeroMissingActionFallback(taskRequestText, { userRequest: taskRequestText });
+            if (isWorkMode && parsed.actions?.length && !shouldRunMutationFromRequest && isKeroQuestionOnlyRequest(taskRequestText)) {
                 addKeroWorkstreamEvent(
                     '질문 응답 액션 차단',
                     '사용자 입력이 질문/검토 성격이라 모델이 만든 저장 액션을 실행하지 않았습니다.',
@@ -34197,11 +34334,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
             if (isWorkMode && shouldRunMutationFromRequest && (!parsed.actions || parsed.actions.length === 0)) {
                 const fallbackOptions = {
-                    userRequest: modelVisibleUserInput,
+                    userRequest: taskRequestText,
                     workTargetMode: taskWorkTargetMode,
                     progressOptions: taskProgressOptions
                 };
-                const isWorkTargetActionMode = ['module', 'plugin'].includes(normalizeWorkTargetMode(taskWorkTargetMode));
                 const fallbackResponse = isWorkTargetActionMode
                     ? await buildKeroMissingWorkTargetActionRecoveryResponse(modelUserInput, parsed.text, fallbackOptions)
                     : (buildKeroMissingActionFallbackResponse(modelUserInput, parsed.text, fallbackOptions)
@@ -34232,6 +34368,35 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     taskProgressOptions
                 );
             }
+            if (isWorkMode && isWorkTargetActionMode && parsed.actions?.length && shouldRunMutationFromRequest && !allowMixedWorkTargets) {
+                const filterPreview = getKeroWorkTargetActionFilterResult(parsed.actions, taskWorkTargetMode, { allowMixedWorkTargets });
+                if (!filterPreview.kept.length && filterPreview.blocked.length) {
+                    const blockedActionDigest = JSON.stringify(filterPreview.blocked.slice(0, 8), null, 2);
+                    const recoveryAssistantText = [parsed.text, '[blocked_action_candidates]', blockedActionDigest].filter(Boolean).join('\n\n');
+                    const recoveryResponse = await buildKeroMissingWorkTargetActionRecoveryResponse(modelUserInput, recoveryAssistantText, {
+                        userRequest: taskRequestText,
+                        workTargetMode: taskWorkTargetMode,
+                        progressOptions: taskProgressOptions
+                    });
+                    if (recoveryResponse) {
+                        const recoveryParsed = parseKeroAction(recoveryResponse);
+                        if (recoveryParsed.actions?.length) {
+                            parsed.invalidActions = [
+                                ...ensureArray(parsed.invalidActions),
+                                ...filterPreview.blocked.map((action) => makeCloneableData(action))
+                            ];
+                            parsed.actions = recoveryParsed.actions;
+                            parsed.text = [parsed.text, recoveryParsed.text].filter(Boolean).join('\n\n').trim();
+                            addKeroWorkstreamEvent(
+                                '작업 대상 액션 복구',
+                                `${filterPreview.blocked.length}개 잘못된 대상 액션을 실행하지 않고 ${recoveryParsed.actions.length}개 ${WORK_TARGET_MODES[normalizeWorkTargetMode(taskWorkTargetMode)]?.label || taskWorkTargetMode} 액션으로 복구했습니다.`,
+                                'action',
+                                taskProgressOptions
+                            );
+                        }
+                    }
+                }
+            }
             const cleaned = stripMarkdownBold(parsed.text || '');
             const shouldDeferAssistantText = isWorkMode && parsed.actions?.length > 0;
             if (cleaned && !shouldDeferAssistantText) {
@@ -34243,7 +34408,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     if (backgroundJobId) {
                         updateKeroProgress(4, 4, `${parsed.actions.length}개 작업 후보를 처리하는 중...`, taskProgressOptions);
                     }
-                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, allowMixedWorkTargets, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                     if (!isTaskMissionStillCurrent()) {
                         return stopStaleTaskFinalization('액션 처리 뒤 현재 미션이 바뀌어 이전 요청의 검증/완료 처리를 중단했습니다.');
                     }
@@ -42257,7 +42422,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.45 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.46 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -44939,6 +45104,7 @@ function inferKeroLorebookBulkIntentMeta(text, count = 0) {
 function inferKeroBulkCreateSpecsFromText(text, options = {}) {
     const source = safeString(text);
     if (!source.trim()) return [];
+    if (isKeroExplicitSingleCharacterFieldEditRequest(source)) return [];
     const allowSmallCreate = options.allowSmallCreate === true;
     const isFullCharacterBuild = options.fullBuild === true || isKeroGatewayFullCharacterBuildRequest(source);
     const generalCount = inferKeroBulkCreateCountFromText(source);
@@ -45053,6 +45219,133 @@ function hasKeroGatewayGenreBuildSignal(input = '') {
     return !/(name|title|idea|recommend|list|example|prompt|sentence)\s*only|only\s*(name|title|idea|recommend|list|example|prompt|sentence)/i.test(text);
 }
 
+const KERO_SINGLE_CHARACTER_FIELD_TARGETS = new Set([
+    'desc',
+    'globalNote',
+    'background',
+    'vars',
+    'authorNote',
+    'creatorComment',
+    'firstMessage',
+    'alternateGreetings',
+    'translatorNote',
+    'chatLorebook'
+]);
+
+function getKeroCharacterFieldAliasPattern(target = '') {
+    switch (normalizeKeroActionTargetName(target)) {
+        case 'desc':
+            return '(?:설명|디스크립션|description|desc|character\\s*description)';
+        case 'globalNote':
+            return '(?:글로벌\\s*노트|global\\s*note|post\\s*history)';
+        case 'background':
+            return '(?:상태창|배경\\s*html|background\\s*html|background|status\\s*window|ui|css|html)';
+        case 'vars':
+            return '(?:기본\\s*변수|default\\s*variables?|variables?|vars?|변수)';
+        case 'authorNote':
+            return '(?:작가의\\s*노트|작가\\s*노트|author\\s*note)';
+        case 'creatorComment':
+            return '(?:제작자\\s*(?:코멘트|멘트|노트)|creator\\s*(?:comment|note))';
+        case 'firstMessage':
+            return '(?:첫\\s*메시지|첫메시지|first\\s*message|첫\\s*대사|시작\\s*메시지)';
+        case 'alternateGreetings':
+            return '(?:추가\\s*첫\\s*메시지|추가첫메시지|alternate\\s*(?:greeting|message))';
+        case 'translatorNote':
+            return '(?:번역가의\\s*노트|번역가\\s*노트|translator\\s*note|translation\\s*note)';
+        case 'chatLorebook':
+            return '(?:챗\\s*로어북|chat\\s*lorebook|local\\s*lore)';
+        case 'lorebook':
+            return '(?:로어북|lorebook|세계관|등장인물|인물|지역|장소|세력|관계|설정집)';
+        case 'regex':
+            return '(?:정규식|regex)';
+        case 'trigger':
+            return '(?:트리거|trigger|lua)';
+        case 'character':
+            return '(?:제목|이름|name|title|캐릭터\\s*이름|봇\\s*제목|캐릭터\\s*제목)';
+        default:
+            return '';
+    }
+}
+
+function hasKeroFieldScopedMutationIntent(source = '', aliasPattern = '') {
+    if (!aliasPattern) return false;
+    const verbs = '(?:수정|고쳐|개선|다듬|보완|업데이트|최신화|바꿔|변경|정리|리메이크|edit|revise|rewrite|update|patch|fix|improve|enhance)';
+    const field = `(?:봇|캐릭터|character|bot)?\\s*(?:의\\s*)?${aliasPattern}(?:\\s*\\([^\\)]*\\))?\\s*(?:만|을|를|은|부분|필드)?`;
+    return new RegExp(`${field}[^\\n]{0,90}${verbs}`, 'i').test(source)
+        || new RegExp(`${verbs}[^\\n]{0,90}${field}`, 'i').test(source);
+}
+
+function hasKeroFieldNegativeOrPreserveMention(source = '', aliasPattern = '') {
+    if (!aliasPattern) return false;
+    const negative = "(?:건드리지|수정하지|바꾸지|변경하지|지우지|삭제하지|제외|빼고|말고|유지|보존|keep|preserve|exclude|without|do\\s*not|don\\s*'?t)";
+    return new RegExp(`${aliasPattern}[^\\n]{0,40}${negative}|${negative}[^\\n]{0,40}${aliasPattern}`, 'i').test(source);
+}
+
+function hasKeroWholeCharacterBuildSignal(source = '') {
+    const text = safeString(source);
+    if (!text.trim()) return false;
+    const descAlias = getKeroCharacterFieldAliasPattern('desc');
+    const descScopedWhole = new RegExp(`${descAlias}[^\\n]{0,16}(?:전체|전부|모든)|(?:전체|전부|모든)[^\\n]{0,16}${descAlias}`, 'i').test(text);
+    const wholeSignals = [
+        /(?:봇|캐릭터|character|bot)\s*전체/i,
+        /전체\s*(?:수정|개조|제작|생성|완성|업데이트|리메이크)/i,
+        /(?:처음부터|맨땅부터|이름부터|설정까지|완성본|풀\s*빌드|풀\s*세팅|풀세팅|캐릭터\s*패키지)/i,
+        /(?:모든|전체)\s*(?:필드|항목|부분|구성)/i,
+        /(?:제목|이름|name|title)[^\n]{0,60}(?:설명|desc|description)[^\n]{0,60}(?:첫\s*메시지|first\s*message|로어북|lorebook)/i,
+        /(?:설명|desc|description)[^\n]{0,60}(?:첫\s*메시지|first\s*message)[^\n]{0,60}(?:로어북|lorebook|상태창|background|html)/i
+    ];
+    return wholeSignals.some((pattern) => pattern.test(text)) && !descScopedWhole;
+}
+
+function hasKeroPositiveOtherCharacterFieldIntent(source = '', protectedTarget = '') {
+    const normalizedProtected = normalizeKeroActionTargetName(protectedTarget);
+    const otherTargets = [
+        'character',
+        'globalNote',
+        'background',
+        'vars',
+        'authorNote',
+        'creatorComment',
+        'firstMessage',
+        'alternateGreetings',
+        'translatorNote',
+        'chatLorebook',
+        'lorebook',
+        'regex',
+        'trigger'
+    ].filter((target) => normalizeKeroActionTargetName(target) !== normalizedProtected);
+    return otherTargets.some((target) => {
+        const aliasPattern = getKeroCharacterFieldAliasPattern(target);
+        if (!aliasPattern) return false;
+        if (!hasKeroFieldScopedMutationIntent(source, aliasPattern)) return false;
+        return !hasKeroFieldNegativeOrPreserveMention(source, aliasPattern);
+    });
+}
+
+function getKeroExplicitSingleCharacterFieldEditTarget(text = '') {
+    const source = safeString(text);
+    if (!source.trim()) return '';
+    if (isKeroNoApplyPlanningOnlyRequest(source)) return '';
+    if (!hasKeroExplicitMutationIntent(source) && !isKeroImproveLikeRequest(source)) return '';
+    if (hasKeroWholeCharacterBuildSignal(source)) return '';
+    const directTargets = [];
+    KERO_SINGLE_CHARACTER_FIELD_TARGETS.forEach((target) => {
+        if (hasKeroFieldScopedMutationIntent(source, getKeroCharacterFieldAliasPattern(target))) {
+            directTargets.push(target);
+        }
+    });
+    if (directTargets.length !== 1) return '';
+    const target = directTargets[0];
+    if (hasKeroPositiveOtherCharacterFieldIntent(source, target)) return '';
+    return target;
+}
+
+function isKeroExplicitSingleCharacterFieldEditRequest(text = '', expectedTarget = '') {
+    const target = getKeroExplicitSingleCharacterFieldEditTarget(text);
+    if (!target) return false;
+    return expectedTarget ? target === normalizeKeroActionTargetName(expectedTarget) : true;
+}
+
 function inferKeroImproveTargetsFromText(text = '') {
     const source = safeString(text);
     const targets = [];
@@ -45121,7 +45414,8 @@ function buildKeroMissingImproveFallbackResponse(userText, assistantText = '', o
         && !/(수정해|고쳐줘|개선해|적용|저장|바꿔줘|변경해|만들어|생성)/i.test(request)) {
         return '';
     }
-    const targets = inferKeroImproveTargetsFromText(request);
+    const singleFieldTarget = getKeroExplicitSingleCharacterFieldEditTarget(request);
+    const targets = singleFieldTarget ? [singleFieldTarget] : inferKeroImproveTargetsFromText(request);
     if (!targets.length) return '';
     const requestedIndexes = inferKeroImprovePartIndexesFromText(request);
     const actions = targets.map((target) => {
@@ -45153,6 +45447,7 @@ function buildKeroMissingImproveFallbackResponse(userText, assistantText = '', o
 function isKeroGatewayFullCharacterBuildRequest(text = '') {
     const source = safeString(text);
     if (!source.trim()) return false;
+    if (isKeroExplicitSingleCharacterFieldEditRequest(source)) return false;
     const targetSignal = /(캐릭터|봇|bot|시뮬봇|sim|이\s*봇|this\s*bot)/i.test(source);
     const workSignal = /(만들|제작|생성|변환|바꾸|업그레이드|리메이크|전체|제대로|알아서|최대한|완성|풀\s*빌드|풀\s*세팅|풀세팅|완성본|패키지)/i.test(source);
     const strongFullBuildSignal = /(전체\s*(수정|개조|제작|생성|완성)|처음부터|맨땅부터|이름부터|설정까지|완성본|풀\s*빌드|풀\s*세팅|풀세팅|캐릭터\s*패키지|대형\s*(제작|생성|수정)|최고로|최대한의\s*성과)/i.test(source);
@@ -45604,6 +45899,7 @@ function buildKeroLocalGatewayFallbackResponse(userText, options = {}) {
     if (!request) return '';
     const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     if (['module', 'plugin'].includes(fallbackMode)) return '';
+    if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return '';
     const allowSmallCreate = options.allowSmallCreate === true;
     const isFullCharacterBuild = isKeroGatewayFullCharacterBuildRequest(request);
     const fallbackConcept = getKeroGatewayFallbackConcept(request);
@@ -45739,6 +46035,7 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
     if (!shouldAttemptKeroMissingActionFallback(request, options)) return '';
     const assetFallback = buildKeroMissingAssetFallbackResponse(userText, assistantText, options);
     if (assetFallback) return assetFallback;
+    if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return '';
     const fullBuild = isKeroGatewayFullCharacterBuildRequest(request);
     if (!request || (!isKeroCreateLikeRequest(request) && !fullBuild)) return '';
     const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
@@ -45761,6 +46058,7 @@ function isKeroNoApplyPlanningOnlyRequest(text = '') {
 function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     if (!request) return false;
+    if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return false;
     const mode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
     if (mode !== 'work') return false;
     const targetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
@@ -54893,7 +55191,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.45",
+        name: "SuperVibeBot v1.5.46",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -54902,7 +55200,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.45 Settings",
+        "SuperVibeBot v1.5.46 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -54945,7 +55243,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.45");
+        Logger.info("SuperVibeBot v1.5.46");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
