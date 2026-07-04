@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.68
-//@version 1.5.68
+//@display-name 🐸 SuperVibeBot v1.5.69
+//@version 1.5.69
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.68는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.69는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.68 Release Notes
+ * SuperVibeBot v1.5.69 Release Notes
+ * - v1.5.69: raises API Hub/NanoGPT default call timeout from the old 60 seconds to 10 minutes and migrates legacy NanoGPT 60-second settings
+ * - v1.5.69: adds an API Hub timeout field so users can set a larger timeout or 0 for no plugin-side request timeout
  * - v1.5.68: routes Wellspring auto mode through native generation by default and auto-fills a preset/model from the Wellspring preset list when none is saved
  * - v1.5.68: adds per-character identity prompt storage in Asset Studio and lets Kero reuse identityName/identityPrompt for consistent emotion/profile asset batches
  * - v1.5.68: teaches Kero asset prompts to use Danbooru-style tag lookup when available and removes the old fixed asset action item/count caps
@@ -2712,6 +2714,8 @@ const AVAILABLE_OLLAMA_MODELS = {
     "deepseek-v4-pro": "DeepSeek V4 Pro"
 };
 const API_HUB_SETTINGS_KEY = "Super_Vibe_Bot_api_hub_settings";
+const API_HUB_LEGACY_DEFAULT_TIMEOUT_MS = 60000;
+const API_HUB_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const API_HUB_PROVIDER_PRESETS = Object.freeze({
     "ollama-cloud": {
         label: "Ollama Cloud (OpenAI v1)",
@@ -2745,6 +2749,7 @@ const API_HUB_PROVIDER_PRESETS = Object.freeze({
         defaultModel: "",
         modelsPath: "/models",
         chatPath: "/chat/completions",
+        timeoutMs: API_HUB_DEFAULT_TIMEOUT_MS,
         models: {}
     },
     "openrouter": {
@@ -2944,7 +2949,7 @@ const DEFAULT_API_HUB_SETTINGS = Object.freeze({
     serviceTier: "",
     modelsPath: "/models",
     chatPath: "/chat/completions",
-    timeoutMs: 60000,
+    timeoutMs: API_HUB_DEFAULT_TIMEOUT_MS,
     extraHeaders: ""
 });
 const API_HUB_SERVICE_TIERS = Object.freeze(["", "flex", "priority", "default", "auto"]);
@@ -7885,6 +7890,7 @@ const API_HUB_MODEL_INPUT_ID = "Super-Vibe-Bot-api-hub-model";
 const API_HUB_SERVICE_TIER_SELECT_ID = "Super-Vibe-Bot-api-hub-service-tier";
 const API_HUB_MODELS_PATH_INPUT_ID = "Super-Vibe-Bot-api-hub-models-path";
 const API_HUB_CHAT_PATH_INPUT_ID = "Super-Vibe-Bot-api-hub-chat-path";
+const API_HUB_TIMEOUT_INPUT_ID = "Super-Vibe-Bot-api-hub-timeout";
 const API_HUB_EXTRA_HEADERS_INPUT_ID = "Super-Vibe-Bot-api-hub-extra-headers";
 const API_TEST_STATUS_ID = "Super-Vibe-Bot-api-test-status";
 const API_TEST_CONNECTION_ID = "Super-Vibe-Bot-api-test-connection";
@@ -13465,7 +13471,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.68',
+            '//@version 1.5.69',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -20929,6 +20935,7 @@ function syncApiHubSettingsToUI(settings = apiHubSettings) {
     const serviceTierEl = document.getElementById(API_HUB_SERVICE_TIER_SELECT_ID);
     const modelsPathEl = document.getElementById(API_HUB_MODELS_PATH_INPUT_ID);
     const chatPathEl = document.getElementById(API_HUB_CHAT_PATH_INPUT_ID);
+    const timeoutEl = document.getElementById(API_HUB_TIMEOUT_INPUT_ID);
     const extraHeadersEl = document.getElementById(API_HUB_EXTRA_HEADERS_INPUT_ID);
     if (providerEl) providerEl.value = normalized.provider;
     if (typeEl) typeEl.value = normalized.type;
@@ -20938,6 +20945,7 @@ function syncApiHubSettingsToUI(settings = apiHubSettings) {
     if (serviceTierEl) serviceTierEl.value = normalized.serviceTier || "";
     if (modelsPathEl) modelsPathEl.value = normalized.modelsPath;
     if (chatPathEl) chatPathEl.value = normalized.chatPath;
+    if (timeoutEl) timeoutEl.value = String(normalized.timeoutMs ?? API_HUB_DEFAULT_TIMEOUT_MS);
     if (extraHeadersEl) extraHeadersEl.value = normalized.extraHeaders || "";
     populateApiHubModelSelect(getApiHubStaticModels(normalized.provider), normalized.model);
     renderApiHubSubmodels();
@@ -20956,6 +20964,7 @@ function readApiHubSettingsFromUI() {
         serviceTier: document.getElementById(API_HUB_SERVICE_TIER_SELECT_ID)?.value || "",
         modelsPath: document.getElementById(API_HUB_MODELS_PATH_INPUT_ID)?.value || "",
         chatPath: document.getElementById(API_HUB_CHAT_PATH_INPUT_ID)?.value || "",
+        timeoutMs: document.getElementById(API_HUB_TIMEOUT_INPUT_ID)?.value ?? apiHubSettings.timeoutMs,
         extraHeaders: document.getElementById(API_HUB_EXTRA_HEADERS_INPUT_ID)?.value || ""
     });
     parseApiHubExtraHeaders(settings.extraHeaders);
@@ -20977,7 +20986,7 @@ function applyApiHubProviderPresetToUI(provider) {
         modelsPath: preset.modelsPath || "/models",
         chatPath: preset.chatPath || (preset.type === "openai-responses" ? "/responses" : "/chat/completions"),
         extraHeaders: existingHeaders,
-        timeoutMs: apiHubSettings.timeoutMs
+        timeoutMs: document.getElementById(API_HUB_TIMEOUT_INPUT_ID)?.value ?? apiHubSettings.timeoutMs
     });
     syncApiHubSettingsToUI(nextSettings);
 }
@@ -26667,6 +26676,8 @@ ${currentVars || '{}'}
                 el("input", { id: API_HUB_CHAT_PATH_INPUT_ID, class: "setting-input", type: "text", placeholder: "/chat/completions" })
             ])
         ]),
+        el("label", { for: API_HUB_TIMEOUT_INPUT_ID, text: "호출 제한 시간(ms, 0=플러그인 제한 없음)" }),
+        el("input", { id: API_HUB_TIMEOUT_INPUT_ID, class: "setting-input", type: "number", min: "0", step: "1000", placeholder: String(API_HUB_DEFAULT_TIMEOUT_MS) }),
         el("label", { for: API_HUB_EXTRA_HEADERS_INPUT_ID, text: "추가 헤더 (JSON 또는 Key: Value) - service_tier 입력 금지" }),
         el("textarea", { id: API_HUB_EXTRA_HEADERS_INPUT_ID, class: "setting-input", rows: "3", placeholder: '{ "HTTP-Referer": "https://risuai.xyz" }', style: "resize: vertical;" })
     ]);
@@ -38310,6 +38321,10 @@ async function callOllamaAPI(systemPrompt, userText, settings = ollamaSettings, 
 function normalizeApiHubSettings(settings = {}) {
     const provider = settings.provider || DEFAULT_API_HUB_SETTINGS.provider;
     const preset = API_HUB_PROVIDER_PRESETS[provider] || API_HUB_PROVIDER_PRESETS["custom-openai"];
+    const presetTimeout = Number(preset.timeoutMs);
+    const providerDefaultTimeoutMs = Number.isFinite(presetTimeout) && presetTimeout >= 0
+        ? presetTimeout
+        : DEFAULT_API_HUB_SETTINGS.timeoutMs;
     const defaults = {
         ...DEFAULT_API_HUB_SETTINGS,
         provider,
@@ -38317,7 +38332,8 @@ function normalizeApiHubSettings(settings = {}) {
         baseUrl: preset.baseUrl || "",
         model: preset.defaultModel || "",
         modelsPath: preset.modelsPath || DEFAULT_API_HUB_SETTINGS.modelsPath,
-        chatPath: preset.chatPath || DEFAULT_API_HUB_SETTINGS.chatPath
+        chatPath: preset.chatPath || DEFAULT_API_HUB_SETTINGS.chatPath,
+        timeoutMs: providerDefaultTimeoutMs
     };
     const merged = { ...defaults, ...(settings || {}), provider };
     merged.type = merged.type || preset.type || DEFAULT_API_HUB_SETTINGS.type;
@@ -38346,14 +38362,26 @@ function normalizeApiHubSettings(settings = {}) {
     merged.serviceTier = normalizeApiHubServiceTier(merged.serviceTier);
     merged.modelsPath = String(merged.modelsPath || preset.modelsPath || "/models").trim();
     merged.chatPath = String(merged.chatPath || preset.chatPath || "/chat/completions").trim();
-    const timeoutValue = Number(merged.timeoutMs);
+    const rawTimeoutValue = Number(merged.timeoutMs);
+    const timeoutValue = rawTimeoutValue === API_HUB_LEGACY_DEFAULT_TIMEOUT_MS
+        ? providerDefaultTimeoutMs
+        : rawTimeoutValue;
     merged.timeoutMs = Number.isFinite(timeoutValue) && timeoutValue <= 0
         ? 0
-        : Math.max(10000, Math.min(3600000, timeoutValue || DEFAULT_API_HUB_SETTINGS.timeoutMs));
+        : Math.max(10000, Math.min(3600000, timeoutValue || providerDefaultTimeoutMs));
     merged.extraHeaders = typeof merged.extraHeaders === "string"
         ? merged.extraHeaders
         : JSON.stringify(merged.extraHeaders || {}, null, 2);
     return merged;
+}
+
+function normalizeApiHubSettingsForCall(settings = apiHubSettings, options = {}) {
+    const normalized = normalizeApiHubSettings(settings);
+    if (normalized.timeoutMs <= 0) return normalized;
+    if (options.timeoutMs === undefined) return normalized;
+    const optionTimeout = Number(options.timeoutMs);
+    if (!Number.isFinite(optionTimeout)) return normalized;
+    return normalizeApiHubSettings({ ...normalized, timeoutMs: optionTimeout });
 }
 
 const SUB_AGENT_PROVIDER_LABELS = {
@@ -38999,10 +39027,7 @@ function getApiHubRequestBodyOptions(settings) {
 }
 
 async function apiHubFetchJson(settings, pathKey, options = {}) {
-    const normalized = normalizeApiHubSettings({
-        ...(settings || {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
-    });
+    const normalized = normalizeApiHubSettingsForCall(settings, options);
     const hasBody = options.body !== undefined && options.body !== null;
     const requestOptions = {
         method: options.method || (hasBody ? "POST" : "GET"),
@@ -39115,10 +39140,7 @@ async function fetchApiHubModels(settings = apiHubSettings) {
 }
 
 async function callOpenAIChatHubAPI(systemPrompt, userText, settings = apiHubSettings, options = {}) {
-    const normalized = normalizeApiHubSettings({
-        ...(settings || {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
-    });
+    const normalized = normalizeApiHubSettingsForCall(settings, options);
     const { messages } = buildChatMessagesForHub(systemPrompt, userText);
     const maxTokens = Number(options.maxOutputTokens);
     const data = await apiHubFetchJson(normalized, "chatPath", {
@@ -39141,10 +39163,7 @@ async function callOpenAIChatHubAPI(systemPrompt, userText, settings = apiHubSet
 }
 
 async function callResponsesHubAPI(systemPrompt, userText, settings = apiHubSettings, options = {}) {
-    const normalized = normalizeApiHubSettings({
-        ...(settings || {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
-    });
+    const normalized = normalizeApiHubSettingsForCall(settings, options);
     const { messages, instructions, inputText } = buildChatMessagesForHub(systemPrompt, userText);
     const maxTokens = Number(options.maxOutputTokens);
     const input = messages?.length > 0
@@ -39171,10 +39190,7 @@ async function callResponsesHubAPI(systemPrompt, userText, settings = apiHubSett
 }
 
 async function callApiHubAPI(systemPrompt, userText, settings = apiHubSettings, options = {}) {
-    const normalized = normalizeApiHubSettings({
-        ...(settings || {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
-    });
+    const normalized = normalizeApiHubSettingsForCall(settings, options);
     if (!normalized.model) throw new Error("API Hub 모델명을 입력하거나 모델 목록에서 선택해주세요.");
     if (normalized.type === "ollama") {
         return await callOllamaAPI(systemPrompt, userText, {
@@ -39182,7 +39198,7 @@ async function callApiHubAPI(systemPrompt, userText, settings = apiHubSettings, 
             apiKey: normalized.apiKey,
             model: normalized.model,
             timeoutMs: normalized.timeoutMs
-        }, options);
+        }, { ...options, timeoutMs: normalized.timeoutMs });
     }
     if (normalized.type === "openai-responses") {
         return await callResponsesHubAPI(systemPrompt, userText, normalized, options);
@@ -43915,7 +43931,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.68 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.69 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -57318,7 +57334,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.68",
+        name: "SuperVibeBot v1.5.69",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57327,7 +57343,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.68 Settings",
+        "SuperVibeBot v1.5.69 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57370,7 +57386,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.68");
+        Logger.info("SuperVibeBot v1.5.69");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
