@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.73
-//@version 1.5.73
+//@display-name 🐸 SuperVibeBot v1.5.74
+//@version 1.5.74
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.73는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.74는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.73 Release Notes
+ * SuperVibeBot v1.5.74 Release Notes
+ * - v1.5.74: narrows planning goal approval so casual replies no longer jump into goal execution
+ * - v1.5.74: shows the current goal/mission in the workstream panel with runtime stop/cancel controls
+ * - v1.5.74: adds clearer main-model and sub-agent activity events during long waits
+ * - v1.5.74: wires stop/cancel controls into AbortController signals for model, sub-agent, and action execution paths
  * - v1.5.73: gives planning mode a read-only selected/reference context so it can discuss checked bots without saving actions
  * - v1.5.73: keeps planning mode non-mutating while preserving visibility into descriptions, first messages, lorebooks, regex, triggers, variables, and assets allowed by the reference scope
  * - v1.5.72: routes planning/TODO conversations through a lightweight non-mutating planning chat path instead of the full work/action prompt
@@ -8927,6 +8931,9 @@ let keroRuntimeWakeRecoveryTimer = null;
 let keroRuntimeWakeHandlerRunning = false;
 let keroRuntimeWakeRecoveryUnmounted = false;
 const keroRuntimeWakeHandlerCleanups = [];
+let currentKeroTaskAbortLink = null;
+let currentKeroTaskAbortReason = '';
+let currentKeroTaskCancelRequested = false;
 const keroRuntimeLocalOps = {
     drainQueuedInputs: null,
     renderWorkstream: null,
@@ -12748,7 +12755,10 @@ function addSvbRuntimePlanningRoutingSelfTest(checks) {
             planningModeRoutesPlanning: shouldRouteToPlanning('planning', '이 방향으로 대화하며 정리하자') === true,
             approvedObjectiveHasPlanningSignal: isKeroPlanningOnlyRequest(approvedObjective) === true,
             approvedGoalBypassesPlanning: shouldRouteToPlanning('goal', approvedObjective, { approvedPlanningGoal: true }) === false,
-            goalPlanningRequestStillPlans: shouldRouteToPlanning('goal', planningTodoRequest) === true
+            goalPlanningRequestStillPlans: shouldRouteToPlanning('goal', planningTodoRequest) === true,
+            explicitGoalApproval: isKeroPlanningGoalApprovalRequest('목표로 설정하고 진행') === true,
+            casualPositiveNotApproval: isKeroPlanningGoalApprovalRequest('좋아') === false,
+            genericProceedNotApproval: isKeroPlanningGoalApprovalRequest('진행해') === false
         };
     });
     if (!result.ok) {
@@ -12763,6 +12773,9 @@ function addSvbRuntimePlanningRoutingSelfTest(checks) {
     if (!value.approvedObjectiveHasPlanningSignal) problems.push('승인 목표 진단 문장에 기획 신호가 없음');
     if (!value.approvedGoalBypassesPlanning) problems.push('승인된 목표 실행이 기획 대화로 잘못 분기됨');
     if (!value.goalPlanningRequestStillPlans) problems.push('목표모드에서 새 기획 요청이 기획 대화로 분기되지 않음');
+    if (!value.explicitGoalApproval) problems.push('명시 목표 승인 문구 감지 실패');
+    if (!value.casualPositiveNotApproval) problems.push('일반 긍정 응답을 목표 승인으로 오판');
+    if (!value.genericProceedNotApproval) problems.push('일반 진행 요청을 목표 승인으로 오판');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '기획모드 라우팅 자체 테스트',
@@ -13524,7 +13537,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.73',
+            '//@version 1.5.74',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15502,6 +15515,42 @@ function releaseKeroZombieRuntimeLock(detail = '') {
     return true;
 }
 
+function getCurrentKeroTaskAbortSignal() {
+    return currentKeroTaskAbortLink?.signal || null;
+}
+
+function requestKeroTaskInterruption(options = {}) {
+    const cancelMission = options.cancelMission === true || options.cancel === true;
+    const hasActiveTask = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
+    if (!hasActiveTask) return false;
+    const reason = safeString(options.reason || (cancelMission
+        ? '사용자가 작업을 취소했습니다.'
+        : '사용자가 현재 작업을 중지했습니다.')) || '사용자가 작업을 중단했습니다.';
+    currentKeroTaskAbortReason = reason;
+    currentKeroTaskCancelRequested = cancelMission;
+    try {
+        currentKeroTaskAbortLink?.abort?.(reason);
+    } catch (error) {
+        Logger.warn('Kero task abort signal failed:', error?.message || error);
+    }
+    try {
+        forceExpireSubAgentConsultationGuards(cancelMission ? 'user_cancel' : 'user_stop');
+    } catch (error) {
+        Logger.warn('Kero sub-agent force stop failed:', error?.message || error);
+    }
+    const progressOptions = currentKeroRequestJobId ? { jobId: currentKeroRequestJobId, requireCurrentJob: true, bypassHeartbeatSuppression: true } : {};
+    if (currentKeroRequestJobId) {
+        updateKeroBackgroundJob(currentKeroRequestJobId, { detail: reason, silent: true });
+    }
+    addKeroWorkstreamEvent(cancelMission ? '사용자 취소 요청' : '사용자 중지 요청', reason, cancelMission ? 'cancelled' : 'interrupted', progressOptions);
+    updateKeroProgress(1, 1, reason, progressOptions);
+    try {
+        renderKeroBackgroundStatus({ immediate: true });
+        if (typeof keroWorkstreamRenderer === 'function') scheduleKeroWorkstreamRender('user_abort', { urgent: true });
+    } catch (_) {}
+    return true;
+}
+
 function registerKeroRuntimeLocalOps(ops = {}) {
     if (!ops || typeof ops !== 'object') return;
     if (typeof ops.drainQueuedInputs === 'function') {
@@ -16198,8 +16247,11 @@ function isKeroPlanningGoalApprovalRequest(text = '') {
     const source = safeString(text).trim();
     if (!source) return false;
     if (isKeroNoApplyPlanningOnlyRequest(source)) return false;
-    return /^(?:ㅇㅇ|응|그래|좋아|괜찮아|고|ㄱㄱ|go|ok|okay|yes|이대로|그대로|진행|진행해|시작|시작해|해|해줘|가자|목표로|목표\s*설정|목표모드|작업모드)/i.test(source)
-        && /(?:목표|진행|시작|작업|이대로|그대로|해줘|가자|go|ok|okay|yes|ㅇㅇ|응|그래|좋아|괜찮아|ㄱㄱ)/i.test(source);
+    if (/(?:아직|잠깐|보류|수정|고쳐|바꿔|다시|기획|계획|상의|논의|TODO|todo|투두|목록|정리)/i.test(source)
+        && !/(?:목표\s*(?:설정|저장|전환)|목표로|목표모드|goal\s*mode|set\s*(?:as\s*)?goal)/i.test(source)) {
+        return false;
+    }
+    return /(?:목표\s*(?:로|를)?\s*(?:설정|저장|전환|진행)|목표로\s*설정하고\s*진행|목표모드\s*(?:로)?\s*(?:전환|진행|시작)|이\s*계획(?:을|대로)?\s*목표(?:로)?\s*(?:설정|저장)|승인(?:하고)?\s*목표(?:로)?\s*(?:설정|진행)|set\s*(?:as\s*)?goal|goal\s*mode)/i.test(source);
 }
 
 function isKeroPlanningGoalRejectionRequest(text = '') {
@@ -17403,7 +17455,7 @@ function finishKeroBackgroundJob(id, status = 'done', detail = '', options = {})
     }
     const normalizedStatus = safeString(status);
     const isErrorStatus = ['error', 'failed'].includes(normalizedStatus);
-    const isWarningStatus = ['warning', 'blocked', 'interrupted'].includes(normalizedStatus);
+    const isWarningStatus = ['warning', 'blocked', 'interrupted', 'cancelled'].includes(normalizedStatus);
     const noticeType = isErrorStatus ? 'error' : (isWarningStatus ? 'warning' : 'done');
     const noticeMessage = isErrorStatus
         ? `케로 작업 실패: ${finalDetail}`
@@ -19411,6 +19463,14 @@ function buildMainCSS() {
         #${CONTAINER_ID} .kero-artifact-code { margin: 0; padding: 9px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; font-family: Consolas, Monaco, monospace; color: #111827; }
         #${CONTAINER_ID} .kero-artifact-image { max-width: 100%; max-height: 220px; display: block; object-fit: contain; background: #111827; }
         #${CONTAINER_ID} .kero-workstream-summary { padding: 8px 10px; border: 1px solid #bbf7d0; border-radius: 8px; background: #ecfdf5; color: #047857; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+        #${CONTAINER_ID} .kero-workstream-goal { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; color: #1e3a8a; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+        #${CONTAINER_ID} .kero-workstream-goal.is-empty { display: none; }
+        #${CONTAINER_ID} .kero-goal-title { font-size: 11px; font-weight: 800; color: #1d4ed8; }
+        #${CONTAINER_ID} .kero-goal-objective { white-space: pre-wrap; max-height: 180px; overflow: auto; color: #1e3a8a; }
+        #${CONTAINER_ID} .kero-goal-meta { font-size: 10px; color: #475569; }
+        #${CONTAINER_ID} .btn-danger { background: #fff; color: #991b1b; border: 1px solid #fecaca; box-shadow: none; }
+        #${CONTAINER_ID} .btn-danger:hover { background: #fef2f2; }
+        #${CONTAINER_ID} button:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
         #${CONTAINER_ID} .kero-queue-panel { display: flex; flex-direction: column; gap: 6px; padding: 7px; border: 1px solid #d1d5db; border-radius: 8px; background: #ffffff; }
         #${CONTAINER_ID} .kero-queue-panel.is-empty { display: none; }
         #${CONTAINER_ID} .kero-queue-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--rt-text-secondary); }
@@ -24382,12 +24442,15 @@ async function createTransUI() {
     const keroWorkstreamTools = el("div", { class: "kero-tools" }, [
         el("div", { class: "kero-section-title", text: "🧭 작업 흐름" }),
         el("div", { class: "kero-workstream-summary", id: "kero-workstream-summary", text: "현재 작업 대상을 확인하는 중입니다." }),
+        el("div", { class: "kero-workstream-goal is-empty", id: "kero-workstream-goal" }),
         el("div", { class: "kero-queue-panel is-empty", id: "kero-queue-panel" }),
         el("div", { class: "kero-tool-row" }, [
             el("button", { class: "btn-secondary", id: "kero-runtime-continue-btn", text: "계속 진행" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-diagnostics-btn", text: "진단 실행" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-recover-btn", text: "대기 복구 확인" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-retry-btn", text: "재시도" })
+            el("button", { class: "btn-secondary", id: "kero-runtime-retry-btn", text: "재시도" }),
+            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지" }),
+            el("button", { class: "btn-danger", id: "kero-runtime-cancel-btn", text: "취소" })
         ]),
         el("div", { class: "kero-runtime-diagnostics-list", id: "kero-runtime-diagnostics-list" }, [
             el("div", { class: "kero-empty", text: "작업이 멈추거나 오류가 의심되면 진단을 실행하세요." })
@@ -29038,16 +29101,35 @@ ${currentVars || '{}'}
         const actionMissionId = safeString(options.missionId || currentKeroMission?.id || '');
         const actionStorageIdAtRequest = safeString(options.storageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || '');
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const actionSignal = options.signal || null;
+        const isActionAbortCheckRequested = () => {
+            if (typeof options.abortCheck !== 'function') return false;
+            try {
+                return options.abortCheck() === true;
+            } catch (error) {
+                if (isSvbAbortError(error) || actionSignal?.aborted) return true;
+                throw error;
+            }
+        };
+        const throwIfActionAbortRequested = () => {
+            throwIfSvbAborted(actionSignal, '액션 실행이 사용자 요청으로 중단되었습니다.');
+            if (isActionAbortCheckRequested()) {
+                throw createSvbAbortError('액션 실행이 사용자 요청으로 중단되었습니다.');
+            }
+        };
         const actionExecutionOptions = {
             ...(actionProgressOptions.jobId ? { jobId: actionProgressOptions.jobId } : {}),
             missionId: actionMissionId,
             storageId: actionStorageIdAtRequest,
             suppressInlineSuccessMessages: true,
-            progressOptions: actionProgressOptions
+            progressOptions: actionProgressOptions,
+            signal: actionSignal,
+            abortCheck: throwIfActionAbortRequested
         };
         keroActionQueue = keroActionQueue.catch((error) => {
             Logger.warn('Previous Kero action queue failed; continuing with next request:', error?.message || error);
         }).then(async () => {
+            throwIfActionAbortRequested();
             const targetFilteredActions = filterKeroActionsForWorkTargetMode(actions, options.workTargetMode || currentWorkTargetMode, actionProgressOptions, {
                 allowMixedWorkTargets: options.allowMixedWorkTargets === true
             });
@@ -29076,6 +29158,7 @@ ${currentVars || '{}'}
             }
             const compactedActions = await compactKeroIndexedDeleteActions(targetFilteredActions);
             if (!compactedActions.length) return;
+            throwIfActionAbortRequested();
             const actionUserRequest = safeString(options.userRequest || options.request || currentKeroMission?.objective || '').trim();
             compactedActions.forEach((action) => {
                 if (action && typeof action === 'object') {
@@ -29135,6 +29218,7 @@ ${currentVars || '{}'}
                     throw new Error(detail);
                 }
             }
+            throwIfActionAbortRequested();
             await prepareKeroDeleteBatch(compactedActions.filter(isKeroDeleteAction), '이번 케로 작업');
             if (!isCurrentKeroMissionContext(actionMissionId, actionStorageIdAtRequest)) {
                 const detail = `삭제 준비 중 현재 미션이 바뀌어 액션 ${compactedActions.length}개 실행을 건너뜁니다.`;
@@ -29143,6 +29227,7 @@ ${currentVars || '{}'}
                 return;
             }
             for (let index = 0; index < compactedActions.length; index += 1) {
+                throwIfActionAbortRequested();
                 if (!isCurrentKeroMissionContext(actionMissionId, actionStorageIdAtRequest)) {
                     const detail = `액션 실행 중 현재 미션이 바뀌어 남은 ${compactedActions.length - index}개 작업을 건너뜁니다.`;
                     Logger.warn(`Kero stale action remainder skipped: ${detail}`);
@@ -29182,6 +29267,7 @@ ${currentVars || '{}'}
                 }
                 let stopActionHeartbeat = null;
                 try {
+                    throwIfActionAbortRequested();
                     updateKeroMissionStep(stepId, 'running', `${index + 1}/${compactedActions.length} · ${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)}`);
                     if (actionStorageId) {
                         const runningPersisted = await persistKeroActionJobSafely(
@@ -29208,7 +29294,9 @@ ${currentVars || '{}'}
                     const beforeSnapshot = shouldVerify
                         ? getKeroActionVerificationSnapshot(await getCharacterData())
                         : null;
+                    throwIfActionAbortRequested();
                     const actionResult = await runKeroActionWithHardTimeout(action, () => withKeroApprovalBypass(() => handleKeroActionRequest(action, actionExecutionOptions)));
+                    throwIfActionAbortRequested();
                     if (!isCurrentKeroMissionContext(actionMissionId, actionStorageIdAtRequest)) {
                         const detail = `액션 결과가 도착했지만 현재 미션이 바뀌어 검증/미션 갱신을 생략했습니다.`;
                         Logger.warn(`Kero stale action result ignored: ${detail}`);
@@ -29321,6 +29409,28 @@ ${currentVars || '{}'}
                     }
                 } catch (error) {
                     Logger.error('Kero action failed:', error);
+                    if (isSvbAbortError(error) || actionSignal?.aborted || isActionAbortCheckRequested()) {
+                        const errorDetail = error?.message || '사용자 요청으로 액션 실행을 중단했습니다.';
+                        updateKeroMissionStep(stepId, 'interrupted', `${index + 1}/${compactedActions.length} · ${errorDetail}`);
+                        if (actionStorageId) {
+                            stopActionHeartbeat = await stopKeroActionJobHeartbeatSafely(stopActionHeartbeat);
+                            await persistKeroActionJobSafely(
+                                '액션 중지 기록',
+                                () => updateKeroFinalActionJob(actionStorageId, actionJobId, action, {
+                                    status: 'interrupted',
+                                    finishedAt: new Date().toISOString(),
+                                    lastError: errorDetail
+                                }),
+                                actionProgressOptions
+                            );
+                            const remainingActions = compactedActions.slice(index + 1);
+                            if (remainingActions.length) {
+                                await markKeroActionsBlocked(remainingActions, actionMissionId, actionStorageId, '사용자 중지/취소 요청으로 아직 실행하지 않은 후속 액션을 보류했습니다.');
+                            }
+                        }
+                        addKeroWorkstreamEvent('액션 실행 중지', `${index + 1}/${compactedActions.length} · ${errorDetail}`, 'interrupted', actionProgressOptions);
+                        throw error;
+                    }
                     if (!isCurrentKeroMissionContext(actionMissionId, actionStorageIdAtRequest)) {
                         const detail = `액션 오류가 도착했지만 현재 미션이 바뀌어 실패 상태 반영을 생략했습니다: ${error?.message || error}`;
                         Logger.warn(`Kero stale action error ignored: ${detail}`);
@@ -33566,6 +33676,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             Logger.warn('Kero workstream guard flush failed:', error?.message || error);
         }
         const summary = document.getElementById('kero-workstream-summary');
+        const goalBox = document.getElementById('kero-workstream-goal');
         const list = document.getElementById('kero-workstream-list');
         if (summary) {
             const context = buildKeroWorkstreamUiSummary();
@@ -33576,6 +33687,41 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const queueText = formatKeroQueueStatusInline(keroQueuedUserInputs, currentKeroMission?.id || '');
             summary.textContent = `${context.modeLabel} 모드 · ${context.targetName || '새 작업'} · ${formatReferenceSelectionSummary()}${missionText}${queueText}`;
         }
+        if (goalBox) {
+            clearKeroNode(goalBox);
+            const activeMissionStatus = safeString(currentKeroMission?.status || '');
+            const activeMission = currentKeroMission && !['done', 'cancelled'].includes(activeMissionStatus);
+            const pendingGoal = !activeMission && keroPendingPlanningGoal;
+            if (activeMission || pendingGoal) {
+                goalBox.classList.remove('is-empty');
+                const objective = activeMission
+                    ? getKeroMissionObjectiveText(currentKeroMission)
+                    : safeString(keroPendingPlanningGoal.objective || keroPendingPlanningGoal.plan || '');
+                const statusLabel = activeMission
+                    ? getKeroRecoveryMissionLabel(getEffectiveKeroMissionStatus(currentKeroMission, keroWorkstreamEvents) || currentKeroMission.status || 'running')
+                    : '승인 대기';
+                const stepSummary = activeMission
+                    ? summarizeKeroMissionStepsByStatus(['running', 'queued', 'warning', 'blocked', 'error', 'failed'], currentKeroMission, 4)
+                    : '';
+                goalBox.appendChild(el('div', { class: 'kero-goal-title', text: activeMission ? '현재 목표' : '목표 전환 대기' }));
+                goalBox.appendChild(el('div', { class: 'kero-goal-objective', text: objective || '목표 내용 없음' }));
+                goalBox.appendChild(el('div', {
+                    class: 'kero-goal-meta',
+                    text: [
+                        `상태: ${statusLabel}`,
+                        activeMission && currentKeroMission.keroMode ? `모드: ${getKeroModeMeta(currentKeroMission.keroMode).label}` : '',
+                        stepSummary ? `단계: ${stepSummary}` : ''
+                    ].filter(Boolean).join(' · ')
+                }));
+            } else {
+                goalBox.classList.add('is-empty');
+            }
+        }
+        const runtimeActive = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
+        ['kero-runtime-stop-btn', 'kero-runtime-cancel-btn'].forEach((id) => {
+            const btn = document.getElementById(id);
+            if (btn) btn.disabled = !runtimeActive;
+        });
         renderKeroQueuePanel(currentKeroMission?.id || '');
         if (!list) return true;
         if (adaptiveLimits.backgrounded) {
@@ -33952,6 +34098,32 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             });
             await renderKeroWorkstream();
         }, 'kero-runtime-retry-btn');
+
+        bindSafeClick(document.getElementById('kero-runtime-stop-btn'), async () => {
+            const stopped = requestKeroTaskInterruption({
+                cancelMission: false,
+                reason: '사용자가 작업 흐름 패널에서 현재 호출/실행 중지를 요청했습니다.'
+            });
+            if (!stopped) {
+                await addBotMessage('지금 중지할 진행 중 작업이 없습니다.');
+            } else {
+                await addBotMessage('현재 호출/실행 중지를 요청했어. 이미 완료된 저장은 되돌리지 않고, 남은 흐름을 확인 필요 상태로 정리할게.');
+            }
+            await renderKeroWorkstream();
+        }, 'kero-runtime-stop-btn');
+
+        bindSafeClick(document.getElementById('kero-runtime-cancel-btn'), async () => {
+            const cancelled = requestKeroTaskInterruption({
+                cancelMission: true,
+                reason: '사용자가 작업 흐름 패널에서 미션 취소를 요청했습니다.'
+            });
+            if (!cancelled) {
+                await addBotMessage('지금 취소할 진행 중 작업이 없습니다.');
+            } else {
+                await addBotMessage('현재 미션 취소를 요청했어. 이미 완료된 저장은 되돌리지 않고, 진행 중 호출과 남은 액션을 중단할게.');
+            }
+            await renderKeroWorkstream();
+        }, 'kero-runtime-cancel-btn');
 
         const scopeResetBtn = document.getElementById('kero-scope-reset-btn');
         bindSafeClick(scopeResetBtn, async () => {
@@ -34847,12 +35019,32 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (!storageId || !currentKeroMission) return { handled: false, resumed: false, success: false };
         const missionId = currentKeroMission.id || '';
         const resumeProgressOptions = resolveKeroActionProgressOptions(options);
+        const resumeSignal = options.signal || null;
+        const isResumeAbortRequested = () => {
+            if (resumeSignal?.aborted) return true;
+            if (typeof options.abortCheck !== 'function') return false;
+            try {
+                return options.abortCheck() === true;
+            } catch (error) {
+                if (isSvbAbortError(error) || resumeSignal?.aborted) return true;
+                throw error;
+            }
+        };
+        const throwIfResumeAbortRequested = () => {
+            throwIfSvbAborted(resumeSignal, '미션 재개가 사용자 요청으로 중단되었습니다.');
+            if (isResumeAbortRequested()) {
+                throw createSvbAbortError('미션 재개가 사용자 요청으로 중단되었습니다.');
+            }
+        };
         const isResumeMissionCurrent = () => isCurrentKeroMissionContext(missionId, storageId);
+        throwIfResumeAbortRequested();
         const recoveredActionJobs = await recoverOrphanedKeroActionJobs(storageId, missionId);
+        throwIfResumeAbortRequested();
         if (recoveredActionJobs.recovered > 0) {
             addKeroWorkstreamEvent('재개 전 액션 job 복구', `오래 실행 중으로 남아 있던 액션 job ${recoveredActionJobs.recovered}개를 중단 감지 상태로 정리했습니다.`, 'queued', resumeProgressOptions);
         }
         const reconciledBulkWarnings = await reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId);
+        throwIfResumeAbortRequested();
         if (reconciledBulkWarnings.reconciled > 0) {
             addKeroWorkstreamEvent('재개 전 대량 생성 경고 정리', `남은 범위가 없는 대량 생성 warning job ${reconciledBulkWarnings.reconciled}개를 완료로 정리했습니다.`, 'verified', resumeProgressOptions);
         }
@@ -34997,7 +35189,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 + (replayableWarningJobs.length ? `\n안전 재개 가능한 경고 ${replayableWarningJobs.length}개만 다시 실행합니다.` : '')
             );
         }
-        await handleKeroActionRequests(resumeActions, { missionId, storageId, workTargetMode: currentWorkTargetMode, progressOptions: resumeProgressOptions });
+        await handleKeroActionRequests(resumeActions, { missionId, storageId, workTargetMode: currentWorkTargetMode, progressOptions: resumeProgressOptions, signal: resumeSignal, abortCheck: isResumeAbortRequested });
         if (!isResumeMissionCurrent()) {
             return { handled: true, resumed: true, success: false, stale: true };
         }
@@ -35084,10 +35276,28 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         }
         const missionId = safeString(currentKeroMission.id || '');
         const autoResumeProgressOptions = resolveKeroActionProgressOptions(options);
+        const autoResumeSignal = options.signal || null;
+        const isAutoResumeAbortRequested = () => {
+            if (autoResumeSignal?.aborted) return true;
+            if (typeof options.abortCheck !== 'function') return false;
+            try {
+                return options.abortCheck() === true;
+            } catch (error) {
+                if (isSvbAbortError(error) || autoResumeSignal?.aborted) return true;
+                throw error;
+            }
+        };
+        const throwIfAutoResumeAbortRequested = () => {
+            throwIfSvbAborted(autoResumeSignal, '대량 작업 자동 이어가기가 사용자 요청으로 중단되었습니다.');
+            if (isAutoResumeAbortRequested()) {
+                throw createSvbAbortError('대량 작업 자동 이어가기가 사용자 요청으로 중단되었습니다.');
+            }
+        };
         let bulkSummary = initialSummary;
         if (!hasKeroBulkRemainder(bulkSummary)) {
             return { resumed: false, rounds: 0, bulkSummary, reason: 'no_remainder' };
         }
+        throwIfAutoResumeAbortRequested();
 
         const runtimeKey = getKeroBulkAutoResumeRuntimeKey();
         keroBulkAutoResumeRunning = true;
@@ -35102,6 +35312,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
         try {
             while (hasKeroBulkRemainder(bulkSummary)) {
+                throwIfAutoResumeAbortRequested();
                 if (!isCurrentKeroMissionContext(missionId, storageId)) {
                     return { resumed: rounds > 0, rounds, bulkSummary, reason: 'stale_mission' };
                 }
@@ -35126,12 +35337,13 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 }
 
                 if (rounds > 1) {
-                    await new Promise(resolve => setTimeout(resolve, KERO_BULK_AUTO_RESUME_DELAY_MS));
+                    await sleepSvbWithAbort(KERO_BULK_AUTO_RESUME_DELAY_MS, autoResumeSignal, '대량 작업 자동 이어가기 대기');
                 }
+                throwIfAutoResumeAbortRequested();
                 if (!isCurrentKeroMissionContext(missionId, storageId)) {
                     return { resumed: rounds > 0, rounds, bulkSummary, reason: 'stale_mission' };
                 }
-                const resumeResult = await resumeKeroStoredActionJobs({ bulkOnly: true, autoBulkResume: true, retryWarnings: false, silent: true, progressOptions: autoResumeProgressOptions });
+                const resumeResult = await resumeKeroStoredActionJobs({ bulkOnly: true, autoBulkResume: true, retryWarnings: false, silent: true, progressOptions: autoResumeProgressOptions, signal: autoResumeSignal, abortCheck: isAutoResumeAbortRequested });
                 await reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId);
                 bulkSummary = resumeResult?.bulkSummary || await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
                 const nextRemainder = getKeroBulkRemainderCount(bulkSummary);
@@ -35149,7 +35361,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                             'retry',
                             autoResumeProgressOptions
                         );
-                        await new Promise(resolve => setTimeout(resolve, KERO_BULK_AUTO_RESUME_DELAY_MS));
+                        await sleepSvbWithAbort(KERO_BULK_AUTO_RESUME_DELAY_MS, autoResumeSignal, '대량 작업 실패 범위 재시도 대기');
                         lastRemainder = nextRemainder;
                         continue;
                     }
@@ -35160,6 +35372,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
             return { resumed: rounds > 0, rounds, bulkSummary, reason: 'done' };
         } catch (error) {
+            if (isSvbAbortError(error) || autoResumeSignal?.aborted || isAutoResumeAbortRequested()) {
+                throw error;
+            }
             Logger.warn('Kero bulk auto-resume failed:', error?.message || error);
             addKeroWorkstreamEvent('대량 작업 자동 이어가기 오류', error?.message || String(error), 'warning', autoResumeProgressOptions);
             return { resumed: rounds > 0, rounds, bulkSummary, reason: error?.message || String(error), error };
@@ -35204,6 +35419,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const taskWorkTargetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
         const taskPlanningOnlyRequest = isKeroPlanningMode(taskKeroMode) || isKeroPlanningOnlyRequest(visibleUserInput);
         const taskAllowsMutation = isKeroExecutionMode(taskKeroMode) && !taskPlanningOnlyRequest;
+        const taskAbortLink = createSvbAbortLink(options.signal || null, '케로 작업');
+        const taskAbortSignal = taskAbortLink.signal || options.signal || null;
+        const taskAbortCheck = () => taskAbortSignal?.aborted === true;
+        currentKeroTaskAbortLink = taskAbortLink;
+        currentKeroTaskAbortReason = '';
+        currentKeroTaskCancelRequested = false;
         keroChatTaskRunning = true;
         try {
             updateKeroQueuedInputUi();
@@ -35603,7 +35824,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 };
             }
             if (shouldResumeMission) {
-                const resumeResult = await resumeKeroStoredActionJobs({ retryWarnings: shouldRetryWarningJobs, progressOptions: taskProgressOptions });
+                const resumeResult = await resumeKeroStoredActionJobs({ retryWarnings: shouldRetryWarningJobs, progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
                 if (resumeResult?.handled) {
                     if (resumeResult.stale || !isTaskMissionStillCurrent()) {
                         removeLoadingMessage();
@@ -35613,7 +35834,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     let resumeBulkSummary = resumeResult.bulkSummary || {};
                     let resumeAutoBulkNotice = '';
                     if (hasKeroBulkRemainder(resumeBulkSummary) && !keroBulkAutoResumeRunning) {
-                        const autoResult = await autoResumeKeroBulkJobsUntilSettled(resumeBulkSummary, { reason: 'manual_resume_remainder', progressOptions: taskProgressOptions });
+                        const autoResult = await autoResumeKeroBulkJobsUntilSettled(resumeBulkSummary, { reason: 'manual_resume_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
                         if (autoResult?.reason === 'stale_mission' || !isTaskMissionStillCurrent()) {
                             removeLoadingMessage();
                             return stopStaleTaskFinalization('대량 작업 자동 이어가기 도중 현재 미션이 바뀌어 이전 재개 요청의 후처리를 중단했습니다.');
@@ -35730,7 +35951,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     detail
                 };
             }
-            const response = await processUserRequest(modelUserInput, { ...options, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode, approvedPlanningGoal: !!approvedPlanningGoal, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+            const response = await processUserRequest(modelUserInput, { ...options, signal: taskAbortSignal, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode, approvedPlanningGoal: !!approvedPlanningGoal, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
             if (!isTaskMissionStillCurrent()) {
                 removeLoadingMessage();
                 return stopStaleTaskFinalization('모델 응답이 도착했지만 현재 미션이 바뀌어 이전 요청의 응답 적용을 중단했습니다.');
@@ -35865,7 +36086,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     if (backgroundJobId) {
                         updateKeroProgress(4, 4, `${parsed.actions.length}개 작업 후보를 처리하는 중...`, taskProgressOptions);
                     }
-                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, allowMixedWorkTargets, userRequest: taskRequestText, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, allowMixedWorkTargets, userRequest: taskRequestText, signal: taskAbortSignal, abortCheck: taskAbortCheck, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                     if (!isTaskMissionStillCurrent()) {
                         return stopStaleTaskFinalization('액션 처리 뒤 현재 미션이 바뀌어 이전 요청의 검증/완료 처리를 중단했습니다.');
                     }
@@ -35885,7 +36106,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 if (bulkJobSummary.remaining || bulkJobSummary.failed) {
                     const shouldAutoResumeBulk = !shouldResumeMission && !options.fromQueue && !keroBulkAutoResumeRunning;
                     if (shouldAutoResumeBulk) {
-                        bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'post_action_remainder', progressOptions: taskProgressOptions });
+                        bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'post_action_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
                         bulkJobSummary = bulkAutoResumeResult?.bulkSummary || bulkJobSummary;
                         if (bulkAutoResumeResult?.resumed) {
                             if (!isTaskMissionStillCurrent()) {
@@ -35978,6 +36199,33 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         } catch (error) {
             removeLoadingMessage();
             const friendlyMessage = getFriendlyModelErrorMessage(error);
+            if (isSvbAbortError(error) || taskAbortSignal?.aborted || currentKeroTaskAbortReason) {
+                const cancelRequested = currentKeroTaskCancelRequested === true;
+                const abortStatus = cancelRequested ? 'cancelled' : 'interrupted';
+                const abortReason = safeString(currentKeroTaskAbortReason || error?.message || '사용자가 작업을 중단했습니다.');
+                const abortDetail = cancelRequested
+                    ? `${abortReason} 이미 완료된 저장은 되돌리지 않았고, 아직 실행하지 않은 작업은 보류했습니다.`
+                    : `${abortReason} 이미 완료된 저장은 보존하고, 남은 흐름은 확인 필요 상태로 정리했습니다.`;
+                keroSuppressNextQueueDrainReason = abortReason;
+                addKeroWorkstreamEvent(cancelRequested ? '작업 취소됨' : '작업 중지됨', abortDetail, abortStatus, taskProgressOptions);
+                if (backgroundJobId && !backgroundJobClosed) {
+                    finishKeroBackgroundJob(backgroundJobId, abortStatus, abortDetail.replace(/\s+/g, ' ').slice(0, 220));
+                    backgroundJobClosed = true;
+                }
+                if (isWorkMode) {
+                    await finishKeroMission(abortStatus, abortDetail);
+                }
+                if (typeof addBotMessage === 'function') {
+                    await addBotMessage(`${cancelRequested ? '작업 취소됨' : '작업 중지됨'}\n${abortDetail}`);
+                }
+                return {
+                    handled: true,
+                    success: false,
+                    status: abortStatus,
+                    queueDisposition: 'attention',
+                    detail: abortDetail
+                };
+            }
             if (isWorkMode) {
                 if (!isTaskMissionStillCurrent()) {
                     stopStaleTaskFinalization('오류 처리 중 현재 미션이 바뀌어 이전 요청의 오류 상태 반영을 중단했습니다.');
@@ -36048,7 +36296,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                         if (backgroundJobId) {
                             updateKeroProgress(1, fallbackParsed.actions.length, '최종 LLM 청크 큐를 실행하는 중...', taskProgressOptions);
                         }
-                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, userRequest: taskRequestText, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, userRequest: taskRequestText, signal: taskAbortSignal, abortCheck: taskAbortCheck, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                         if (!isTaskMissionStillCurrent()) {
                             return stopStaleTaskFinalization('최종 LLM 청크 큐 실행 뒤 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
                         }
@@ -36058,7 +36306,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                         actionJobSummary = await verifyKeroActionJobsForMission(verificationStorageId, verificationMissionId);
                         bulkJobSummary = await summarizeResumableKeroBulkCreateJobs(verificationStorageId, verificationMissionId);
                         if ((bulkJobSummary.remaining || bulkJobSummary.failed) && !keroBulkAutoResumeRunning) {
-                            bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'final_llm_chunk_queue_remainder', progressOptions: taskProgressOptions });
+                            bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'final_llm_chunk_queue_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
                             if (bulkAutoResumeResult?.reason === 'stale_mission' || !isTaskMissionStillCurrent()) {
                                 return stopStaleTaskFinalization('최종 LLM 청크 큐의 대량 작업 자동 이어가기 중 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
                             }
@@ -36149,6 +36397,18 @@ ${catchDetail}
                 detail: catchDetail
             };
         } finally {
+            const taskAbortRequestedInFinally = taskAbortSignal?.aborted === true || !!currentKeroTaskAbortReason || currentKeroTaskCancelRequested === true;
+            const taskCancelRequestedInFinally = currentKeroTaskCancelRequested === true;
+            if (currentKeroTaskAbortLink === taskAbortLink) {
+                try {
+                    taskAbortLink?.cleanup?.();
+                } catch (cleanupError) {
+                    Logger.warn('Kero task abort cleanup failed:', cleanupError?.message || cleanupError);
+                }
+                currentKeroTaskAbortLink = null;
+                currentKeroTaskAbortReason = '';
+                currentKeroTaskCancelRequested = false;
+            }
             const taskWasReleasedAsZombie = !!(backgroundJobId && keroReleasedZombieJobIds.has(backgroundJobId));
             const hasNewerRuntimeJob = !!(currentKeroRequestJobId && (!backgroundJobId || currentKeroRequestJobId !== backgroundJobId));
             if (backgroundJobId && !backgroundJobClosed && !taskWasReleasedAsZombie) {
@@ -36162,7 +36422,17 @@ ${catchDetail}
             updateKeroQueuedInputUi();
             if (!hasNewerRuntimeJob) {
                 inputEl?.focus?.();
-                if (keroSuppressNextQueueDrainReason) {
+                if (taskAbortRequestedInFinally) {
+                    keroSuppressNextQueueDrainReason = '';
+                    const readyQueuedCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
+                    if (readyQueuedCount > 0) {
+                        addKeroWorkstreamEvent(
+                            taskCancelRequestedInFinally ? '취소 후 대기열 보류' : '중지 후 대기열 보류',
+                            `사용자 ${taskCancelRequestedInFinally ? '취소' : '중지'} 요청으로 대기 요청 ${readyQueuedCount}개를 자동 실행하지 않았습니다. 필요하면 "계속 진행"으로 이어갈 수 있습니다.`,
+                            'blocked'
+                        );
+                    }
+                } else if (keroSuppressNextQueueDrainReason) {
                     const suppressReason = keroSuppressNextQueueDrainReason;
                     keroSuppressNextQueueDrainReason = '';
                     const readyQueuedCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
@@ -36204,7 +36474,7 @@ ${catchDetail}
         await runKeroChatTask(userInput);
     }
 
-    async function processDailyUserRequest(userInput) {
+    async function processDailyUserRequest(userInput, options = {}) {
         let recentChat = [];
         try {
             const char = await getCharacterData();
@@ -36243,6 +36513,7 @@ ${chatContinuity.block}
             useSubmodels: false,
             keroMode: 'daily',
             timeoutMs: 120000,
+            signal: options.signal || null,
             keroSteeringNotes: [],
             keroSteeringBlock: ''
         });
@@ -36341,6 +36612,7 @@ ${chatContinuity.block}
             keroMode: 'planning',
             timeoutMs: 180000,
             disableKeroContext: true,
+            signal: options.signal || null,
             keroSteeringNotes: [],
             keroSteeringBlock: ''
         });
@@ -36352,7 +36624,7 @@ ${chatContinuity.block}
         const requestAllowsMutation = isKeroExecutionMode(requestKeroMode) && !requestPlanningOnly;
         const requestIsPlanningMode = isKeroPlanningMode(requestKeroMode) || requestPlanningOnly;
         if (requestKeroMode === 'daily') {
-            return await processDailyUserRequest(userInput);
+            return await processDailyUserRequest(userInput, options);
         }
         if (requestKeroMode === 'planning' || requestPlanningOnly) {
             return await processPlanningUserRequest(userInput, options);
@@ -36408,6 +36680,7 @@ ${chatContinuity.block}
             keroScope: scope,
             keroContextPayload: effectiveContextPayload,
             keroContextCompression: modelContext.report,
+            signal: options.signal || null,
             ...(options.jobId ? { jobId: options.jobId } : {})
         });
 
@@ -36830,7 +37103,8 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             fromKero: true,
             userRequest: userInput,
             visibleUserInput,
-            workTargetMode: currentWorkTargetMode
+            workTargetMode: currentWorkTargetMode,
+            signal: options.signal || keroContextOptions.signal || null
         });
         if (preplannedLargeRequest) {
             addKeroWorkstreamEvent(
@@ -36852,6 +37126,7 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             keroContextPayload: effectiveContextPayload,
             keroScope: scope,
             keroContextCompression: modelContext.report,
+            signal: options.signal || keroContextOptions.signal || null,
             ...(options.jobId ? { jobId: options.jobId } : {})
         };
         const modelRetryCount = getKeroModelRetryCountForMode(requestKeroMode, { planningOnly: conversationalPlanningRequest });
@@ -44103,7 +44378,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.73 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.74 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -49154,6 +49429,7 @@ async function waitForSubAgentConsultationsWithHardCap(tasks = [], submodels = [
 
 async function buildSubmodelConsultationBlock(systemPrompt, userText, options = {}) {
     if (options.useSubmodels === false) return "";
+    throwIfSvbAborted(options.signal, '서브에이전트 검토가 사용자 요청으로 중단되었습니다.');
     const consultationMode = normalizeKeroMode(options.keroMode || currentKeroMode);
     if (!isKeroExecutionMode(consultationMode)) return "";
     const configuredSubmodels = normalizeSubAgentModels(apiHubSubmodels).filter((item) => item.enabled !== false).slice(0, KERO_SUBAGENT_MAX_CONFIGURED);
@@ -49171,6 +49447,7 @@ async function buildSubmodelConsultationBlock(systemPrompt, userText, options = 
         return "";
     }
     const enrichedOptions = await buildKeroContextOptions(options);
+    throwIfSvbAborted(enrichedOptions.signal, '서브에이전트 검토가 사용자 요청으로 중단되었습니다.');
     const taskText = limitSvbMiddleText(userText, adaptiveLimits.subAgentUserTextCharLimit, 'user_task_or_data');
     const systemText = safeString(systemPrompt);
     const systemSummary = limitSvbMiddleText(systemText, adaptiveLimits.subAgentSystemExcerptCharLimit, 'main_system_prompt');
@@ -49296,23 +49573,40 @@ async function buildSubmodelConsultationBlock(systemPrompt, userText, options = 
             message: detail
         })), delegationPlan);
     }
+    const delegationSummary = ensureArray(delegationPlan.assignments)
+        .map((assignment, index) => {
+            const agentName = submodels[index]?.name || getSubAgentProviderLabel(submodels[index]?.providerType);
+            const roleLabel = getSubAgentRoleLabel(assignment?.role || getAutoSubAgentRole(index, taskText));
+            const responsibility = safeString(assignment?.responsibility || assignment?.deliverable || '').replace(/\s+/g, ' ').slice(0, 90);
+            return `${agentName}: ${roleLabel}${responsibility ? ` · ${responsibility}` : ''}`;
+        })
+        .filter(Boolean)
+        .join(' / ');
     addKeroWorkstreamEvent(
         '서브에이전트 업무분담',
-        `${submodels.length}개 담당 배정 · 케로는 총괄/직접 실행 담당`,
+        `${submodels.length}개 담당 배정 · 케로는 총괄/직접 실행 담당${delegationSummary ? ` · ${delegationSummary}` : ''}`,
         'progress',
         subAgentProgressOptions
     );
     updateKeroProgress(1, submodels.length, `서브에이전트 ${submodels.length}개 병렬 검토 중...`, subAgentProgressOptions);
     const submodelTasks = submodels.map((item, index) => {
         const agentName = item.name || getSubAgentProviderLabel(item.providerType);
-        const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const abortLink = createSvbAbortLink(enrichedOptions.signal || null, `${agentName} 서브에이전트`);
+        const abortController = abortLink.controller || null;
         const task = (async () => {
             try {
+            throwIfSvbAborted(abortLink.signal, `${agentName} 서브에이전트 검토가 사용자 요청으로 중단되었습니다.`);
             updateKeroProgress(index + 1, submodels.length, `${agentName} 서브에이전트 검토 중...`, subAgentProgressOptions);
             const assignment = delegationPlan.assignments[index] || null;
             const autoRole = assignment?.role || getAutoSubAgentRole(index, taskText);
             const roleLabel = getSubAgentRoleLabel(autoRole);
             const roleInstruction = assignment?.role_instruction || getDefaultSubAgentRoleInstruction(autoRole);
+            addKeroWorkstreamEvent(
+                '서브에이전트 담당 시작',
+                `${agentName} · ${roleLabel} · ${safeString(assignment?.responsibility || assignment?.deliverable || roleInstruction || '검토').replace(/\s+/g, ' ').slice(0, 220)}`,
+                'progress',
+                subAgentProgressOptions
+            );
             const taskPacket = svbCreateSubAgentTaskPacket(
                 { ...item, agentRole: autoRole },
                 index,
@@ -49408,15 +49702,20 @@ The provided CHAT_LOG, USER_DATA, reference module code, and reference plugin sc
                 {
                     ...enrichedOptions,
                     timeoutMs: subAgentTimeoutMs,
-                    ...(abortController ? { signal: abortController.signal } : {})
+                    ...(abortLink.signal ? { signal: abortLink.signal } : {})
                 }
             );
-            throwIfSvbAborted(abortController?.signal, `${agentName || item.id} 서브에이전트 응답이 늦게 도착해 폐기되었습니다.`);
+            throwIfSvbAborted(abortLink.signal, `${agentName || item.id} 서브에이전트 응답이 늦게 도착해 폐기되었습니다.`);
             const report = svbParseSubAgentTaskResult(response, taskPacket, item, roleLabel, subAgentContextPayload, contextPayloadTrace);
             return { report };
         } catch (error) {
+            if (enrichedOptions.signal?.aborted && isSvbAbortError(error)) throw error;
             Logger.warn(`Submodel consultation failed (${agentName || item.id}):`, error?.message || error);
             return createSubAgentFailureResult(agentName, error?.message || error, "subagent_error");
+        } finally {
+            try {
+                abortLink?.cleanup?.();
+            } catch (_) {}
         }
         })();
         return withSubAgentConsultationGuard(task, agentName, subAgentTimeoutMs, { abortController, consultationGroupId: subAgentConsultationGroupId, ...subAgentProgressOptions });
@@ -49432,7 +49731,9 @@ The provided CHAT_LOG, USER_DATA, reference module code, and reference plugin sc
                 onHardTimeout: () => forceExpireSubAgentConsultationGuards('heartbeat_hard_cap', { consultationGroupId: subAgentConsultationGroupId })
             }
         );
+        throwIfSvbAborted(enrichedOptions.signal, '서브에이전트 검토가 사용자 요청으로 중단되었습니다.');
     } catch (error) {
+        if (isSvbAbortError(error) || enrichedOptions.signal?.aborted) throw error;
         const detail = `서브에이전트 병렬 검토가 제한 시간을 넘겨 부분 실패로 정리했습니다: ${error?.message || error}`;
         Logger.warn(detail);
         forceExpireSubAgentConsultationGuards('subagent_collect_timeout', { consultationGroupId: subAgentConsultationGroupId });
@@ -49520,6 +49821,13 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
                 Logger.warn(`Kero model call aborted after hard timeout: ${detail}`);
             };
             throwIfSvbAborted(attemptOptions.signal, '메인 모델 호출이 중단되었습니다.');
+            const modelActivityLabel = `${currentApiType || 'provider'}${currentModel ? `/${currentModel}` : ''}`;
+            addKeroWorkstreamEvent(
+                '메인 모델 호출',
+                `${modelActivityLabel} · ${attempt}/${retries} · ${limitSvbMiddleText(userText, 240, 'main_user_request')}`,
+                'progress',
+                attemptProgressOptions
+            );
             updateKeroProgress(attempt, retries, attemptText, attemptProgressOptions);
 
             if (currentApiType === "github-copilot") {
@@ -57522,7 +57830,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.73",
+        name: "SuperVibeBot v1.5.74",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57531,7 +57839,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.73 Settings",
+        "SuperVibeBot v1.5.74 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57574,7 +57882,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.73");
+        Logger.info("SuperVibeBot v1.5.74");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.73`
+Latest version: `1.5.74`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.74
+
+- Narrows planning goal approval so casual replies such as "좋아" or "진행해" no longer switch into goal execution by themselves.
+- Shows the current goal or pending goal conversion in the workstream panel.
+- Adds stop/cancel controls that abort model, sub-agent, action, resume, and bulk auto-resume paths instead of only changing the UI.
+- Adds clearer main-model and sub-agent activity events during long waits.
 
 ## 1.5.73
 
