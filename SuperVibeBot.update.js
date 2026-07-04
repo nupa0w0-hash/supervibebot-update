@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.67
-//@version 1.5.67
+//@display-name 🐸 SuperVibeBot v1.5.68
+//@version 1.5.68
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.67는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.68는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.67 Release Notes
+ * SuperVibeBot v1.5.68 Release Notes
+ * - v1.5.68: routes Wellspring auto mode through native generation by default and auto-fills a preset/model from the Wellspring preset list when none is saved
+ * - v1.5.68: adds per-character identity prompt storage in Asset Studio and lets Kero reuse identityName/identityPrompt for consistent emotion/profile asset batches
+ * - v1.5.68: teaches Kero asset prompts to use Danbooru-style tag lookup when available and removes the old fixed asset action item/count caps
  * - v1.5.67: separates Wellspring NAI-compatible requests from native/workflow payloads so asset generation no longer sends mixed route fields
  * - v1.5.67: prefers Risu object-body fetch for Wellspring image calls and retries native string-body only for JSON/body rejection responses
  * - v1.5.67: reports the Wellspring generation route in image API errors and blocks native mode without preset/model IDs before sending a bad request
@@ -2978,6 +2981,7 @@ const WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT = "/v1/images/workflows";
 const WELLSPRING_IMAGE_JOBS_ENDPOINT = "/v1/images/jobs";
 const WELLSPRING_IMAGE_API_PROFILE_ID = "wellspring-nai-compatible";
 const WELLSPRING_IMAGE_GENERATION_PRESET_ID = "wellspring-profile-basic";
+const WELLSPRING_DEFAULT_PRESET_MODEL_CACHE = new Map();
 const IMAGE_API_PROVIDERS = Object.freeze({
     "nai-compatible": {
         label: "NovelAI 호환",
@@ -3352,8 +3356,6 @@ const KERO_CREATE_MIN_CHUNK_CHAR_LIMIT = 1800;
 const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 600000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
-const KERO_ASSET_ACTION_MAX_ITEMS = 12;
-const KERO_ASSET_ACTION_MAX_COUNT_PER_ITEM = 4;
 const KERO_ASSET_STYLE_PRESETS = Object.freeze({
     'clean-anime': 'clean anime key visual, crisp lineart, balanced character proportions, clear readable silhouette, bright controlled colors, soft cel shading',
     'soft-pastel': 'soft pastel anime illustration, gentle color palette, airy background, delicate lineart, warm ambient light, calm emotional expression',
@@ -10053,7 +10055,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13463,7 +13465,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.67',
+            '//@version 1.5.68',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -22669,6 +22671,18 @@ function svbShouldUseWellspringWorkflowGeneration(profile, options = {}) {
     return !!(safeString(options.wellspringWorkflowId).trim() && safeString(options.wellspringCharacterId).trim());
 }
 
+function svbHasWellspringNativeGenerationHints(options = {}) {
+    return !!(
+        safeString(options.wellspringPresetId || options.preset_id || options.presetId).trim()
+        || safeString(options.wellspringModelId || options.model_id || options.modelId).trim()
+        || safeString(options.wellspringPayloadJson || options.remotePayloadJson).trim()
+        || safeString(options.wellspringQualityPrompt || options.qualityPrompt).trim()
+        || safeString(options.wellspringSampler || options.sampler).trim()
+        || safeString(options.wellspringScheduler || options.scheduler).trim()
+        || svbNormalizeWellspringLoras(options.wellspringLoras || options.loras).length
+    );
+}
+
 function svbShouldUseWellspringNativeGeneration(profile, options = {}) {
     if (!isWellspringImageProvider(profile?.provider)) return false;
     const mode = svbNormalizeWellspringMode(options.wellspringMode || options.wellspringApiMode);
@@ -22677,6 +22691,8 @@ function svbShouldUseWellspringNativeGeneration(profile, options = {}) {
     const endpoint = safeString(profile?.endpoint).toLowerCase();
     return endpoint.includes("/v1/images/generations")
         || endpoint.includes("/v1/images/workflows/")
+        || svbHasWellspringNativeGenerationHints(options)
+        || endpoint.includes("wellspring.encrypt.gay")
         || svbShouldUseWellspringWorkflowGeneration(profile, options);
 }
 
@@ -22814,6 +22830,40 @@ async function svbWaitForWellspringJobImage(profile, initialData, options = {}) 
     throw new Error(`${profile.name} 이미지 생성 시간이 초과되었습니다${lastStatus ? ` (마지막 상태: ${lastStatus})` : ""}.`);
 }
 
+async function svbResolveWellspringDefaultPresetModel(profile) {
+    if (!isWellspringImageProvider(profile?.provider) || !safeString(profile.apiKey).trim()) return {};
+    const base = getWellspringImageApiBase(profile.endpoint);
+    const cacheKey = `${base}|${safeString(profile.apiKey).slice(0, 12)}`;
+    if (WELLSPRING_DEFAULT_PRESET_MODEL_CACHE.has(cacheKey)) {
+        return WELLSPRING_DEFAULT_PRESET_MODEL_CACHE.get(cacheKey) || {};
+    }
+    const headers = svbGetWellspringApiHeaders(profile);
+    const data = await svbWellspringFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_PRESETS_ENDPOINT), {
+        method: "GET",
+        headers
+    }, `${profile.name} 프리셋 자동 선택`, 30000);
+    const presets = ensureArray(data?.presets || data?.items || data?.data || data).filter(Boolean);
+    for (const preset of presets) {
+        const presetId = safeString(preset?.id || preset?.preset_id).trim();
+        if (!presetId) continue;
+        const models = ensureArray(preset?.models);
+        const modelId = safeString(
+            preset?.model_id
+            || preset?.modelId
+            || preset?.default_model_id
+            || preset?.defaultModelId
+            || models[0]?.id
+            || models[0]?.model_id
+            || models[0]
+        ).trim();
+        const resolved = { presetId, modelId };
+        WELLSPRING_DEFAULT_PRESET_MODEL_CACHE.set(cacheKey, resolved);
+        return resolved;
+    }
+    WELLSPRING_DEFAULT_PRESET_MODEL_CACHE.set(cacheKey, {});
+    return {};
+}
+
 async function svbGenerateWellspringNativeImage(profile, options) {
     assertImageApiEndpoint(profile);
     if (!safeString(profile.apiKey).trim()) throw new Error("Wellspring ws-key를 입력해주세요.");
@@ -22837,7 +22887,12 @@ async function svbGenerateWellspringNativeImage(profile, options) {
     }
 
     if (!payload.preset_id && !payload.model_id && !safeString(options.wellspringPayloadJson).trim()) {
-        throw new Error("Wellspring native 생성에는 preset_id 또는 model_id가 필요합니다. Wellspring 프로필 기본 생성은 모드를 nai/auto로 두고, native 모드는 에셋 스튜디오에서 preset/model을 선택해주세요.");
+        const defaults = await svbResolveWellspringDefaultPresetModel(profile);
+        if (defaults.presetId) payload.preset_id = defaults.presetId;
+        if (defaults.modelId) payload.model_id = defaults.modelId;
+    }
+    if (!payload.preset_id && !payload.model_id && !safeString(options.wellspringPayloadJson).trim()) {
+        throw new Error("Wellspring native 생성에는 preset_id 또는 model_id가 필요합니다. Wellspring 프리셋 목록에서도 자동 선택할 preset/model을 찾지 못했습니다. 에셋 스튜디오에서 목록을 불러온 뒤 preset/model을 선택하고 프리셋 저장을 눌러주세요.");
     }
 
     const endpoint = safeString(profile.endpoint).toLowerCase().includes("/v1/images/generations")
@@ -22868,7 +22923,10 @@ async function svbGenerateNaiCompatibleImage(profile, options) {
     if (!raw.ok) {
         const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
         const route = svbGetWellspringGenerationRouteLabel(profile, options);
-        throw new Error(`${profile.name} 오류 (${raw.status}${route ? `, ${route}` : ""}): ${text.slice(0, 500)}`);
+        const wellspringHint = isWellspringImageProvider(profile.provider)
+            ? " Wellspring NAI 호환 경로가 요청을 거부했습니다. 에셋 스튜디오에서 Wellspring 목록을 불러오고 preset/model 또는 workflow/project/variant를 선택한 뒤 프리셋 저장 후 다시 실행해주세요."
+            : "";
+        throw new Error(`${profile.name} 오류 (${raw.status}${route ? `, ${route}` : ""}): ${text.slice(0, 500)}${wellspringHint}`);
     }
     return await svbParseImageApiResponse(profile, raw);
 }
@@ -27376,7 +27434,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -28937,10 +28995,14 @@ ${currentVars || '{}'}
             }
             const compactedActions = await compactKeroIndexedDeleteActions(targetFilteredActions);
             if (!compactedActions.length) return;
+            const actionUserRequest = safeString(options.userRequest || options.request || currentKeroMission?.objective || '').trim();
             compactedActions.forEach((action) => {
                 if (action && typeof action === 'object') {
                     action._missionId = action._missionId || actionMissionId;
                     action.missionId = action.missionId || actionMissionId;
+                    if (actionUserRequest && !safeString(action.userRequest || action.request).trim()) {
+                        action.userRequest = actionUserRequest;
+                    }
                 }
             });
             if (!isCurrentKeroMissionContext(actionMissionId, actionStorageIdAtRequest)) {
@@ -31855,7 +31917,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return [payload];
         }
         const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => {
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
         });
         return Object.keys(direct).length ? [direct] : [];
@@ -31883,8 +31945,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 || source.description || source.content || source.text
             ).trim();
             const negative = safeString(source.negative || source.negativePrompt || source.uc || payloadObj.negative || payloadObj.negativePrompt || action.negative || action.negativePrompt).trim();
+            const identityName = svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject || payloadObj.identityName || payloadObj.identityKey || payloadObj.characterName || payloadObj.subjectName || payloadObj.subject || action.identityName || action.identityKey || action.characterName || action.subjectName || action.subject);
+            const identityPrompt = safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.characterConsistencyPrompt || payloadObj.identityPrompt || payloadObj.characterPrompt || payloadObj.visualIdentityPrompt || payloadObj.characterConsistencyPrompt || action.identityPrompt || action.characterPrompt || action.visualIdentityPrompt || action.characterConsistencyPrompt).trim();
+            const identityNegative = safeString(source.identityNegative || source.characterNegative || payloadObj.identityNegative || payloadObj.characterNegative || action.identityNegative || action.characterNegative).trim();
+            const danbooruTags = safeString(source.danbooruTags || source.tagPrompt || source.tags || payloadObj.danbooruTags || payloadObj.tagPrompt || payloadObj.tags || action.danbooruTags || action.tagPrompt || action.tags).trim();
             const rawCount = Number(source.count || source.batchSize || source.batch || source.n || source.samples || payloadObj.count || action.count || 1);
-            const count = Math.max(1, Math.min(KERO_ASSET_ACTION_MAX_COUNT_PER_ITEM, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1));
+            const count = Math.max(1, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1);
             const ratioId = safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim();
             const rawSteps = Number(source.steps || payloadObj.steps || action.steps || 0);
             const steps = Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0;
@@ -31908,6 +31974,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
                 profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
                 presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim(),
+                identityName,
+                identityPrompt,
+                identityNegative,
+                danbooruTags,
                 referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
                 referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
                 referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
@@ -31928,6 +31998,78 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             });
         });
         return items;
+    }
+
+    function inferKeroAssetIdentityNameFromText(text = '') {
+        const source = safeString(text).trim();
+        if (!source) return '';
+        const patterns = [
+            /(?:^|[\s"'“”])([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)\s*(?:여러\s*가지\s*)?(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)/i,
+            /(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)\s*(?:을|를)?\s*([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)/i
+        ];
+        const blocked = new Set(['캐릭터', '인물', '봇', '주인공', '기본', '여러가지', '여러 가지']);
+        for (const pattern of patterns) {
+            const match = source.match(pattern);
+            const name = svbNormalizeAssetIdentityName(match?.[1] || '');
+            if (name && !blocked.has(name)) return name;
+        }
+        return '';
+    }
+
+    function resolveKeroAssetActionIdentityName(action = {}, items = []) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const explicit = svbNormalizeAssetIdentityName(
+            action.identityName
+            || action.identityKey
+            || action.characterName
+            || action.subjectName
+            || action.subject
+            || payloadObj.identityName
+            || payloadObj.identityKey
+            || payloadObj.characterName
+            || payloadObj.subjectName
+            || payloadObj.subject
+            || items.find(item => item.identityName)?.identityName
+        );
+        if (explicit) return explicit;
+        return inferKeroAssetIdentityNameFromText(
+            action.userRequest
+            || action.request
+            || action.instruction
+            || action.mission
+            || action.reason
+            || payloadObj.userRequest
+            || payloadObj.request
+            || ''
+        );
+    }
+
+    async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
+        let meta = svbReadAssetStudioMetaFromCharacter(char);
+        const actionIdentityName = resolveKeroAssetActionIdentityName(action, items);
+        let dirty = false;
+        const hydrated = items.map((item) => {
+            const identityName = svbNormalizeAssetIdentityName(item.identityName || actionIdentityName);
+            const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
+            const identityPrompt = safeString(item.identityPrompt || stored?.prompt).trim();
+            const identityNegative = safeString(item.identityNegative || stored?.negative).trim();
+            if (identityName && (item.identityPrompt || item.identityNegative)) {
+                meta = svbSetAssetIdentityPrompt(meta, identityName, item.identityPrompt || stored?.prompt || '', item.identityNegative || stored?.negative || '');
+                dirty = true;
+            }
+            return {
+                ...item,
+                identityName,
+                identityPrompt,
+                identityNegative
+            };
+        });
+        if (dirty) {
+            svbWriteAssetStudioMetaToCharacter(char, meta);
+            const ok = await svbSaveAssetStudioCharacter(char, 'asset-identity-prompt');
+            if (!ok) throw new Error('인물 프롬프트 저장에 실패했습니다.');
+        }
+        return hydrated;
     }
 
     function findKeroImageProfile(profileId = '') {
@@ -32070,17 +32212,13 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const char = await getCharacterData();
         if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
 
-        const items = normalizeKeroAssetCreatePayloads(action);
+        let items = normalizeKeroAssetCreatePayloads(action);
         if (!items.length) {
             await addBotMessage('❌ 생성할 이미지 에셋 payload가 없습니다. prompt와 name을 포함한 assets/items 배열이 필요합니다.');
             return { success: false, failed: 1, detail: '에셋 생성 항목 없음' };
         }
-        if (items.length > KERO_ASSET_ACTION_MAX_ITEMS) {
-            const detail = `한 번의 에셋 생성 액션은 최대 ${KERO_ASSET_ACTION_MAX_ITEMS}종까지 지원합니다. 요청을 나눠서 실행해주세요.`;
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: items.length, detail };
-        }
-        const missingPrompt = items.filter((item) => !safeString(item.prompt).trim());
+        items = await hydrateKeroAssetIdentityPrompts(char, action, items);
+        const missingPrompt = items.filter((item) => !safeString(item.prompt || item.identityPrompt || item.danbooruTags).trim());
         if (missingPrompt.length) {
             const detail = `이미지 프롬프트가 비어 있는 에셋 ${missingPrompt.length}개가 있어 실행하지 않았습니다.`;
             await addBotMessage(`❌ ${detail}`);
@@ -32123,15 +32261,26 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             };
             const profile = pickKeroAssetImageProfile(item.profileId);
             const preset = pickKeroAssetImagePreset(item.presetId, profile);
+            const renderedIdentityPrompt = svbRenderImagePromptTemplate(item.identityPrompt, vars).trim();
+            const renderedDanbooruTags = svbRenderImagePromptTemplate(item.danbooruTags, vars).trim();
+            const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
             const prompt = normalizeKeroAsset2dPositivePrompt(
-                svbRenderImagePromptTemplate(item.prompt, vars).trim(),
+                joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt),
                 item.stylePreset,
                 svbRenderImagePromptTemplate(item.stylePrompt, vars).trim()
             );
-            const negative = normalizeKeroAsset2dNegativePrompt(svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim(), profile, preset);
+            const negative = normalizeKeroAsset2dNegativePrompt(
+                joinKeroAssetPromptFragments(
+                    svbRenderImagePromptTemplate(item.identityNegative, vars).trim(),
+                    svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim()
+                ),
+                profile,
+                preset
+            );
             const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
             const steps = item.steps || preset.steps || profile.steps || 26;
-            const referenceImagePath = safeString(item.referenceImagePath || (shouldAutoReferenceBatch ? autoReferencePath : '')).trim();
+            const allowAutoReferenceForProfile = shouldAutoReferenceBatch && !isWellspringImageProvider(profile.provider);
+            const referenceImagePath = safeString(item.referenceImagePath || (allowAutoReferenceForProfile ? autoReferencePath : '')).trim();
             const referenceImageName = safeString(item.referenceImageName || (referenceImagePath === autoReferencePath ? autoReferenceName : '')).trim();
             updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
             try {
@@ -32159,7 +32308,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     wellspringPayloadJson: item.wellspringPayloadJson
                 });
                 const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
-                if (shouldAutoReferenceBatch && !autoReferencePath) {
+                if (allowAutoReferenceForProfile && !autoReferencePath) {
                     const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
                     const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase());
                     if (savedAsset?.path) {
@@ -32168,7 +32317,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     }
                 }
                 created += 1;
-                createdAssets.push({ target: item.target, name, prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps, referenceImagePath });
+                createdAssets.push({ target: item.target, name, identityName: item.identityName || '', prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps, referenceImagePath });
             } catch (error) {
                 failed += 1;
                 failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
@@ -35635,7 +35784,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     if (backgroundJobId) {
                         updateKeroProgress(4, 4, `${parsed.actions.length}개 작업 후보를 처리하는 중...`, taskProgressOptions);
                     }
-                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, allowMixedWorkTargets, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                    await handleKeroActionRequests(parsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, allowMixedWorkTargets, userRequest: taskRequestText, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                     if (!isTaskMissionStillCurrent()) {
                         return stopStaleTaskFinalization('액션 처리 뒤 현재 미션이 바뀌어 이전 요청의 검증/완료 처리를 중단했습니다.');
                     }
@@ -35818,7 +35967,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                         if (backgroundJobId) {
                             updateKeroProgress(1, fallbackParsed.actions.length, '최종 LLM 청크 큐를 실행하는 중...', taskProgressOptions);
                         }
-                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, userRequest: taskRequestText, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
                         if (!isTaskMissionStillCurrent()) {
                             return stopStaleTaskFinalization('최종 LLM 청크 큐 실행 뒤 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
                         }
@@ -36333,6 +36482,7 @@ ${metaBlock}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt에는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 안정적인 2D anime tag로 쓰고, 각 assets[].prompt에는 표정/포즈/장면 차이를 쓴다. 예: @action {"type":"create","target":"asset","payload":{"identityName":"문아진","identityPrompt":"1girl, solo, distinct oval face, sharp amber eyes, short black hair with violet inner color, ...","identityNegative":"different character, wrong hair color, wrong eye color","assets":[{"assetType":"emotion","name":"neutral","prompt":"neutral expression, upper body, looking at viewer"},{"assetType":"emotion","name":"happy","prompt":"soft smile, bright eyes, upper body"}]}}
 - Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
@@ -36361,7 +36511,7 @@ ${metaBlock}
 - ComfyUI/custom workflow 템플릿은 {{prompt}}에 최종 합성 프롬프트를 받는다. 캐릭터 전용 노드가 있으면 {{character_prompt}} 또는 {{identity_prompt}}, 네거티브 쪽은 {{character_negative}} 또는 {{identity_negative}}를 쓴다.
 - Wellspring/커스텀 워크플로우가 이미지 입력 변수를 요구하면 {{reference_image_base64}}, {{reference_image_data_url}}, {{character_image_base64}}, {{character_image_data_url}}, {{reference_strength}}를 사용할 수 있다.
 - Wellspring 서버의 characterId/workflowId/presetId/modelId/variantIds가 확인된 경우에는 에셋 스튜디오 프리셋의 Wellspring 워크플로우 입력에 저장된 값을 사용한다. 필드명을 모르면 지어내지 말고 사용자가 Wellspring에서 확인한 ID/추가 payload를 넣도록 안내한다.
-- Wellspring workflow 캐릭터 일관성이 필요한 묶음 생성에서는 기존 referenceImagePath가 있으면 그것을 사용하고, 없으면 첫 프로필/기준 이미지를 먼저 만든 뒤 시스템이 후속 에셋의 referenceImagePath로 자동 재사용하게 둔다. 같은 배치 안에서 인물마다 기준 이미지를 바꾸려면 assets[] 항목마다 referenceImagePath 또는 wellspringCharacterId/projectId를 명시한다.
+- Wellspring workflow 캐릭터 일관성은 기본적으로 identityPrompt, wellspringCharacterId/projectId, wellspringVariantIds, LoRA/프리셋 조합으로 유지한다. referenceImagePath는 해당 workflow/custom endpoint가 이미지 입력을 실제로 지원할 때만 사용하고, 지원 여부를 모르면 이미지 참조를 지어내지 않는다.
 - Wellspring LoRA/고급값은 assets[] 또는 payload에 wellspringLoras, wellspringQualityPrompt, wellspringSampler, wellspringScheduler, wellspringCfg, wellspringPerVariantBatch, wellspringPayloadJson으로 전달할 수 있다. wellspringPayloadJson은 서버 추가 필드 보강용이고, prompt를 비우거나 창작 내용을 대체하는 곳이 아니다.
 - 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
@@ -36370,6 +36520,8 @@ ${metaBlock}
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, framing 순서로 명료하게 쓴다. profile image는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
+- Danbooru MCP 같은 태그 검색 도구가 활성화되어 있으면 긴 문장을 그대로 검색하지 말고 "짧은 시각 단위" 배열로 나눠 search_tags_batch를 호출하고, 최종 후보는 validate_tags로 확인한 뒤 danbooruTags 또는 identityPrompt에 반영한다. 도구가 없으면 케로가 직접 안정적인 anime tag를 작성한다.
+- Danbooru 태그는 인물 일관성 유지용 identityPrompt와 장면/표정용 assets[].prompt를 분리한다. 같은 인물 묶음 안에서는 identityName을 통일하고, identityPrompt는 매 에셋마다 다시 쓰지 않아도 런타임이 자동 합성한다.
 - LoRA/trigger word는 사용자가 알려준 경우에만 정확히 넣는다. 모르는 LoRA trigger를 지어내지 않는다. "LoRA가 연결된 프로필을 사용" 같은 말로 prompt를 비워두면 안 된다.
 - 프로필 에셋은 additional, 감정 슬롯은 emotion을 쓴다. 감정 슬롯은 같은 캐릭터 디자인을 유지하고 expression/action만 바꾼다.
 - 이미지에 글자/로고/상태창/UI가 필요한 요청이 아니면 negative에 text, logo, watermark를 넣어 이미지 안 글자를 막는다.
@@ -43763,7 +43915,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.67 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.68 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -52805,6 +52957,76 @@ function svbMakeUniqueLooseAssetName(name, usedNames, fallback = 'asset') {
     return candidate;
 }
 
+function svbNormalizeAssetIdentityName(value = '') {
+    return safeString(value).trim().replace(/\s+/g, ' ');
+}
+
+function svbNormalizeAssetIdentityEntry(value = {}, fallbackName = '') {
+    const source = (value && typeof value === 'object' && !Array.isArray(value))
+        ? value
+        : { prompt: value };
+    const name = svbNormalizeAssetIdentityName(
+        source.name
+        || source.identityName
+        || source.identity
+        || source.characterName
+        || source.subjectName
+        || source.key
+        || fallbackName
+    );
+    return {
+        name,
+        prompt: safeString(source.prompt || source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.positive || source.tags).trim(),
+        negative: safeString(source.negative || source.identityNegative || source.characterNegative || source.uc).trim(),
+        updatedAt: safeString(source.updatedAt || source.date).trim()
+    };
+}
+
+function svbNormalizeAssetIdentityMap(value = {}) {
+    const identities = {};
+    const addEntry = (entry, fallbackName = '') => {
+        const normalized = svbNormalizeAssetIdentityEntry(entry, fallbackName);
+        if (!normalized.name) return;
+        if (!normalized.prompt && !normalized.negative) return;
+        identities[normalized.name] = {
+            ...normalized,
+            updatedAt: normalized.updatedAt || new Date().toISOString()
+        };
+    };
+    if (Array.isArray(value)) {
+        value.forEach((entry, index) => addEntry(entry, `identity_${index + 1}`));
+    } else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([name, entry]) => addEntry(entry, name));
+    }
+    return identities;
+}
+
+function svbFindAssetIdentityEntry(meta = {}, name = '') {
+    const wanted = svbNormalizeAssetIdentityName(name).toLowerCase();
+    if (!wanted) return null;
+    const identities = svbNormalizeAssetIdentityMap(meta?.identities || meta?.identityPrompts || meta?.characterPrompts);
+    return Object.values(identities).find(entry => svbNormalizeAssetIdentityName(entry.name).toLowerCase() === wanted) || null;
+}
+
+function svbSetAssetIdentityPrompt(meta = {}, name = '', prompt = '', negative = '') {
+    const cleanName = svbNormalizeAssetIdentityName(name);
+    const next = svbNormalizeAssetStudioMeta(meta);
+    if (!cleanName) return next;
+    const cleanPrompt = safeString(prompt).trim();
+    const cleanNegative = safeString(negative).trim();
+    if (!cleanPrompt && !cleanNegative) {
+        delete next.identities[cleanName];
+        return next;
+    }
+    next.identities[cleanName] = {
+        name: cleanName,
+        prompt: cleanPrompt,
+        negative: cleanNegative,
+        updatedAt: new Date().toISOString()
+    };
+    return next;
+}
+
 function svbNormalizeAssetStudioMeta(raw = {}) {
     const folders = raw?.folders || {};
     const normalizeMap = (value) => {
@@ -52817,7 +53039,8 @@ function svbNormalizeAssetStudioMeta(raw = {}) {
         folders: {
             additional: normalizeMap(folders.additional),
             emotion: normalizeMap(folders.emotion)
-        }
+        },
+        identities: svbNormalizeAssetIdentityMap(raw?.identities || raw?.identityPrompts || raw?.characterPrompts)
     };
 }
 
@@ -53125,19 +53348,7 @@ async function openAssetStudio() {
     }
 
     function normalizeAssetStudioMeta(raw = {}) {
-        const folders = raw?.folders || {};
-        const normalizeMap = (value) => {
-            if (!value || typeof value !== 'object') return {};
-            return Object.fromEntries(Object.entries(value)
-                .map(([name, folder]) => [safeString(name).trim(), safeString(folder).trim()])
-                .filter(([name, folder]) => name && folder));
-        };
-        return {
-            folders: {
-                additional: normalizeMap(folders.additional),
-                emotion: normalizeMap(folders.emotion)
-            }
-        };
+        return svbNormalizeAssetStudioMeta(raw);
     }
 
     function writeAssetStudioMetaToCharacter() {
@@ -53366,6 +53577,18 @@ async function openAssetStudio() {
         ]);
         wellspringRemoteOptions.presets = ensureArray(presetsData?.presets || presetsData?.items || presetsData?.data || presetsData).filter(Boolean);
         wellspringRemoteOptions.workflows = ensureArray(workflowsData?.workflows || workflowsData?.items || workflowsData?.data || workflowsData).filter(Boolean);
+        const presetInput = document.getElementById('svb-as-wellspring-preset-id');
+        const modelInput = document.getElementById('svb-as-wellspring-model-id');
+        const modeInput = document.getElementById('svb-as-wellspring-mode');
+        if (presetInput && !safeString(presetInput.value).trim() && wellspringRemoteOptions.presets.length) {
+            const firstPreset = wellspringRemoteOptions.presets.find(item => safeString(item.id || item.preset_id).trim()) || wellspringRemoteOptions.presets[0];
+            const firstPresetId = safeString(firstPreset?.id || firstPreset?.preset_id).trim();
+            if (firstPresetId) presetInput.value = firstPresetId;
+            const models = ensureArray(firstPreset?.models);
+            const firstModelId = safeString(firstPreset?.model_id || firstPreset?.modelId || firstPreset?.default_model_id || firstPreset?.defaultModelId || models[0]?.id || models[0]?.model_id || models[0]).trim();
+            if (modelInput && firstModelId && !safeString(modelInput.value).trim()) modelInput.value = firstModelId;
+            if (modeInput && modeInput.value === 'nai') modeInput.value = 'auto';
+        }
         const workflowId = safeString(document.getElementById('svb-as-wellspring-workflow-id')?.value).trim();
         if (workflowId) await loadWellspringProjectsForWorkflow(workflowId);
         else renderWellspringRemoteSelects();
@@ -53399,6 +53622,87 @@ async function openAssetStudio() {
         }
         picker.innerHTML = choices.map(choice => `<option value="${escapeHtml(choice.value)}" data-asset-name="${escapeHtml(choice.name)}">${escapeHtml(choice.label)}</option>`).join('');
         picker.value = choices.some(choice => choice.value === current) ? current : '';
+    }
+
+    function getIdentityPromptEntries() {
+        return Object.values(assetStudioMeta?.identities || {})
+            .filter(entry => safeString(entry?.name).trim())
+            .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+    }
+
+    function renderIdentityPromptPicker(value = '') {
+        const picker = document.getElementById('svb-as-identity-picker');
+        if (!picker) return;
+        const nameInput = document.getElementById('svb-as-identity-name');
+        const current = svbNormalizeAssetIdentityName(value || nameInput?.value || '');
+        const entries = getIdentityPromptEntries();
+        const options = ['<option value="">인물 프롬프트 선택</option>'];
+        entries.forEach((entry) => {
+            options.push(`<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</option>`);
+        });
+        if (current && !entries.some(entry => entry.name === current)) {
+            options.push(`<option value="${escapeHtml(current)}">${escapeHtml(current)} · 새 항목</option>`);
+        }
+        picker.innerHTML = options.join('');
+        picker.value = current && (entries.some(entry => entry.name === current) || current) ? current : '';
+    }
+
+    function applyIdentityPromptToGenerationFields(name = '') {
+        const cleanName = svbNormalizeAssetIdentityName(name || document.getElementById('svb-as-identity-name')?.value || document.getElementById('svb-as-identity-picker')?.value || '');
+        if (!cleanName) {
+            setStatus('불러올 인물 이름을 입력하거나 선택해주세요.', 'error');
+            return false;
+        }
+        const entry = svbFindAssetIdentityEntry(assetStudioMeta, cleanName);
+        if (!entry) {
+            setStatus(`${cleanName} 인물 프롬프트가 아직 저장되어 있지 않습니다.`, 'error');
+            renderIdentityPromptPicker(cleanName);
+            return false;
+        }
+        const nameInput = document.getElementById('svb-as-identity-name');
+        const characterPrompt = document.getElementById('svb-as-character-prompt');
+        const characterNegative = document.getElementById('svb-as-character-negative');
+        if (nameInput) nameInput.value = entry.name;
+        if (characterPrompt) characterPrompt.value = entry.prompt || '';
+        if (characterNegative) characterNegative.value = entry.negative || '';
+        renderIdentityPromptPicker(entry.name);
+        renderGenerationConnectionSummary();
+        setStatus(`${entry.name} 인물 프롬프트를 적용했습니다.`, 'success');
+        return true;
+    }
+
+    async function saveIdentityPromptFromGenerationFields() {
+        const nameInput = document.getElementById('svb-as-identity-name');
+        const name = svbNormalizeAssetIdentityName(nameInput?.value || getCharacterDisplayName(char));
+        const prompt = document.getElementById('svb-as-character-prompt')?.value || '';
+        const negative = document.getElementById('svb-as-character-negative')?.value || '';
+        if (!name) {
+            setStatus('저장할 인물 이름을 입력해주세요.', 'error');
+            return;
+        }
+        if (!safeString(prompt).trim() && !safeString(negative).trim()) {
+            setStatus('저장할 캐릭터 고정 프롬프트가 비어 있습니다.', 'error');
+            return;
+        }
+        assetStudioMeta = svbSetAssetIdentityPrompt(assetStudioMeta, name, prompt, negative);
+        if (nameInput) nameInput.value = name;
+        await saveCurrentAssets(`${name} 인물 프롬프트를 저장했습니다.`);
+        renderIdentityPromptPicker(name);
+        renderGenerationConnectionSummary();
+    }
+
+    async function deleteIdentityPromptFromGenerationFields() {
+        const name = svbNormalizeAssetIdentityName(document.getElementById('svb-as-identity-name')?.value || document.getElementById('svb-as-identity-picker')?.value || '');
+        if (!name) {
+            setStatus('삭제할 인물 프롬프트를 선택해주세요.', 'error');
+            return;
+        }
+        assetStudioMeta = svbSetAssetIdentityPrompt(assetStudioMeta, name, '', '');
+        await saveCurrentAssets(`${name} 인물 프롬프트를 삭제했습니다.`);
+        const nameInput = document.getElementById('svb-as-identity-name');
+        if (nameInput) nameInput.value = '';
+        renderIdentityPromptPicker('');
+        renderGenerationConnectionSummary();
     }
 
     function renderGenerationControls() {
@@ -53501,6 +53805,7 @@ async function openAssetStudio() {
         if (wellspringScheduler && !wellspringScheduler.value) wellspringScheduler.value = preset.wellspringScheduler || '';
         if (wellspringLoras && !wellspringLoras.value) wellspringLoras.value = svbSerializeWellspringLoras(preset.wellspringLoras);
         if (wellspringPayloadJson && !wellspringPayloadJson.value) wellspringPayloadJson.value = preset.wellspringPayloadJson || '';
+        renderIdentityPromptPicker();
         renderWellspringRemoteSelects();
         renderGenerationConnectionSummary();
         renderGenerationPartList();
@@ -53579,6 +53884,7 @@ async function openAssetStudio() {
         if (wellspringScheduler) wellspringScheduler.value = normalized.wellspringScheduler || '';
         if (wellspringLoras) wellspringLoras.value = svbSerializeWellspringLoras(normalized.wellspringLoras);
         if (wellspringPayloadJson) wellspringPayloadJson.value = normalized.wellspringPayloadJson || '';
+        renderIdentityPromptPicker();
         renderWellspringRemoteSelects();
         const profile = getSelectedImageProfile();
         const providersCompatible = areImageProvidersCompatible(profile.provider, normalized.provider);
@@ -53746,7 +54052,23 @@ async function openAssetStudio() {
         if (presetSelect) presetSelect.value = preset.id;
         applyGenerationPresetToUI(preset);
         renderGenerationConnectionSummary();
-        setStatus(profile.apiKey ? 'Wellspring 프로필과 기본 프리셋을 선택했습니다.' : 'Wellspring 프로필과 기본 프리셋을 선택했습니다. ws-key는 설정 > 이미지 API 설정에서 입력하세요.', 'success');
+        let remoteSaved = false;
+        if (profile.apiKey) {
+            try {
+                await refreshWellspringRemoteOptionsFromStudio();
+                const updatedPreset = readGenerationPresetFromUI(preset);
+                upsertImageGenerationPreset(updatedPreset);
+                activeImageGenerationPresetId = updatedPreset.id;
+                await saveImageGenerationPresets();
+                remoteSaved = !!(updatedPreset.wellspringPresetId || updatedPreset.wellspringModelId);
+            } catch (error) {
+                Logger.warn('Wellspring activation remote preset load failed:', error?.message || error);
+            }
+        }
+        setStatus(profile.apiKey
+            ? (remoteSaved ? 'Wellspring 프로필과 기본 preset/model을 저장했습니다.' : 'Wellspring 프로필과 기본 프리셋을 선택했습니다. 목록 불러오기로 preset/model을 확인해주세요.')
+            : 'Wellspring 프로필과 기본 프리셋을 선택했습니다. ws-key는 설정 > 이미지 API 설정에서 입력하세요.',
+            'success');
     }
 
     async function applyQuickGenerationPreset(kind) {
@@ -55545,6 +55867,15 @@ async function openAssetStudio() {
                                 <details class="svb-as-details" open>
                                     <summary class="svb-as-form-title">캐릭터/그림체 고정</summary>
                                     <div class="svb-as-grid">
+                                        <input class="svb-as-input" id="svb-as-identity-name" placeholder="인물 이름: 문아진, 백서하 등">
+                                        <select class="svb-as-input" id="svb-as-identity-picker"></select>
+                                    </div>
+                                    <div class="svb-as-inline-actions">
+                                        <button class="svb-as-btn" id="svb-as-identity-apply" type="button">인물 프롬프트 적용</button>
+                                        <button class="svb-as-btn" id="svb-as-identity-save" type="button">인물 프롬프트 저장</button>
+                                        <button class="svb-as-btn danger" id="svb-as-identity-delete" type="button">인물 프롬프트 삭제</button>
+                                    </div>
+                                    <div class="svb-as-grid">
                                         <textarea class="svb-as-input" id="svb-as-character-prompt" placeholder="캐릭터 고정 프롬프트: 얼굴형, 눈/머리, 체형, 복식 핵심, 상징 소품, 색 조합"></textarea>
                                         <textarea class="svb-as-input" id="svb-as-character-negative" placeholder="캐릭터 일관성을 깨는 요소: different character, inconsistent hair, wrong eye color 등"></textarea>
                                     </div>
@@ -55568,7 +55899,7 @@ async function openAssetStudio() {
                                         <summary>Wellspring 워크플로우 입력</summary>
                                         <div class="svb-as-grid">
                                             <select class="svb-as-input" id="svb-as-wellspring-mode">
-                                                <option value="auto">자동: 워크플로/캐릭터가 있으면 native workflow</option>
+                                                <option value="auto">자동: preset/model은 native, workflow/project는 workflow</option>
                                                 <option value="nai">NAI 호환 generate-image만 사용</option>
                                                 <option value="native">Wellspring native 일반 생성</option>
                                                 <option value="workflow">Wellspring workflow 캐릭터 생성</option>
@@ -55603,7 +55934,7 @@ async function openAssetStudio() {
                                         <textarea class="svb-as-input" id="svb-as-wellspring-loras" placeholder='LoRA JSON 또는 id:strength 목록. 예: [{"id":"...","strength":0.8}]'></textarea>
                                         <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"variant_ids":["neutral"],"loras":[{"id":"...","strength":0.8}]}'></textarea>
                                     </details>
-                                    <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring 참조 이미지는 생성 호출에 같이 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
+                                    <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring은 preset/model 또는 workflow/project/variant 값을 우선 사용하고, 참조 이미지는 해당 엔드포인트가 지원할 때만 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
                                 </details>
                                 <div class="svb-as-batch-head">
                                     <div>
@@ -55728,6 +56059,29 @@ async function openAssetStudio() {
         await importGenerationPresetJson(event.target.files?.[0]);
         event.target.value = '';
     });
+    addLocal(document.getElementById('svb-as-identity-picker'), 'change', event => {
+        const name = event.target.value || '';
+        const input = document.getElementById('svb-as-identity-name');
+        if (input) input.value = name;
+    });
+    addLocal(document.getElementById('svb-as-identity-name'), 'input', event => {
+        renderIdentityPromptPicker(event.target.value || '');
+    });
+    addLocal(document.getElementById('svb-as-identity-apply'), 'click', () => {
+        applyIdentityPromptToGenerationFields();
+    });
+    addLocal(document.getElementById('svb-as-identity-save'), 'click', () => {
+        saveIdentityPromptFromGenerationFields().catch(error => {
+            Logger.error('Identity prompt save failed:', error);
+            setStatus(`인물 프롬프트 저장 실패: ${error?.message || error}`, 'error');
+        });
+    });
+    addLocal(document.getElementById('svb-as-identity-delete'), 'click', () => {
+        deleteIdentityPromptFromGenerationFields().catch(error => {
+            Logger.error('Identity prompt delete failed:', error);
+            setStatus(`인물 프롬프트 삭제 실패: ${error?.message || error}`, 'error');
+        });
+    });
     addLocal(document.getElementById('svb-as-use-wellspring'), 'click', activateWellspringFromStudio);
     addLocal(document.getElementById('svb-as-restore-default-presets'), 'click', restoreDefaultGenerationPresetsFromStudio);
     addLocal(document.getElementById('svb-as-wellspring-refresh'), 'click', () => {
@@ -55743,8 +56097,12 @@ async function openAssetStudio() {
         const preset = wellspringRemoteOptions.presets.find(item => safeString(item.id || item.preset_id).trim() === presetId);
         const modelInput = document.getElementById('svb-as-wellspring-model-id');
         const models = ensureArray(preset?.models);
-        const firstModelId = safeString(models[0]?.id || models[0]?.model_id || models[0]).trim();
-        if (modelInput && firstModelId && !safeString(modelInput.value).trim()) modelInput.value = firstModelId;
+        const firstModelId = safeString(preset?.model_id || preset?.modelId || preset?.default_model_id || preset?.defaultModelId || models[0]?.id || models[0]?.model_id || models[0]).trim();
+        const currentModelId = safeString(modelInput?.value).trim();
+        const modelBelongsToPreset = !models.length || models.some(model => safeString(model?.id || model?.model_id || model).trim() === currentModelId);
+        if (modelInput && firstModelId && (!currentModelId || !modelBelongsToPreset)) modelInput.value = firstModelId;
+        const modeInput = document.getElementById('svb-as-wellspring-mode');
+        if (modeInput && modeInput.value === 'nai') modeInput.value = 'auto';
         renderGenerationConnectionSummary();
     });
     addLocal(document.getElementById('svb-as-wellspring-workflow-picker'), 'change', event => {
@@ -56960,7 +57318,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.67",
+        name: "SuperVibeBot v1.5.68",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -56969,7 +57327,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.67 Settings",
+        "SuperVibeBot v1.5.68 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57012,7 +57370,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.67");
+        Logger.info("SuperVibeBot v1.5.68");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
