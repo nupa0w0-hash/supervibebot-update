@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.66
-//@version 1.5.66
+//@display-name 🐸 SuperVibeBot v1.5.67
+//@version 1.5.67
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.66는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.67는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.66 Release Notes
+ * SuperVibeBot v1.5.67 Release Notes
+ * - v1.5.67: separates Wellspring NAI-compatible requests from native/workflow payloads so asset generation no longer sends mixed route fields
+ * - v1.5.67: prefers Risu object-body fetch for Wellspring image calls and retries native string-body only for JSON/body rejection responses
+ * - v1.5.67: reports the Wellspring generation route in image API errors and blocks native mode without preset/model IDs before sending a bad request
  * - v1.5.66: moves the auto-update URL to raw.githubusercontent refs/heads/main after main-branch raw cache kept serving the previous version
  * - v1.5.66: updates runtime diagnostics and plugin guidance to accept the verified refs/heads/main Range response path
  * - v1.5.65: makes planning and daily mode conversational calls single-attempt so transient model errors no longer loop through work-mode retry logs
@@ -13460,7 +13463,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.66',
+            '//@version 1.5.67',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -22137,7 +22140,12 @@ function joinImageApiUrl(base, path = "") {
 }
 
 function svbPrepareFetchOptions(options = {}, rawResponse = false, settings = {}) {
-    const prepared = { ...options, headers: { ...(options.headers || {}) } };
+    const {
+        svbPreferRisuFetch: _svbPreferRisuFetch,
+        svbStringifyJsonBody: _svbStringifyJsonBody,
+        ...fetchOptions
+    } = options || {};
+    const prepared = { ...fetchOptions, headers: { ...(fetchOptions.headers || {}) } };
     const stringifyJsonBody = settings.stringifyJsonBody !== false;
     if (prepared.body && typeof prepared.body === "object" && !(prepared.body instanceof FormData) && !(prepared.body instanceof Blob) && !(prepared.body instanceof ArrayBuffer) && !(prepared.body instanceof Uint8Array)) {
         if (stringifyJsonBody) prepared.body = JSON.stringify(prepared.body);
@@ -22163,13 +22171,20 @@ async function svbImageFetchRaw(url, options = {}, label = "이미지 API", time
                 plainFetchDeforce: true
             }))
             : null;
-    const fetchFn = nativeFetch || risuFetch || fetch;
-    const usingRisuFetch = !nativeFetch && !!risuFetch;
-    const canAbort = !!nativeFetch || fetchFn === fetch;
+    const preferRisuFetch = options?.svbPreferRisuFetch === true;
+    const fetchFn = (preferRisuFetch && risuFetch)
+        ? risuFetch
+        : (nativeFetch || risuFetch || (typeof fetch !== "undefined" ? fetch : null));
+    if (!fetchFn) throw new Error(`${label} 요청에 사용할 fetch 함수를 찾지 못했습니다.`);
+    const usingRisuFetch = fetchFn === risuFetch;
+    const canAbort = !!nativeFetch || !!risuFetch || (typeof fetch !== "undefined" && fetchFn === fetch);
     const abortLink = createSvbAbortLink(options?.signal || null, `${label} 요청`);
     const controller = abortLink.controller;
     const effectiveSignal = abortLink.signal || options?.signal || null;
-    const requestOptions = svbPrepareFetchOptions(options, true, { stringifyJsonBody: !usingRisuFetch });
+    const stringifyJsonBody = typeof options?.svbStringifyJsonBody === "boolean"
+        ? options.svbStringifyJsonBody
+        : !usingRisuFetch;
+    const requestOptions = svbPrepareFetchOptions(options, true, { stringifyJsonBody });
     if (effectiveSignal && canAbort) requestOptions.signal = effectiveSignal;
     else if (!canAbort) delete requestOptions.signal;
     let timer = null;
@@ -22224,6 +22239,40 @@ async function svbImageFetchRaw(url, options = {}, label = "이미지 API", time
 
 async function svbImageFetchJson(url, options = {}, label = "이미지 API", timeoutMs = 120000) {
     const raw = await svbImageFetchRaw(url, options, label, timeoutMs);
+    const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
+    let data = null;
+    try { data = text ? JSON.parse(text) : {}; } catch (error) {
+        throw new Error(`${label} JSON 응답 파싱 실패: ${text.slice(0, 400)}`);
+    }
+    if (!raw.ok) {
+        throw new Error(`${label} 오류 (${raw.status}): ${data?.error?.message || data?.error || data?.message || text}`);
+    }
+    return data;
+}
+
+function svbShouldRetryWellspringBodyEncoding(raw) {
+    if (!raw || raw.ok) return false;
+    if (![400, 415, 422, 500].includes(Number(raw.status))) return false;
+    const text = new TextDecoder().decode(raw.bytes || new Uint8Array()).slice(0, 600);
+    return /json|unexpected token|valid json|body|payload|잘못된 요청|구문|파싱/i.test(text);
+}
+
+async function svbWellspringFetchRaw(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
+    const primaryOptions = { ...options, svbPreferRisuFetch: true };
+    const primary = await svbImageFetchRaw(url, primaryOptions, label, timeoutMs);
+    if (!svbShouldRetryWellspringBodyEncoding(primary) || !getNativeFetch()) return primary;
+    try {
+        const retryOptions = { ...options, svbPreferRisuFetch: false, svbStringifyJsonBody: true };
+        const retry = await svbImageFetchRaw(url, retryOptions, `${label} native 재시도`, timeoutMs);
+        return retry.ok ? retry : primary;
+    } catch (error) {
+        Logger.warn('Wellspring native fetch retry failed:', error?.message || error);
+        return primary;
+    }
+}
+
+async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
+    const raw = await svbWellspringFetchRaw(url, options, label, timeoutMs);
     const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
     let data = null;
     try { data = text ? JSON.parse(text) : {}; } catch (error) {
@@ -22531,6 +22580,12 @@ function svbReplaceImageTemplate(text, vars) {
     });
 }
 
+function svbIsWellspringNaiCompatibleEndpoint(profile = {}) {
+    if (!isWellspringImageProvider(profile?.provider)) return false;
+    const endpoint = safeString(profile?.endpoint || WELLSPRING_IMAGE_API_ENDPOINT).toLowerCase();
+    return endpoint.includes("/v1/images/nai/generate-image");
+}
+
 function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps, options = {}) {
     const seed = Math.floor(Math.random() * 2 ** 32);
     const model = profile.modelIgnored ? (profile.model || "nai-diffusion-3") : (profile.model || "nai-diffusion-3");
@@ -22595,7 +22650,7 @@ function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps, o
             director_reference_strength_values: []
         }
     };
-    if (isWellspringImageProvider(profile.provider)) {
+    if (isWellspringImageProvider(profile.provider) && !svbIsWellspringNaiCompatibleEndpoint(profile)) {
         const wellspringExtra = {};
         if (safeString(options.wellspringPresetId).trim()) wellspringExtra.presetId = safeString(options.wellspringPresetId).trim();
         if (safeString(options.wellspringWorkflowId).trim()) wellspringExtra.workflowId = safeString(options.wellspringWorkflowId).trim();
@@ -22623,6 +22678,14 @@ function svbShouldUseWellspringNativeGeneration(profile, options = {}) {
     return endpoint.includes("/v1/images/generations")
         || endpoint.includes("/v1/images/workflows/")
         || svbShouldUseWellspringWorkflowGeneration(profile, options);
+}
+
+function svbGetWellspringGenerationRouteLabel(profile, options = {}) {
+    if (!isWellspringImageProvider(profile?.provider)) return "";
+    if (svbShouldUseWellspringWorkflowGeneration(profile, options)) return "Wellspring workflow";
+    if (svbShouldUseWellspringNativeGeneration(profile, options)) return "Wellspring native";
+    if (svbIsWellspringNaiCompatibleEndpoint(profile)) return "Wellspring NAI 호환";
+    return "Wellspring NAI 호환";
 }
 
 function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps, options = {}) {
@@ -22765,7 +22828,7 @@ async function svbGenerateWellspringNativeImage(profile, options) {
         if (!svbNormalizeWellspringIdList(payload.variant_ids).length && !safeString(options.wellspringPayloadJson).trim()) {
             throw new Error("Wellspring workflow 생성에는 variantIds가 필요합니다. 워크플로의 감정/변형 id를 선택하거나 추가 payload에 variant_ids를 넣어주세요.");
         }
-        const data = await svbImageFetchJson(joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), `${WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT}/${encodeURIComponent(workflowId)}/generate`), {
+        const data = await svbWellspringFetchJson(joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), `${WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT}/${encodeURIComponent(workflowId)}/generate`), {
             method: "POST",
             headers: svbGetWellspringApiHeaders(profile),
             body: payload
@@ -22773,10 +22836,14 @@ async function svbGenerateWellspringNativeImage(profile, options) {
         return await svbWaitForWellspringJobImage(profile, data, options);
     }
 
+    if (!payload.preset_id && !payload.model_id && !safeString(options.wellspringPayloadJson).trim()) {
+        throw new Error("Wellspring native 생성에는 preset_id 또는 model_id가 필요합니다. Wellspring 프로필 기본 생성은 모드를 nai/auto로 두고, native 모드는 에셋 스튜디오에서 preset/model을 선택해주세요.");
+    }
+
     const endpoint = safeString(profile.endpoint).toLowerCase().includes("/v1/images/generations")
         ? profile.endpoint
         : joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), WELLSPRING_IMAGE_GENERATIONS_ENDPOINT);
-    const data = await svbImageFetchJson(endpoint, {
+    const data = await svbWellspringFetchJson(endpoint, {
         method: "POST",
         headers: svbGetWellspringApiHeaders(profile),
         body: payload
@@ -22794,10 +22861,14 @@ async function svbGenerateNaiCompatibleImage(profile, options) {
     const payload = svbBuildNaiCompatiblePayload(profile, options.prompt, options.negative, ratio, steps, options);
     const headers = { Accept: "image/*, application/zip, application/json" };
     if (profile.apiKey) headers.Authorization = `Bearer ${profile.apiKey}`;
-    const raw = await svbImageFetchRaw(profile.endpoint, { method: "POST", headers, body: payload }, profile.name, profile.timeoutMs);
+    const requestOptions = { method: "POST", headers, body: payload };
+    const raw = isWellspringImageProvider(profile.provider)
+        ? await svbWellspringFetchRaw(profile.endpoint, requestOptions, profile.name, profile.timeoutMs)
+        : await svbImageFetchRaw(profile.endpoint, requestOptions, profile.name, profile.timeoutMs);
     if (!raw.ok) {
         const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
-        throw new Error(`${profile.name} 오류 (${raw.status}): ${text.slice(0, 500)}`);
+        const route = svbGetWellspringGenerationRouteLabel(profile, options);
+        throw new Error(`${profile.name} 오류 (${raw.status}${route ? `, ${route}` : ""}): ${text.slice(0, 500)}`);
     }
     return await svbParseImageApiResponse(profile, raw);
 }
@@ -43692,7 +43763,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.66 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.67 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -56889,7 +56960,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.66",
+        name: "SuperVibeBot v1.5.67",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -56898,7 +56969,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.66 Settings",
+        "SuperVibeBot v1.5.67 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -56941,7 +57012,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.66");
+        Logger.info("SuperVibeBot v1.5.67");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
