@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.71
-//@version 1.5.71
+//@display-name 🐸 SuperVibeBot v1.5.72
+//@version 1.5.72
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.71는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.72는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.71 Release Notes
+ * SuperVibeBot v1.5.72 Release Notes
+ * - v1.5.72: routes planning/TODO conversations through a lightweight non-mutating planning chat path instead of the full work/action prompt
+ * - v1.5.72: skips sub-agent consultation when CONTEXT_PAYLOAD is empty so `{}` packets cannot stall parallel review
+ * - v1.5.72: uses a model-wait zombie threshold for chat locks instead of the 95-minute action-execution threshold
  * - v1.5.71: moves the update URL to raw /main/SuperVibeBot.js because that file's raw endpoint updates while SuperVibeBot.update.js remains stale
  * - v1.5.71: updates CI/runtime diagnostics to verify the active SuperVibeBot.js update channel
  * - v1.5.70: moves the update URL back to raw /main/ after the refs/heads/main raw cache kept returning v1.5.68
@@ -3384,7 +3387,7 @@ const KERO_ACTION_EXECUTION_TIMEOUT_MS = 90 * 60 * 1000;
 const KERO_HEARTBEAT_WORKSTREAM_INTERVAL_MS = 5 * 60 * 1000;
 const KERO_ACTION_JOB_PERSIST_RETRY_DELAYS = [0, 250, 900];
 const KERO_MISSION_PERSIST_RETRY_DELAYS = KERO_ACTION_JOB_PERSIST_RETRY_DELAYS;
-const KERO_WAKE_ACTION_ZOMBIE_MS = KERO_ACTION_EXECUTION_TIMEOUT_MS + 5 * 60 * 1000;
+const KERO_MODEL_WAIT_ZOMBIE_MS = KERO_WORK_MODEL_CALL_TIMEOUT_MS + 5 * 60 * 1000;
 const KERO_ACTION_JOB_STORAGE_LIMIT = 200;
 const KERO_ACTION_JOB_DETAIL_CHAR_LIMIT = 1200;
 const KERO_BULK_JOB_STORAGE_LIMIT = 80;
@@ -12722,6 +12725,50 @@ function addSvbRuntimeControlRoutingSelfTest(checks) {
     ));
 }
 
+function addSvbRuntimePlanningRoutingSelfTest(checks) {
+    const result = readSvbRuntimeValue('기획모드 라우팅 자체 테스트', () => {
+        const planningTodoRequest = '아직 계속 기획 중이야. 요청 사항 정리해서 먼저 TODO 리스트를 만들어줘.';
+        const approvedObjective = [
+            '기획모드에서 승인된 목표를 실행한다.',
+            '[사용자 원 요청]',
+            planningTodoRequest,
+            '[승인된 기획/TODO]',
+            '1. 요구사항 정리\n2. 첫 실행 단위 진행'
+        ].join('\n');
+        const shouldRouteToPlanning = (mode, text, options = {}) => {
+            const normalizedMode = normalizeKeroMode(mode);
+            const planningOnly = options.approvedPlanningGoal !== true && isKeroPlanningOnlyRequest(text);
+            return normalizedMode === 'planning' || planningOnly;
+        };
+        return {
+            todoDetected: isKeroPlanningOnlyRequest(planningTodoRequest) === true,
+            workTodoRoutesPlanning: shouldRouteToPlanning('work', planningTodoRequest) === true,
+            planningModeRoutesPlanning: shouldRouteToPlanning('planning', '이 방향으로 대화하며 정리하자') === true,
+            approvedObjectiveHasPlanningSignal: isKeroPlanningOnlyRequest(approvedObjective) === true,
+            approvedGoalBypassesPlanning: shouldRouteToPlanning('goal', approvedObjective, { approvedPlanningGoal: true }) === false,
+            goalPlanningRequestStillPlans: shouldRouteToPlanning('goal', planningTodoRequest) === true
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, '기획모드 라우팅 자체 테스트', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.todoDetected) problems.push('TODO/기획 요청 감지 실패');
+    if (!value.workTodoRoutesPlanning) problems.push('작업모드 TODO 요청이 기획 대화로 분기되지 않음');
+    if (!value.planningModeRoutesPlanning) problems.push('기획모드 요청이 기획 대화로 분기되지 않음');
+    if (!value.approvedObjectiveHasPlanningSignal) problems.push('승인 목표 진단 문장에 기획 신호가 없음');
+    if (!value.approvedGoalBypassesPlanning) problems.push('승인된 목표 실행이 기획 대화로 잘못 분기됨');
+    if (!value.goalPlanningRequestStillPlans) problems.push('목표모드에서 새 기획 요청이 기획 대화로 분기되지 않음');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        '기획모드 라우팅 자체 테스트',
+        problems.length ? `문제: ${problems.join(' / ')}` : '작업/TODO는 기획 대화 · 승인 목표는 목표 실행 분기 유지',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
 function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     const result = readSvbRuntimeValue('missing improve fallback no ReferenceError self test', () => {
         const request = 'improve description after review';
@@ -13475,7 +13522,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.71',
+            '//@version 1.5.72',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13915,6 +13962,10 @@ function addSvbRuntimeContextPayloadSelfTest(checks) {
             buildSvbContextPayloadTrace(previewOnlyModulePayload, { workTargetMode: "module" })
         );
         const previewOnlyPluginState = buildKeroSubAgentContextPayloadState(previewOnlyPluginPayload, { workTargetMode: "plugin" });
+        const emptyPayload = {};
+        const emptyTrace = buildSvbContextPayloadTrace(emptyPayload, { workTargetMode: "character", traceId: "svb-runtime-empty-context-test" });
+        const emptyState = buildKeroSubAgentContextPayloadState(emptyPayload, { workTargetMode: "character" });
+        const emptyPreflight = validateSvbContextPayloadForSubAgent(emptyPayload, emptyTrace);
         const mismatchReport = svbParseSubAgentTaskResult(
             JSON.stringify({
                 status: "completed",
@@ -13965,6 +14016,9 @@ function addSvbRuntimeContextPayloadSelfTest(checks) {
             previewOnlyPluginBlocked: previewOnlyPluginPreflight.ok === false,
             previewOnlyModuleBlocked: previewOnlyModulePreflight.ok === false,
             previewOnlyPluginStateUnavailable: previewOnlyPluginState.available === false,
+            emptyPayloadUnavailable: emptyState.available === false,
+            emptyPayloadPreflightBlocked: emptyPreflight.ok === false,
+            emptyPayloadWouldSkipSubagents: (!emptyState.available || !emptyPreflight.ok) === true,
             mismatchConfidence: mismatchReport.confidence,
             mismatchRiskCount: ensureArray(mismatchReport.risks).length
         };
@@ -13995,6 +14049,7 @@ function addSvbRuntimeContextPayloadSelfTest(checks) {
     if (!value.previewOnlyPluginBlocked) problems.push('preview-only 플러그인 차단 실패');
     if (!value.previewOnlyModuleBlocked) problems.push('preview-only 모듈 차단 실패');
     if (!value.previewOnlyPluginStateUnavailable) problems.push('preview-only payload_state.available 차단 실패');
+    if (!value.emptyPayloadUnavailable || !value.emptyPayloadPreflightBlocked || !value.emptyPayloadWouldSkipSubagents) problems.push('빈 payload 서브에이전트 생략 조건 실패');
     if (/^high$/i.test(safeString(value.mismatchConfidence))) problems.push('trace mismatch high confidence 하향 실패');
     if (Number(value.mismatchRiskCount || 0) <= 0) problems.push('trace mismatch risk 기록 실패');
     checks.push(makeSvbRuntimeCheck(
@@ -14602,6 +14657,7 @@ function addSvbRuntimeHeartbeatTimeoutSelfTest(checks) {
         deadline: resolveKeroHeartbeatHardTimeoutMs({ heartbeatDeadlineAt: Date.now() + 45000 }),
         provider: resolveKeroHeartbeatHardTimeoutMs({ timeoutMs: 120000 }),
         none: resolveKeroHeartbeatHardTimeoutMs({}),
+        chatZombieMs: getKeroChatTaskZombieMs(),
         heartbeatAsync: withKeroActivityHeartbeat?.constructor?.name === 'AsyncFunction'
     }));
     if (!result.ok) {
@@ -14614,6 +14670,8 @@ function addSvbRuntimeHeartbeatTimeoutSelfTest(checks) {
     if (Number(value.deadline || 0) < 1000 || Number(value.deadline || 0) > 45000) problems.push(`deadline 계산 ${value.deadline}`);
     if (Number(value.provider || 0) !== 150000) problems.push(`provider timeout 보정 ${value.provider}`);
     if (Number(value.none || 0) !== 0) problems.push(`빈 옵션 제한 ${value.none}`);
+    if (Number(value.chatZombieMs || 0) !== KERO_MODEL_WAIT_ZOMBIE_MS) problems.push(`채팅 잠금 복구 기준 ${value.chatZombieMs}`);
+    if (Number(value.chatZombieMs || 0) >= KERO_ACTION_EXECUTION_TIMEOUT_MS) problems.push('채팅 잠금 복구 기준이 액션 실행 기준에 묶임');
     if (!value.heartbeatAsync) problems.push('heartbeat wrapper async 아님');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
@@ -14980,6 +15038,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions);
     addSvbRuntimeSteeringQueueSelfTest(checks);
     addSvbRuntimeControlRoutingSelfTest(checks);
+    addSvbRuntimePlanningRoutingSelfTest(checks);
     addSvbRuntimeMissingImproveFallbackSelfTest(checks);
     addSvbRuntimeIndexFallbackSelfTest(checks);
     addSvbRuntimeKeroChatContinuitySelfTest(checks);
@@ -15360,13 +15419,17 @@ function requeueFailedKeroInputQueue(queue = keroQueuedUserInputs, missionId = c
     return { queue: nextQueue, requeued };
 }
 
+function getKeroChatTaskZombieMs() {
+    return Math.max(5 * 60 * 1000, Number(KERO_MODEL_WAIT_ZOMBIE_MS) || 0);
+}
+
 function isKeroChatTaskLikelyZombie(now = Date.now()) {
     if (!keroChatTaskRunning) return false;
     if (isKeroSubAgentWaitLikelyZombie(now)) return true;
     const activeJob = currentKeroRequestJobId ? keroBackgroundJobs.get(currentKeroRequestJobId) : null;
     const missionUpdatedAt = Date.parse(currentKeroMission?.updatedAt || currentKeroMission?.createdAt || '');
     const lastActiveAt = Number(activeJob?.updatedAt || 0) || (Number.isFinite(missionUpdatedAt) ? missionUpdatedAt : 0);
-    return lastActiveAt > 0 && now - lastActiveAt > KERO_WAKE_ACTION_ZOMBIE_MS;
+    return lastActiveAt > 0 && now - lastActiveAt > getKeroChatTaskZombieMs();
 }
 
 function getLatestKeroSubAgentWaitEventTime() {
@@ -15725,12 +15788,13 @@ async function recoverKeroRuntimeStateOnWake(reason = 'app_wake') {
                     });
                 }
                 if (taskLooksZombie) {
+                    const chatZombieMinutes = Math.round(getKeroChatTaskZombieMs() / 60000);
                     const released = releaseKeroZombieRuntimeLock(
-                        `작업 표시가 ${Math.round(KERO_WAKE_ACTION_ZOMBIE_MS / 60000)}분 이상 갱신되지 않아 멈춘 런타임 잠금을 해제했습니다. "계속 진행"으로 미완료 작업을 이어갈 수 있습니다.`
+                        `작업 표시가 ${chatZombieMinutes}분 이상 갱신되지 않아 멈춘 런타임 잠금을 해제했습니다. "계속 진행"으로 미완료 작업을 이어갈 수 있습니다.`
                     );
                     addKeroWorkstreamEvent(
                         '장시간 정지 복구',
-                        `작업 표시가 ${Math.round(KERO_WAKE_ACTION_ZOMBIE_MS / 60000)}분 이상 갱신되지 않아 런타임 잠금${released ? '' : ' 확인'} 및 액션 job ${recoveredActionCount}개를 재개 가능 상태로 정리했습니다.`,
+                        `작업 표시가 ${chatZombieMinutes}분 이상 갱신되지 않아 런타임 잠금${released ? '' : ' 확인'} 및 액션 job ${recoveredActionCount}개를 재개 가능 상태로 정리했습니다.`,
                         'warning',
                         wakeProgressOptions
                     );
@@ -35664,7 +35728,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     detail
                 };
             }
-            const response = await processUserRequest(modelUserInput, { ...options, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
+            const response = await processUserRequest(modelUserInput, { ...options, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode, approvedPlanningGoal: !!approvedPlanningGoal, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
             if (!isTaskMissionStillCurrent()) {
                 removeLoadingMessage();
                 return stopStaleTaskFinalization('모델 응답이 도착했지만 현재 미션이 바뀌어 이전 요청의 응답 적용을 중단했습니다.');
@@ -36182,12 +36246,77 @@ ${chatContinuity.block}
         });
     }
 
+    async function processPlanningUserRequest(userInput, options = {}) {
+        let recentChat = [];
+        let char = null;
+        try {
+            char = await getCharacterData();
+            recentChat = await loadKeroContinuityChat(char, chatHistory);
+        } catch (error) {
+            Logger.debug('Planning Kero chat context fallback:', error?.message || error);
+            recentChat = chatHistory;
+        }
+
+        const visibleUserInput = safeString(options.visibleUserInput || userInput);
+        const workMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+        const modeMeta = getWorkTargetModeMeta(workMode);
+        const primaryCharId = char ? getCharacterId(char) : '';
+        const targetName = workMode === 'character'
+            ? (char ? getCharacterDisplayName(char) : '선택 캐릭터 없음')
+            : (workMode === 'module'
+                ? (safeString(manualSelectedModuleId).trim() || '선택 모듈 없음')
+                : (safeString(manualSelectedPluginKey).trim() || '선택 플러그인 없음'));
+        const referenceSummary = formatReferenceSelectionSummary({ primaryCharId });
+        const chatContinuity = buildKeroRecentChatContinuityBlock(recentChat, visibleUserInput, {
+            limit: KERO_CHAT_LIMIT,
+            memoryEnabled: false,
+            maxUserChars: 900,
+            maxBotChars: 650,
+            currentInputId: options.queuedInput?.id || options.currentInputId || ''
+        });
+
+        const planningPrompt = `당신은 "케로 (Kero)"입니다. 지금은 기획모드입니다.
+
+## 기획모드 규칙
+- 주인님과 일상모드처럼 자연스럽게 대화하며 요구사항을 정리한다.
+- 저장, 생성, 삭제, 적용, @action 출력은 절대 하지 않는다.
+- 작업모드의 실행 지시나 목표모드의 진행 압력보다 현재 사용자 입력의 "먼저 기획/정리/TODO/상의" 의도가 우선한다.
+- CONTEXT_PAYLOAD, 액션 프로토콜, 서브에이전트 내부 회의록 같은 내부 구현 표현을 꺼내지 않는다.
+- 사용자가 큰 제작 방향을 말하면 요구사항, TODO, 우선순위, 작업 단위, 완료 기준으로 정리한다.
+- 질문은 막히는 것만 최대 3개까지 한다. 답 없이도 진행 가능한 부분은 가정으로 적고 계속 정리한다.
+- 계획이 실행 가능한 수준이면 마지막에 목표로 설정하고 진행할 수 있다는 점만 짧게 안내한다.
+- 말투는 과거 케로처럼 "개굴!", "주인님~", "슈퍼 바이브!", "으악..."를 자연스럽게 섞되, 내용은 명확하게 쓴다.
+- 마크다운 볼드 표기 ** 는 쓰지 않는다.
+
+## 현재 선택 요약
+- 작업 대상 모드: ${modeMeta.label}
+- 대상: ${targetName}
+- 참고 자료: ${referenceSummary}
+
+${chatContinuity.block}
+
+주인님 요청: ${visibleUserInput}`;
+
+        return await translateSingleChunk(planningPrompt, visibleUserInput, getKeroModelRetryCountForMode('planning'), {
+            useSubmodels: false,
+            keroMode: 'planning',
+            timeoutMs: 180000,
+            disableKeroContext: true,
+            keroSteeringNotes: [],
+            keroSteeringBlock: ''
+        });
+    }
+
     async function processUserRequest(userInput, options = {}) {
         const requestKeroMode = normalizeKeroMode(options.keroMode || currentKeroMode);
-        const requestAllowsMutation = isKeroExecutionMode(requestKeroMode) && !isKeroPlanningOnlyRequest(userInput);
-        const requestIsPlanningMode = isKeroPlanningMode(requestKeroMode) || isKeroPlanningOnlyRequest(userInput);
+        const requestPlanningOnly = options.approvedPlanningGoal !== true && isKeroPlanningOnlyRequest(userInput);
+        const requestAllowsMutation = isKeroExecutionMode(requestKeroMode) && !requestPlanningOnly;
+        const requestIsPlanningMode = isKeroPlanningMode(requestKeroMode) || requestPlanningOnly;
         if (requestKeroMode === 'daily') {
             return await processDailyUserRequest(userInput);
+        }
+        if (requestKeroMode === 'planning' || requestPlanningOnly) {
+            return await processPlanningUserRequest(userInput, options);
         }
 
         const requestProgressOptions = options.jobId ? { jobId: options.jobId, requireCurrentJob: true } : {};
@@ -43935,7 +44064,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.71 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.72 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -49082,6 +49211,22 @@ async function buildSubmodelConsultationBlock(systemPrompt, userText, options = 
         contextPayloadPreflight.ok ? 'info' : 'warning',
         subAgentProgressOptions
     );
+    const subAgentPacketAvailable = hasUsableKeroContextPayload(subAgentContextPayload) && Number(contextPayloadTrace?.keyCount || 0) > 0;
+    if (!contextPayloadState.available || !contextPayloadPreflight.ok || !subAgentPacketAvailable) {
+        const contextBlockerDetail = [
+            contextPayloadState.warning,
+            subAgentPacketAvailable ? '' : '서브에이전트 전달 payload가 비어 있습니다.',
+            ...ensureArray(contextPayloadPreflight.problems),
+            ...ensureArray(contextPayloadPreflight.warnings)
+        ].filter(Boolean).slice(0, 5).join(' / ') || 'CONTEXT_PAYLOAD가 비어 있어 서브에이전트가 검토할 실제 작업 자료가 없습니다.';
+        addKeroWorkstreamEvent(
+            '서브에이전트 배정 생략',
+            `${contextBlockerDetail} 메인 모델로 바로 진행합니다.`,
+            'warning',
+            subAgentProgressOptions
+        );
+        return "";
+    }
     if (subAgentContext.report?.subAgentBudget?.applied || subAgentContext.report?.modelCompaction?.compacted) {
         addKeroWorkstreamEvent(
             '서브에이전트 payload 예산 적용',
@@ -57338,7 +57483,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.71",
+        name: "SuperVibeBot v1.5.72",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57347,7 +57492,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.71 Settings",
+        "SuperVibeBot v1.5.72 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57390,7 +57535,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.71");
+        Logger.info("SuperVibeBot v1.5.72");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

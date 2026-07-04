@@ -2,12 +2,12 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.63`
+Latest version: `1.5.72`
 
 Update URL:
 
 ```text
-https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 ```
 
 Files:
@@ -17,6 +17,44 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.72
+
+- Routes planning/TODO conversations through a lightweight non-mutating planning chat path instead of the full work/action prompt.
+- Skips sub-agent consultation when `CONTEXT_PAYLOAD` is empty, so `{}` packets cannot stall parallel review.
+- Uses a model-wait zombie threshold for chat locks instead of the 95-minute action-execution threshold.
+
+## 1.5.71
+
+- Moves the update URL to raw `SuperVibeBot.js`, the active update channel verified by CI/runtime diagnostics.
+
+## 1.5.70
+
+- Re-aligns update-channel diagnostics after stale raw endpoint behavior.
+
+## 1.5.69
+
+- Raises API Hub/NanoGPT default call timeout to 10 minutes and adds an API Hub timeout setting.
+
+## 1.5.68
+
+- Routes Wellspring auto mode through native generation by default and stores per-character identity prompts for consistent image asset batches.
+
+## 1.5.67
+
+- Separates Wellspring NAI-compatible requests from native/workflow payloads.
+
+## 1.5.66
+
+- Adjusts auto-update URL handling and diagnostics for GitHub raw cache behavior.
+
+## 1.5.65
+
+- Makes planning and daily mode conversational calls single-attempt and disables automatic sub-agent consultation for planning-only conversations.
+
+## 1.5.64
+
+- Adds Wellspring native/workflow/project/variant routing for character-consistent asset generation.
 
 ## 1.5.63
 
