@@ -1,19 +1,19 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.69
-//@version 1.5.69
+//@display-name 🐸 SuperVibeBot v1.5.70
+//@version 1.5.70
 //@api 3.0
-//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js
+//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.69는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.70는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
-const SUPER_VIBE_BOT_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.update.js';
+const SUPER_VIBE_BOT_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js';
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
 const PERSONA_APPLY_DISABLED = true;
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.69 Release Notes
+ * SuperVibeBot v1.5.70 Release Notes
+ * - v1.5.70: moves the update URL back to raw /main/ after the refs/heads/main raw cache kept returning v1.5.68
+ * - v1.5.70: updates runtime diagnostics and plugin guidance to verify the currently fresh raw main update channel
  * - v1.5.69: raises API Hub/NanoGPT default call timeout from the old 60 seconds to 10 minutes and migrates legacy NanoGPT 60-second settings
  * - v1.5.69: adds an API Hub timeout field so users can set a larger timeout or 0 for no plugin-side request timeout
  * - v1.5.68: routes Wellspring auto mode through native generation by default and auto-fills a preset/model from the Wellspring preset list when none is saved
@@ -13471,11 +13473,11 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.69',
+            '//@version 1.5.70',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
-        const superVibeUsesVerifiedRawRefs = /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main\/SuperVibeBot\.update\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesVerifiedRawMain = /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/main\/SuperVibeBot\.update\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         const superVibeUsesGithubRawCompatibility = /github\.com\/nupa0w0-hash\/supervibebot-update\/raw/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         return {
             autoUpdateReady: metadata.autoUpdateReady === true,
@@ -13492,7 +13494,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             stringMetadataIgnored: !stringMetadataIgnored.version && !stringMetadataIgnored.name,
             superVibeUpdateUrl: SUPER_VIBE_BOT_UPDATE_URL,
             superVibeMetadataReady: superVibeMetadata.autoUpdateReady === true,
-            superVibeUsesVerifiedRawRefs,
+            superVibeUsesVerifiedRawMain,
             superVibeUsesGithubRawCompatibility
         };
     });
@@ -13515,7 +13517,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
     if (!value.storedMismatchRejected) problems.push('script/store updateURL 불일치 허용');
     if (!value.stringMetadataIgnored) problems.push('스크립트 문자열 내부 메타데이터 오인');
     if (!value.superVibeMetadataReady) problems.push('슈바봇 release update-url 자동 업데이트 판정 실패');
-    if (!value.superVibeUsesVerifiedRawRefs) problems.push('슈바봇 update-url이 검증된 raw.githubusercontent.com refs/heads/main SuperVibeBot.update.js 경로가 아님');
+    if (!value.superVibeUsesVerifiedRawMain) problems.push('슈바봇 update-url이 검증된 raw.githubusercontent.com main SuperVibeBot.update.js 경로가 아님');
     if (value.superVibeUsesGithubRawCompatibility) problems.push('슈바봇 update-url이 github.com/raw 호환 경로임');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
@@ -36508,7 +36510,7 @@ ${metaBlock}
 - 인물 기본 프로필 에셋, 대표 인물 프로필 이미지, 스탠딩 이미지처럼 캐릭터가 아닌 이미지 파일을 만드는 요청은 lorebook/regex/trigger가 아니라 target:"asset"이다.
 - assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
-- //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch에서 본문이 실제로 반환되어야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com URL을 쓰되, main 경로가 이전 버전 캐시를 반환하면 refs/heads/main 경로를 Range로 검증해 사용한다.
+- //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch에서 본문이 실제로 반환되어야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com URL을 쓰되, 현재 Range 응답이 최신 버전을 반환하는 경로를 직접 검증해 사용한다.
 - jsDelivr GitHub 경로는 일부 Range fetch에서 206 응답만 오고 본문이 비는 경우가 있으므로 자동 업데이트 기본값으로 추천하지 않는다. github.com/raw 호환 경로는 302를 거치므로 raw.githubusercontent.com 직접 경로가 검증되는 경우 그쪽을 우선한다.
 
 ### 이미지 에셋 프롬프팅 전문 규칙
@@ -43931,7 +43933,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.69 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.70 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -43964,7 +43966,7 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - Recommended: \`//@display-name\`, \`//@version\`, \`//@arg\`, \`//@link\`, \`//@update-url\`
 - \`//@name\` is the stable plugin identity. Do not rename it during updates; use displayName/\`//@display-name\` for visible labels.
 - \`//@version\` is required for RisuAI update checks and should be within the first 512 bytes.
-- \`//@update-url\` must be an HTTPS JavaScript file URL that returns a non-empty body for browser fetches with \`Range: bytes=0-512\`. For GitHub-hosted plugins, use a verified \`raw.githubusercontent.com\` URL; if \`/main/\` serves stale cache, verify and use \`/refs/heads/main/\`.
+- \`//@update-url\` must be an HTTPS JavaScript file URL that returns a non-empty body for browser fetches with \`Range: bytes=0-512\`. For GitHub-hosted plugins, use a verified \`raw.githubusercontent.com\` URL and re-check that the exact URL returns the newest version before release.
 - Avoid jsDelivr GitHub URLs for RisuAI auto-update defaults because some Range fetches return a 206 response with an empty body. Avoid \`github.com/.../raw\` compatibility URLs when the direct \`raw.githubusercontent.com\` path works.
 - When updating an existing plugin, keep \`//@name\` unchanged, bump \`//@version\`, and preserve \`//@update-url\` unless the user provides a new release URL.
 
@@ -57334,7 +57336,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.69",
+        name: "SuperVibeBot v1.5.70",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57343,7 +57345,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.69 Settings",
+        "SuperVibeBot v1.5.70 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57386,7 +57388,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.69");
+        Logger.info("SuperVibeBot v1.5.70");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
