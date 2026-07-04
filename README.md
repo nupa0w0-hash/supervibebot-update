@@ -2,12 +2,12 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.59`
+Latest version: `1.5.60`
 
 Update URL:
 
 ```text
-https://cdn.jsdelivr.net/gh/nupa0w0-hash/supervibebot-update@main/SuperVibeBot.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 ```
 
 Files:
@@ -17,6 +17,10 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.60
+
+- Restores the auto-update URL to `raw.githubusercontent.com/.../main/SuperVibeBot.js` because jsDelivr `Range: bytes=0-512` checks can return an empty `206` body in Risu-style update fetches.
 
 ## 1.5.59
 
