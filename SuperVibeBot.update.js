@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.63
-//@version 1.5.63
+//@display-name 🐸 SuperVibeBot v1.5.64
+//@version 1.5.64
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.63는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.64는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.63 Release Notes
+ * SuperVibeBot v1.5.64 Release Notes
+ * - v1.5.64: adds Wellspring native generation and workflow/project/variant routing for character-consistent asset generation
+ * - v1.5.64: lets Asset Studio load Wellspring presets, workflows, and projects, then store model, variant, LoRA, sampler, scheduler, CFG, and per-variant batch fields
+ * - v1.5.64: preserves Kero asset workflow/reference fields and auto-reuses the first generated batch image as a reference when no reference image is set
  * - v1.5.63: adds Kero planning and goal modes so TODO/planning requests cannot execute save actions until the user approves goal-mode execution
  * - v1.5.63: routes approved planning drafts into goal-mode missions and restores Kero's older playful speech/personality across daily, planning, work, and goal prompts
  * - v1.5.62: normalizes lorebook folder entries, resolves natural-language folder references, and preserves folder fields in character patch lorebook writes
@@ -2962,6 +2965,9 @@ const FFLATE_UMD_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.
 const WELLSPRING_IMAGE_API_ENDPOINT = "https://wellspring.encrypt.gay/v1/images/nai/generate-image";
 const WELLSPRING_IMAGE_PROFILE_ENDPOINT = "/v1/images/profile";
 const WELLSPRING_IMAGE_PRESETS_ENDPOINT = "/v1/images/presets";
+const WELLSPRING_IMAGE_GENERATIONS_ENDPOINT = "/v1/images/generations";
+const WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT = "/v1/images/workflows";
+const WELLSPRING_IMAGE_JOBS_ENDPOINT = "/v1/images/jobs";
 const WELLSPRING_IMAGE_API_PROFILE_ID = "wellspring-nai-compatible";
 const WELLSPRING_IMAGE_GENERATION_PRESET_ID = "wellspring-profile-basic";
 const IMAGE_API_PROVIDERS = Object.freeze({
@@ -10039,7 +10045,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13441,7 +13447,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.63',
+            '//@version 1.5.64',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -21064,7 +21070,7 @@ function getImageApiProviderLabel(provider) {
 function normalizeImageApiProviderId(provider, endpoint = "") {
     const value = safeString(provider).trim().toLowerCase();
     const url = safeString(endpoint).trim().toLowerCase();
-    if (url.includes("wellspring.encrypt.gay/v1/images/nai/generate-image")) return "wellspring-nai";
+    if (url.includes("wellspring.encrypt.gay")) return "wellspring-nai";
     if (IMAGE_API_PROVIDERS[value]) return value;
     if (/wellspring/.test(value)) return "wellspring-nai";
     return "nai-compatible";
@@ -21596,6 +21602,90 @@ function collectSdStudioImageGenerationPresetSources(data = {}) {
     return workflowPresets;
 }
 
+function svbNormalizeWellspringIdList(value) {
+    if (Array.isArray(value)) {
+        return value.map(item => safeString(item?.id || item).trim()).filter(Boolean);
+    }
+    if (value && typeof value === "object") {
+        return Object.values(value).map(item => safeString(item?.id || item).trim()).filter(Boolean);
+    }
+    const text = safeString(value).trim();
+    if (!text) return [];
+    if (/^\s*\[/.test(text)) {
+        try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) return svbNormalizeWellspringIdList(parsed);
+        } catch (_) {}
+    }
+    return text.split(/[\n,|]+/).map(item => item.trim()).filter(Boolean);
+}
+
+function svbSerializeWellspringIdList(value) {
+    return svbNormalizeWellspringIdList(value).join(", ");
+}
+
+function svbNormalizeWellspringLoras(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+        return value.map((item) => {
+            if (!item || typeof item !== "object") return null;
+            const id = safeString(item.id || item.loraId || item.name).trim();
+            if (!id) return null;
+            const strength = Number(item.strength);
+            return {
+                id,
+                strength: Number.isFinite(strength) ? strength : 1
+            };
+        }).filter(Boolean);
+    }
+    if (typeof value === "object") {
+        if (safeString(value.id || value.loraId || value.name).trim()) return svbNormalizeWellspringLoras([value]);
+        return svbNormalizeWellspringLoras(Object.values(value));
+    }
+    if (typeof value === "string") {
+        const text = value.trim();
+        if (!text) return [];
+        try {
+            return svbNormalizeWellspringLoras(JSON.parse(text));
+        } catch (_) {
+            return text.split(/[\n,|]+/).map((entry) => {
+                const [id, strengthRaw] = entry.split(/[:=]/).map(part => safeString(part).trim());
+                if (!id) return null;
+                const strength = Number(strengthRaw);
+                return { id, strength: Number.isFinite(strength) ? strength : 1 };
+            }).filter(Boolean);
+        }
+    }
+    return [];
+}
+
+function svbSerializeWellspringLoras(value) {
+    const loras = svbNormalizeWellspringLoras(value);
+    if (!loras.length) return "";
+    return JSON.stringify(loras);
+}
+
+function svbNormalizeWellspringMode(value) {
+    const raw = safeString(value).trim().toLowerCase();
+    if (["auto", "nai", "native", "workflow"].includes(raw)) return raw;
+    if (/워크|workflow|project|character|캐릭/i.test(raw)) return "workflow";
+    if (/native|generation|wellspring/.test(raw)) return "native";
+    return "auto";
+}
+
+function svbPickFirstString(...values) {
+    for (const value of values) {
+        const text = safeString(value).trim();
+        if (text) return text;
+    }
+    return "";
+}
+
+function svbOptionalNumber(value, fallback = undefined) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
 function normalizeImagePresetOutput(output = {}, index = 0) {
     const source = (output && typeof output === "object") ? output : { path: output };
     const path = safeString(source.path || source.url || source.imageRef || source.assetPath).trim();
@@ -21641,6 +21731,11 @@ function normalizeImagePresetPart(part = {}, index = 0, preset = {}) {
         steps: Math.max(1, Math.min(150, Number(source.steps || preset.steps) || 26)),
         count,
         seed: source.seed === "random" ? "random" : (Number.isFinite(Number(source.seed)) ? Number(source.seed) : "random"),
+        wellspringVariantIds: svbNormalizeWellspringIdList(source.wellspringVariantIds || source.variantIds || source.variant_ids || source.wellspringVariantId || source.variantId || source.variant_id),
+        wellspringPresetId: safeString(source.wellspringPresetId || source.remotePresetId || source.preset_id || source.remotePreset_id || "").trim(),
+        wellspringModelId: safeString(source.wellspringModelId || source.modelId || source.model_id || "").trim(),
+        wellspringWorkflowId: safeString(source.wellspringWorkflowId || source.workflowId || source.workflow_id || "").trim(),
+        wellspringCharacterId: safeString(source.wellspringCharacterId || source.characterId || source.projectId || source.project_id || source.character_id || "").trim(),
         outputs: ensureArray(source.outputs || source.results || source.generated || [])
             .filter(Boolean)
             .map((output, outputIndex) => {
@@ -21713,8 +21808,17 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
         ? Math.max(0, Math.min(1, Number(merged.referenceInformationExtracted)))
         : (Number.isFinite(Number(defaults.referenceInformationExtracted)) ? Math.max(0, Math.min(1, Number(defaults.referenceInformationExtracted))) : 1);
     merged.wellspringPresetId = safeString(merged.wellspringPresetId || merged.remotePresetId || defaults.wellspringPresetId || defaults.remotePresetId).trim();
+    merged.wellspringModelId = safeString(merged.wellspringModelId || merged.modelId || merged.remoteModelId || defaults.wellspringModelId || defaults.modelId || defaults.remoteModelId).trim();
     merged.wellspringWorkflowId = safeString(merged.wellspringWorkflowId || merged.workflowId || merged.remoteWorkflowId || defaults.wellspringWorkflowId || defaults.workflowId || defaults.remoteWorkflowId).trim();
-    merged.wellspringCharacterId = safeString(merged.wellspringCharacterId || merged.characterId || merged.remoteCharacterId || defaults.wellspringCharacterId || defaults.characterId || defaults.remoteCharacterId).trim();
+    merged.wellspringCharacterId = safeString(merged.wellspringCharacterId || merged.characterId || merged.projectId || merged.remoteCharacterId || defaults.wellspringCharacterId || defaults.characterId || defaults.projectId || defaults.remoteCharacterId).trim();
+    merged.wellspringMode = svbNormalizeWellspringMode(merged.wellspringMode || merged.wellspringApiMode || merged.apiMode || defaults.wellspringMode || defaults.wellspringApiMode || "auto");
+    merged.wellspringQualityPrompt = safeString(merged.wellspringQualityPrompt || merged.qualityPrompt || defaults.wellspringQualityPrompt || defaults.qualityPrompt).trim();
+    merged.wellspringSampler = safeString(merged.wellspringSampler || merged.samplerName || defaults.wellspringSampler || defaults.samplerName).trim();
+    merged.wellspringScheduler = safeString(merged.wellspringScheduler || merged.scheduler || defaults.wellspringScheduler || defaults.scheduler).trim();
+    merged.wellspringCfg = svbOptionalNumber(merged.wellspringCfg ?? merged.cfg ?? defaults.wellspringCfg ?? defaults.cfg, "");
+    merged.wellspringVariantIds = svbNormalizeWellspringIdList(merged.wellspringVariantIds || merged.variantIds || merged.variant_ids || defaults.wellspringVariantIds || defaults.variantIds || defaults.variant_ids);
+    merged.wellspringPerVariantBatch = Math.max(1, Math.min(20, Number(merged.wellspringPerVariantBatch || merged.perVariantBatch || merged.per_variant_batch || defaults.wellspringPerVariantBatch || defaults.perVariantBatch || defaults.per_variant_batch) || 1));
+    merged.wellspringLoras = svbNormalizeWellspringLoras(merged.wellspringLoras || merged.loras || defaults.wellspringLoras || defaults.loras);
     merged.wellspringPayloadJson = typeof merged.wellspringPayloadJson === "string"
         ? merged.wellspringPayloadJson
         : (typeof merged.remotePayloadJson === "string" ? merged.remotePayloadJson : (defaults.wellspringPayloadJson || ""));
@@ -21896,10 +22000,11 @@ function buildImageProfileForGenerationPreset(profile, preset) {
     const normalizedProfile = normalizeImageApiProfile(profile);
     const normalizedPreset = normalizeImageGenerationPreset(preset);
     const provider = resolveImageGenerationProvider(normalizedProfile.provider, normalizedPreset.provider);
+    const isWellspringRoute = isWellspringImageProvider(provider);
     return normalizeImageApiProfile({
         ...normalizedProfile,
         provider,
-        model: normalizedPreset.model || normalizedProfile.model,
+        model: (isWellspringRoute ? normalizedPreset.wellspringModelId : "") || normalizedPreset.model || normalizedProfile.model,
         workflow: normalizedPreset.workflow || normalizedProfile.workflow,
         requestTemplate: normalizedPreset.requestTemplate || normalizedProfile.requestTemplate,
         responseParser: normalizedPreset.responseParser || normalizedProfile.responseParser,
@@ -21910,8 +22015,9 @@ function buildImageProfileForGenerationPreset(profile, preset) {
         method: normalizedPreset.method,
         path: normalizedPreset.path,
         headersTemplate: normalizedPreset.headersTemplate,
-        sampler: normalizedPreset.sampler,
-        scale: normalizedPreset.scale,
+        sampler: (isWellspringRoute ? normalizedPreset.wellspringSampler : "") || normalizedPreset.sampler,
+        scheduler: (isWellspringRoute ? normalizedPreset.wellspringScheduler : "") || normalizedPreset.scheduler,
+        scale: isWellspringRoute && Number.isFinite(Number(normalizedPreset.wellspringCfg)) ? Number(normalizedPreset.wellspringCfg) : normalizedPreset.scale,
         cfgRescale: normalizedPreset.cfgRescale,
         ucPreset: normalizedPreset.ucPreset,
         qualityToggle: normalizedPreset.qualityToggle
@@ -22483,8 +22589,189 @@ function svbBuildNaiCompatiblePayload(profile, prompt, negative, ratio, steps, o
     return payload;
 }
 
+function svbShouldUseWellspringWorkflowGeneration(profile, options = {}) {
+    if (!isWellspringImageProvider(profile?.provider)) return false;
+    const mode = svbNormalizeWellspringMode(options.wellspringMode || options.wellspringApiMode);
+    if (mode === "native" || mode === "nai") return false;
+    if (mode === "workflow") return true;
+    return !!(safeString(options.wellspringWorkflowId).trim() && safeString(options.wellspringCharacterId).trim());
+}
+
+function svbShouldUseWellspringNativeGeneration(profile, options = {}) {
+    if (!isWellspringImageProvider(profile?.provider)) return false;
+    const mode = svbNormalizeWellspringMode(options.wellspringMode || options.wellspringApiMode);
+    if (mode === "nai") return false;
+    if (mode === "native" || mode === "workflow") return true;
+    const endpoint = safeString(profile?.endpoint).toLowerCase();
+    return endpoint.includes("/v1/images/generations")
+        || endpoint.includes("/v1/images/workflows/")
+        || svbShouldUseWellspringWorkflowGeneration(profile, options);
+}
+
+function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps, options = {}) {
+    const payload = {
+        prompt,
+        preset_id: svbPickFirstString(options.wellspringPresetId, options.preset_id),
+        model_id: svbPickFirstString(options.wellspringModelId, options.model_id, profile.model),
+        negative_prompt: negative || undefined,
+        quality_prompt: svbPickFirstString(options.wellspringQualityPrompt, options.qualityPrompt),
+        sampler: svbPickFirstString(options.wellspringSampler, options.sampler, profile.sampler),
+        scheduler: svbPickFirstString(options.wellspringScheduler, options.scheduler, profile.scheduler),
+        steps,
+        cfg: svbOptionalNumber(options.wellspringCfg ?? options.cfg ?? profile.scale, undefined),
+        width: ratio.width,
+        height: ratio.height
+    };
+    const seed = options.seed === "random" ? undefined : svbOptionalNumber(options.seed, undefined);
+    if (seed !== undefined) payload.seed = seed;
+    const loras = svbNormalizeWellspringLoras(options.wellspringLoras || options.loras);
+    if (loras.length) payload.loras = loras;
+
+    if (svbShouldUseWellspringWorkflowGeneration(profile, options)) {
+        payload.project_id = svbPickFirstString(options.wellspringCharacterId, options.characterId, options.projectId, options.project_id);
+        const variantIds = svbNormalizeWellspringIdList(options.wellspringVariantIds || options.variantIds || options.variant_ids);
+        if (variantIds.length) payload.variant_ids = variantIds;
+        payload.per_variant_batch = Math.max(1, Math.min(20, Number(options.wellspringPerVariantBatch || options.perVariantBatch || options.per_variant_batch) || 1));
+    }
+
+    Object.keys(payload).forEach((key) => {
+        if (payload[key] === undefined || payload[key] === "") delete payload[key];
+    });
+    svbMergeImagePayloadExtra(payload, svbParseImagePayloadExtraJson(options.wellspringPayloadJson, "Wellspring 추가 payload"));
+    return payload;
+}
+
+function svbGetWellspringApiHeaders(profile, accept = "application/json") {
+    const headers = {};
+    if (accept) headers.Accept = accept;
+    if (profile?.apiKey) headers.Authorization = `Bearer ${profile.apiKey}`;
+    return headers;
+}
+
+function svbExtractWellspringJobs(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data.filter(Boolean);
+    if (Array.isArray(data.jobs)) return data.jobs.filter(Boolean);
+    if (Array.isArray(data.items)) return data.items.filter(Boolean);
+    if (Array.isArray(data.data)) return data.data.filter(Boolean);
+    if (data.job && typeof data.job === "object") return [data.job];
+    if (data.id || data.status || data.image_url || data.imageUrl) return [data];
+    return [];
+}
+
+function svbResolveWellspringImageUrl(profile, imageUrl = "") {
+    const value = safeString(imageUrl).trim();
+    if (!value) return "";
+    if (/^(?:https?:|data:image\/)/i.test(value)) return value;
+    return joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), value.startsWith("/") ? value : `/${value}`);
+}
+
+async function svbFetchWellspringJobImage(profile, job = {}) {
+    const imageUrl = svbResolveWellspringImageUrl(profile, job.image_url || job.imageUrl || job.image || job.url || job.output_url || job.outputUrl);
+    if (!imageUrl) throw new Error("Wellspring job에 image_url이 없습니다.");
+    if (/^data:image\//i.test(imageUrl)) return svbDataUrlToImageResult(imageUrl);
+    const raw = await svbImageFetchRaw(imageUrl, {
+        method: "GET",
+        headers: svbGetWellspringApiHeaders(profile, "image/*, application/octet-stream, application/json")
+    }, `${profile.name} 이미지 결과`, profile.timeoutMs);
+    if (!raw.ok) {
+        const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
+        throw new Error(`${profile.name} 이미지 가져오기 실패 (${raw.status}): ${text.slice(0, 300)}`);
+    }
+    return await svbParseImageApiResponse(profile, raw);
+}
+
+async function svbWaitForWellspringJobImage(profile, initialData, options = {}) {
+    const startedAt = Date.now();
+    const timeoutMs = Math.max(30000, Number(profile.timeoutMs) || 180000);
+    const base = getWellspringImageApiBase(profile.endpoint);
+    const headers = svbGetWellspringApiHeaders(profile);
+    const fallbackRunId = initialData?.id && initialData?.total ? initialData.id : "";
+    const runId = safeString(initialData?.workflow_run_id || initialData?.run_id || initialData?.runId || fallbackRunId).trim();
+    let jobId = safeString(initialData?.job_id || initialData?.jobId || initialData?.job?.id || (!runId ? initialData?.id : "")).trim();
+    let lastStatus = "";
+
+    const pickReadyJob = (data) => {
+        const jobs = svbExtractWellspringJobs(data);
+        const completed = jobs.find(job => /completed|succeeded|success|done/i.test(safeString(job.status)) && (job.image_url || job.imageUrl || job.image || job.url || job.output_url || job.outputUrl));
+        if (completed) return completed;
+        const failed = jobs.find(job => /failed|error|cancelled|canceled/i.test(safeString(job.status)));
+        if (failed) {
+            const detail = safeString(failed.error?.message || failed.error || failed.message || failed.status).trim();
+            throw new Error(`Wellspring 생성 실패${detail ? `: ${detail}` : ""}`);
+        }
+        const current = jobs[0];
+        if (current?.id && !jobId) jobId = safeString(current.id).trim();
+        if (current?.status) lastStatus = safeString(current.status);
+        return null;
+    };
+
+    const initialReady = pickReadyJob(initialData);
+    if (initialReady) return await svbFetchWellspringJobImage(profile, initialReady);
+
+    if (!runId && !jobId) {
+        try {
+            return await svbParseImageApiResponse(profile, {
+                ok: true,
+                status: 200,
+                headers: {},
+                bytes: new TextEncoder().encode(JSON.stringify(initialData ?? {}))
+            });
+        } catch (_) {
+            throw new Error("Wellspring 생성 응답에서 job id 또는 run id를 찾지 못했습니다.");
+        }
+    }
+
+    while (Date.now() - startedAt < timeoutMs) {
+        if (options.signal?.aborted) throw createSvbAbortError(`${profile.name} 이미지 생성이 중단되었습니다.`);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const data = runId
+            ? await svbImageFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}?run=${encodeURIComponent(runId)}&limit=100`), { method: "GET", headers }, `${profile.name} run 상태`, 30000)
+            : await svbImageFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}/${encodeURIComponent(jobId)}`), { method: "GET", headers }, `${profile.name} job 상태`, 30000);
+        const ready = pickReadyJob(data);
+        if (ready) return await svbFetchWellspringJobImage(profile, ready);
+    }
+    throw new Error(`${profile.name} 이미지 생성 시간이 초과되었습니다${lastStatus ? ` (마지막 상태: ${lastStatus})` : ""}.`);
+}
+
+async function svbGenerateWellspringNativeImage(profile, options) {
+    assertImageApiEndpoint(profile);
+    if (!safeString(profile.apiKey).trim()) throw new Error("Wellspring ws-key를 입력해주세요.");
+    const ratio = getImageApiRatio(profile, options.ratioId);
+    const steps = Math.max(1, Math.min(150, Number(options.steps || profile.steps) || 26));
+    const payload = svbBuildWellspringNativePayload(profile, options.prompt, options.negative, ratio, steps, options);
+    const workflowMode = svbShouldUseWellspringWorkflowGeneration(profile, options);
+    if (workflowMode) {
+        const workflowId = svbPickFirstString(options.wellspringWorkflowId, options.workflowId, options.workflow_id);
+        if (!workflowId) throw new Error("Wellspring workflowId가 필요합니다.");
+        if (!payload.project_id) throw new Error("Wellspring characterId/project_id가 필요합니다.");
+        if (!svbNormalizeWellspringIdList(payload.variant_ids).length && !safeString(options.wellspringPayloadJson).trim()) {
+            throw new Error("Wellspring workflow 생성에는 variantIds가 필요합니다. 워크플로의 감정/변형 id를 선택하거나 추가 payload에 variant_ids를 넣어주세요.");
+        }
+        const data = await svbImageFetchJson(joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), `${WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT}/${encodeURIComponent(workflowId)}/generate`), {
+            method: "POST",
+            headers: svbGetWellspringApiHeaders(profile),
+            body: payload
+        }, `${profile.name} workflow 생성`, profile.timeoutMs);
+        return await svbWaitForWellspringJobImage(profile, data, options);
+    }
+
+    const endpoint = safeString(profile.endpoint).toLowerCase().includes("/v1/images/generations")
+        ? profile.endpoint
+        : joinImageApiUrl(getWellspringImageApiBase(profile.endpoint), WELLSPRING_IMAGE_GENERATIONS_ENDPOINT);
+    const data = await svbImageFetchJson(endpoint, {
+        method: "POST",
+        headers: svbGetWellspringApiHeaders(profile),
+        body: payload
+    }, `${profile.name} native 생성`, profile.timeoutMs);
+    return await svbWaitForWellspringJobImage(profile, data, options);
+}
+
 async function svbGenerateNaiCompatibleImage(profile, options) {
     assertImageApiEndpoint(profile);
+    if (svbShouldUseWellspringNativeGeneration(profile, options)) {
+        return await svbGenerateWellspringNativeImage(profile, options);
+    }
     const ratio = getImageApiRatio(profile, options.ratioId);
     const steps = Math.max(10, Math.min(30, Number(options.steps || profile.steps) || 26));
     const payload = svbBuildNaiCompatiblePayload(profile, options.prompt, options.negative, ratio, steps, options);
@@ -22674,9 +22961,18 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
         characterPrompt: safeString(options.characterPrompt).trim(),
         characterNegative: safeString(options.characterNegative).trim(),
         referenceImages: ensureArray(options.referenceImages),
+        wellspringMode: safeString(options.wellspringMode || options.wellspringApiMode).trim(),
         wellspringPresetId: safeString(options.wellspringPresetId).trim(),
+        wellspringModelId: safeString(options.wellspringModelId).trim(),
         wellspringWorkflowId: safeString(options.wellspringWorkflowId).trim(),
         wellspringCharacterId: safeString(options.wellspringCharacterId).trim(),
+        wellspringVariantIds: svbNormalizeWellspringIdList(options.wellspringVariantIds || options.variantIds || options.variant_ids),
+        wellspringPerVariantBatch: options.wellspringPerVariantBatch || options.perVariantBatch || options.per_variant_batch,
+        wellspringQualityPrompt: safeString(options.wellspringQualityPrompt || options.qualityPrompt).trim(),
+        wellspringCfg: options.wellspringCfg ?? options.cfg,
+        wellspringSampler: safeString(options.wellspringSampler || options.sampler).trim(),
+        wellspringScheduler: safeString(options.wellspringScheduler || options.scheduler).trim(),
+        wellspringLoras: svbNormalizeWellspringLoras(options.wellspringLoras || options.loras),
         wellspringPayloadJson: safeString(options.wellspringPayloadJson)
     };
     if (isNaiFamilyImageProvider(normalized.provider)) return await svbGenerateNaiCompatibleImage(normalized, request);
@@ -22694,9 +22990,9 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     const referenceImagePath = safeString(options.referenceImagePath || normalizedPreset.referenceImagePath).trim();
     if (!referenceImages.length && referenceImagePath) {
         referenceImages.push(await svbReadImageReferenceFromPath(referenceImagePath, {
-            name: normalizedPreset.referenceImageName,
-            strength: normalizedPreset.referenceStrength,
-            informationExtracted: normalizedPreset.referenceInformationExtracted
+            name: options.referenceImageName || normalizedPreset.referenceImageName,
+            strength: options.referenceStrength ?? normalizedPreset.referenceStrength,
+            informationExtracted: options.referenceInformationExtracted ?? normalizedPreset.referenceInformationExtracted
         }));
     }
     const result = await svbGenerateImageWithProfile(runtimeProfile, {
@@ -22706,10 +23002,19 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
         characterPrompt: normalizedPreset.characterPrompt,
         characterNegative: normalizedPreset.characterNegative,
         referenceImages,
-        wellspringPresetId: normalizedPreset.wellspringPresetId,
-        wellspringWorkflowId: normalizedPreset.wellspringWorkflowId,
-        wellspringCharacterId: normalizedPreset.wellspringCharacterId,
-        wellspringPayloadJson: normalizedPreset.wellspringPayloadJson,
+        wellspringMode: options.wellspringMode || normalizedPreset.wellspringMode,
+        wellspringPresetId: options.wellspringPresetId || normalizedPreset.wellspringPresetId,
+        wellspringModelId: options.wellspringModelId || normalizedPreset.wellspringModelId,
+        wellspringWorkflowId: options.wellspringWorkflowId || normalizedPreset.wellspringWorkflowId,
+        wellspringCharacterId: options.wellspringCharacterId || normalizedPreset.wellspringCharacterId,
+        wellspringVariantIds: ensureArray(options.wellspringVariantIds).length ? options.wellspringVariantIds : normalizedPreset.wellspringVariantIds,
+        wellspringPerVariantBatch: options.wellspringPerVariantBatch || normalizedPreset.wellspringPerVariantBatch,
+        wellspringQualityPrompt: options.wellspringQualityPrompt || normalizedPreset.wellspringQualityPrompt,
+        wellspringCfg: options.wellspringCfg ?? normalizedPreset.wellspringCfg,
+        wellspringSampler: options.wellspringSampler || normalizedPreset.wellspringSampler,
+        wellspringScheduler: options.wellspringScheduler || normalizedPreset.wellspringScheduler,
+        wellspringLoras: ensureArray(options.wellspringLoras).length ? options.wellspringLoras : normalizedPreset.wellspringLoras,
+        wellspringPayloadJson: options.wellspringPayloadJson || normalizedPreset.wellspringPayloadJson,
         ratioId: options.ratioId || runtimeProfile.ratioId,
         steps: options.steps || runtimeProfile.steps
     });
@@ -26983,7 +27288,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -31462,7 +31767,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return [payload];
         }
         const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target'].forEach((key) => {
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
         });
         return Object.keys(direct).length ? [direct] : [];
@@ -31495,6 +31800,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const ratioId = safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim();
             const rawSteps = Number(source.steps || payloadObj.steps || action.steps || 0);
             const steps = Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0;
+            const payloadJsonValue = source.wellspringPayloadJson ?? source.remotePayloadJson ?? payloadObj.wellspringPayloadJson ?? payloadObj.remotePayloadJson ?? action.wellspringPayloadJson ?? action.remotePayloadJson;
+            const stringifyPayloadJson = (value) => {
+                if (typeof value === 'string') return value;
+                if (isPlainObject(value)) return JSON.stringify(value);
+                return '';
+            };
             items.push({
                 index,
                 target,
@@ -31508,7 +31819,24 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 stylePreset: safeString(source.stylePreset || source.style || source.styleId || payloadObj.stylePreset || payloadObj.style || payloadObj.styleId || action.stylePreset || action.style || action.styleId).trim(),
                 stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
                 profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
-                presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim()
+                presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim(),
+                referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
+                referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
+                referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
+                referenceInformationExtracted: svbOptionalNumber(source.referenceInformationExtracted ?? source.referenceInfo ?? payloadObj.referenceInformationExtracted ?? payloadObj.referenceInfo ?? action.referenceInformationExtracted ?? action.referenceInfo, undefined),
+                wellspringMode: safeString(source.wellspringMode || source.wellspringApiMode || payloadObj.wellspringMode || payloadObj.wellspringApiMode || action.wellspringMode || action.wellspringApiMode).trim(),
+                wellspringPresetId: safeString(source.wellspringPresetId || source.remotePresetId || source.preset_id || payloadObj.wellspringPresetId || payloadObj.remotePresetId || payloadObj.preset_id || action.wellspringPresetId || action.remotePresetId).trim(),
+                wellspringModelId: safeString(source.wellspringModelId || source.modelId || source.model_id || payloadObj.wellspringModelId || payloadObj.modelId || payloadObj.model_id || action.wellspringModelId || action.modelId || action.model_id).trim(),
+                wellspringWorkflowId: safeString(source.wellspringWorkflowId || source.workflowId || source.workflow_id || payloadObj.wellspringWorkflowId || payloadObj.workflowId || payloadObj.workflow_id || action.wellspringWorkflowId || action.workflowId || action.workflow_id).trim(),
+                wellspringCharacterId: safeString(source.wellspringCharacterId || source.projectId || source.project_id || source.remoteCharacterId || payloadObj.wellspringCharacterId || payloadObj.projectId || payloadObj.project_id || payloadObj.remoteCharacterId || action.wellspringCharacterId || action.projectId || action.project_id || action.remoteCharacterId).trim(),
+                wellspringVariantIds: svbNormalizeWellspringIdList(source.wellspringVariantIds || source.variantIds || source.variant_ids || source.wellspringVariantId || source.variantId || source.variant_id || payloadObj.wellspringVariantIds || payloadObj.variantIds || payloadObj.variant_ids || action.wellspringVariantIds || action.variantIds || action.variant_ids),
+                wellspringPerVariantBatch: svbOptionalNumber(source.wellspringPerVariantBatch ?? source.perVariantBatch ?? source.per_variant_batch ?? payloadObj.wellspringPerVariantBatch ?? payloadObj.perVariantBatch ?? payloadObj.per_variant_batch ?? action.wellspringPerVariantBatch ?? action.perVariantBatch ?? action.per_variant_batch, undefined),
+                wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt || payloadObj.wellspringQualityPrompt || payloadObj.qualityPrompt || payloadObj.quality_prompt || action.wellspringQualityPrompt || action.qualityPrompt || action.quality_prompt).trim(),
+                wellspringCfg: svbOptionalNumber(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, undefined),
+                wellspringSampler: safeString(source.wellspringSampler || source.sampler || payloadObj.wellspringSampler || payloadObj.sampler || action.wellspringSampler || action.sampler).trim(),
+                wellspringScheduler: safeString(source.wellspringScheduler || source.scheduler || payloadObj.wellspringScheduler || payloadObj.scheduler || action.wellspringScheduler || action.scheduler).trim(),
+                wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || payloadObj.wellspringLoras || payloadObj.loras || action.wellspringLoras || action.loras),
+                wellspringPayloadJson: stringifyPayloadJson(payloadJsonValue)
             });
         });
         return items;
@@ -31685,6 +32013,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         let failed = 0;
         const createdAssets = [];
         const failedAssets = [];
+        let autoReferencePath = '';
+        let autoReferenceName = '';
+        const shouldAutoReferenceBatch = requested > 1 && !items.some(item => safeString(item.referenceImagePath).trim());
         addKeroWorkstreamEvent('이미지 에셋 생성', `이미지 API로 ${requested}장 생성 후 캐릭터 에셋에 등록합니다.`, 'action', actionProgressOptions);
 
         for (const job of jobs) {
@@ -31712,12 +32043,44 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const negative = normalizeKeroAsset2dNegativePrompt(svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim(), profile, preset);
             const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
             const steps = item.steps || preset.steps || profile.steps || 26;
+            const referenceImagePath = safeString(item.referenceImagePath || (shouldAutoReferenceBatch ? autoReferencePath : '')).trim();
+            const referenceImageName = safeString(item.referenceImageName || (referenceImagePath === autoReferencePath ? autoReferenceName : '')).trim();
             updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
             try {
-                const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
-                await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, {
+                    prompt,
+                    negative,
+                    ratioId,
+                    steps,
+                    referenceImagePath,
+                    referenceImageName,
+                    referenceStrength: item.referenceStrength,
+                    referenceInformationExtracted: item.referenceInformationExtracted,
+                    wellspringMode: item.wellspringMode,
+                    wellspringPresetId: item.wellspringPresetId,
+                    wellspringModelId: item.wellspringModelId,
+                    wellspringWorkflowId: item.wellspringWorkflowId,
+                    wellspringCharacterId: item.wellspringCharacterId,
+                    wellspringVariantIds: item.wellspringVariantIds,
+                    wellspringPerVariantBatch: item.wellspringPerVariantBatch,
+                    wellspringQualityPrompt: item.wellspringQualityPrompt,
+                    wellspringCfg: item.wellspringCfg,
+                    wellspringSampler: item.wellspringSampler,
+                    wellspringScheduler: item.wellspringScheduler,
+                    wellspringLoras: item.wellspringLoras,
+                    wellspringPayloadJson: item.wellspringPayloadJson
+                });
+                const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                if (shouldAutoReferenceBatch && !autoReferencePath) {
+                    const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
+                    const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase());
+                    if (savedAsset?.path) {
+                        autoReferencePath = savedAsset.path;
+                        autoReferenceName = savedAsset.name || name;
+                    }
+                }
                 created += 1;
-                createdAssets.push({ target: item.target, name, prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps });
+                createdAssets.push({ target: item.target, name, prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps, referenceImagePath });
             } catch (error) {
                 failed += 1;
                 failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
@@ -35876,9 +36239,11 @@ ${metaBlock}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
+- Wellspring workflow를 쓸 때 wellspringWorkflowId는 Wellspring workflow id, wellspringCharacterId는 Wellspring project/character id, wellspringVariantIds는 workflow variant id 배열이다. RisuAI 캐릭터 targetCharacterId와 혼동하지 않는다.
 - 에셋 스튜디오 관리 기능도 케로가 활용한다. 확장자 정리/폴더 이동/패턴 이름 변경/삭제는 target:"asset", type:"asset_manage"로 실행한다.
 - 에셋 확장자 정리: @action {"type":"asset_manage","target":"asset","operation":"normalize_extensions","kind":"all","all":true}
 - 에셋 폴더 이동: @action {"type":"asset_manage","target":"asset","operation":"move_folder","kind":"additional","names":["profile_main"],"folder":"profiles"}
@@ -35901,7 +36266,9 @@ ${metaBlock}
 - 에셋 스튜디오 프리셋의 Wellspring 참조 이미지(referenceImagePath)가 설정되어 있으면 시스템이 최종 이미지 호출 직전에 해당 리수 에셋을 읽어 참조 이미지로 전달한다. 같은 캐릭터의 프로필/감정/스탠딩 묶음을 만들 때는 참조 이미지를 캐릭터 기준으로 보고, 케로 prompt는 표정/포즈/장면 차이에 집중한다.
 - ComfyUI/custom workflow 템플릿은 {{prompt}}에 최종 합성 프롬프트를 받는다. 캐릭터 전용 노드가 있으면 {{character_prompt}} 또는 {{identity_prompt}}, 네거티브 쪽은 {{character_negative}} 또는 {{identity_negative}}를 쓴다.
 - Wellspring/커스텀 워크플로우가 이미지 입력 변수를 요구하면 {{reference_image_base64}}, {{reference_image_data_url}}, {{character_image_base64}}, {{character_image_data_url}}, {{reference_strength}}를 사용할 수 있다.
-- Wellspring 서버의 characterId/workflowId/presetId가 확인된 경우에는 에셋 스튜디오 프리셋의 Wellspring 워크플로우 입력에 저장된 값을 사용한다. 필드명을 모르면 지어내지 말고 사용자가 Wellspring에서 확인한 ID/추가 payload를 넣도록 안내한다.
+- Wellspring 서버의 characterId/workflowId/presetId/modelId/variantIds가 확인된 경우에는 에셋 스튜디오 프리셋의 Wellspring 워크플로우 입력에 저장된 값을 사용한다. 필드명을 모르면 지어내지 말고 사용자가 Wellspring에서 확인한 ID/추가 payload를 넣도록 안내한다.
+- Wellspring workflow 캐릭터 일관성이 필요한 묶음 생성에서는 기존 referenceImagePath가 있으면 그것을 사용하고, 없으면 첫 프로필/기준 이미지를 먼저 만든 뒤 시스템이 후속 에셋의 referenceImagePath로 자동 재사용하게 둔다. 같은 배치 안에서 인물마다 기준 이미지를 바꾸려면 assets[] 항목마다 referenceImagePath 또는 wellspringCharacterId/projectId를 명시한다.
+- Wellspring LoRA/고급값은 assets[] 또는 payload에 wellspringLoras, wellspringQualityPrompt, wellspringSampler, wellspringScheduler, wellspringCfg, wellspringPerVariantBatch, wellspringPayloadJson으로 전달할 수 있다. wellspringPayloadJson은 서버 추가 필드 보강용이고, prompt를 비우거나 창작 내용을 대체하는 곳이 아니다.
 - 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
 - "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
@@ -43296,7 +43663,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.63 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.64 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -52594,6 +52961,7 @@ async function openAssetStudio() {
     let pendingBatchReplaceKind = 'additional';
     let generatedImageResult = null;
     let generationRequestId = 0;
+    let wellspringRemoteOptions = { presets: [], workflows: [], projects: [] };
 
     function setStatus(message, type = 'info') {
         const el = document.getElementById('svb-as-status');
@@ -52803,6 +53171,107 @@ async function openAssetStudio() {
         return imageGenerationPresets.find(item => item.id === presetId) || getActiveImageGenerationPreset();
     }
 
+    function getSelectedWellspringProfile() {
+        const profile = normalizeImageApiProfile(getSelectedImageProfile());
+        if (isWellspringImageProvider(profile.provider) || safeString(profile.endpoint).includes('wellspring.encrypt.gay')) {
+            return normalizeImageApiProfile({ ...profile, provider: 'wellspring-nai' });
+        }
+        const found = normalizeImageApiProfiles(imageApiProfiles).find((item) =>
+            isWellspringImageProvider(item.provider) || safeString(item.endpoint).includes('wellspring.encrypt.gay')
+        );
+        return found ? normalizeImageApiProfile({ ...found, provider: 'wellspring-nai' }) : profile;
+    }
+
+    function renderWellspringRemoteSelects() {
+        const presetPicker = document.getElementById('svb-as-wellspring-preset-picker');
+        const workflowPicker = document.getElementById('svb-as-wellspring-workflow-picker');
+        const characterPicker = document.getElementById('svb-as-wellspring-character-picker');
+        const presetValue = safeString(document.getElementById('svb-as-wellspring-preset-id')?.value).trim();
+        const workflowValue = safeString(document.getElementById('svb-as-wellspring-workflow-id')?.value).trim();
+        const characterValue = safeString(document.getElementById('svb-as-wellspring-character-id')?.value).trim();
+        if (presetPicker) {
+            const options = ['<option value="">Wellspring preset 선택</option>'];
+            wellspringRemoteOptions.presets.forEach((preset) => {
+                const id = safeString(preset.id || preset.preset_id).trim();
+                if (!id) return;
+                const name = safeString(preset.name || preset.label || id).trim();
+                options.push(`<option value="${escapeHtml(id)}">${escapeHtml(name)} · ${escapeHtml(id)}</option>`);
+            });
+            presetPicker.innerHTML = options.join('');
+            presetPicker.value = wellspringRemoteOptions.presets.some(item => safeString(item.id || item.preset_id).trim() === presetValue) ? presetValue : '';
+        }
+        if (workflowPicker) {
+            const options = ['<option value="">Wellspring workflow 선택</option>'];
+            wellspringRemoteOptions.workflows.forEach((workflow) => {
+                const id = safeString(workflow.id || workflow.workflow_id).trim();
+                if (!id) return;
+                const variants = ensureArray(workflow.variants).length;
+                const name = safeString(workflow.name || workflow.label || id).trim();
+                options.push(`<option value="${escapeHtml(id)}">${escapeHtml(name)}${variants ? ` · variant ${variants}` : ''} · ${escapeHtml(id)}</option>`);
+            });
+            workflowPicker.innerHTML = options.join('');
+            workflowPicker.value = wellspringRemoteOptions.workflows.some(item => safeString(item.id || item.workflow_id).trim() === workflowValue) ? workflowValue : '';
+        }
+        if (characterPicker) {
+            const options = ['<option value="">Wellspring 캐릭터/project 선택</option>'];
+            wellspringRemoteOptions.projects.forEach((project) => {
+                const id = safeString(project.id || project.project_id || project.character_id).trim();
+                if (!id) return;
+                const name = safeString(project.name || project.character || project.label || id).trim();
+                options.push(`<option value="${escapeHtml(id)}">${escapeHtml(name)} · ${escapeHtml(id)}</option>`);
+            });
+            characterPicker.innerHTML = options.join('');
+            characterPicker.value = wellspringRemoteOptions.projects.some(item => safeString(item.id || item.project_id || item.character_id).trim() === characterValue) ? characterValue : '';
+        }
+    }
+
+    async function loadWellspringProjectsForWorkflow(workflowId) {
+        const cleanWorkflowId = safeString(workflowId).trim();
+        wellspringRemoteOptions.projects = [];
+        if (!cleanWorkflowId) {
+            renderWellspringRemoteSelects();
+            return [];
+        }
+        const profile = getSelectedWellspringProfile();
+        if (!isWellspringImageProvider(profile.provider) || !safeString(profile.apiKey).trim()) {
+            renderWellspringRemoteSelects();
+            return [];
+        }
+        const base = getWellspringImageApiBase(profile.endpoint);
+        const data = await svbImageFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT}/${encodeURIComponent(cleanWorkflowId)}/projects`), {
+            method: 'GET',
+            headers: svbGetWellspringApiHeaders(profile)
+        }, `${profile.name} 워크플로 캐릭터`, 30000);
+        wellspringRemoteOptions.projects = ensureArray(data?.projects || data?.items || data?.data || data).filter(Boolean);
+        renderWellspringRemoteSelects();
+        return wellspringRemoteOptions.projects;
+    }
+
+    async function refreshWellspringRemoteOptionsFromStudio() {
+        const profile = getSelectedWellspringProfile();
+        if (!isWellspringImageProvider(profile.provider)) {
+            setStatus('Wellspring 프로필을 먼저 선택하세요.', 'error');
+            return;
+        }
+        if (!safeString(profile.apiKey).trim()) {
+            setStatus('Wellspring ws-key가 비어 있습니다. 설정 > 이미지 API 설정에서 저장하세요.', 'error');
+            return;
+        }
+        const base = getWellspringImageApiBase(profile.endpoint);
+        setStatus('Wellspring 프리셋/워크플로 목록을 불러오는 중...', 'info');
+        const headers = svbGetWellspringApiHeaders(profile);
+        const [presetsData, workflowsData] = await Promise.all([
+            svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_PRESETS_ENDPOINT), { method: 'GET', headers }, `${profile.name} 프리셋`, 30000),
+            svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT), { method: 'GET', headers }, `${profile.name} 워크플로`, 30000)
+        ]);
+        wellspringRemoteOptions.presets = ensureArray(presetsData?.presets || presetsData?.items || presetsData?.data || presetsData).filter(Boolean);
+        wellspringRemoteOptions.workflows = ensureArray(workflowsData?.workflows || workflowsData?.items || workflowsData?.data || workflowsData).filter(Boolean);
+        const workflowId = safeString(document.getElementById('svb-as-wellspring-workflow-id')?.value).trim();
+        if (workflowId) await loadWellspringProjectsForWorkflow(workflowId);
+        else renderWellspringRemoteSelects();
+        setStatus(`Wellspring 목록 로드 완료: 프리셋 ${wellspringRemoteOptions.presets.length}개 · 워크플로 ${wellspringRemoteOptions.workflows.length}개 · 캐릭터 ${wellspringRemoteOptions.projects.length}개`, 'success');
+    }
+
     function collectReferenceImageChoices() {
         const choices = [{ value: '', label: '참조 이미지 사용 안 함', name: '' }];
         additionalAssets.forEach((asset) => {
@@ -52889,8 +53358,17 @@ async function openAssetStudio() {
         const referenceStrength = document.getElementById('svb-as-reference-strength');
         const referenceInfo = document.getElementById('svb-as-reference-info');
         const wellspringPresetId = document.getElementById('svb-as-wellspring-preset-id');
+        const wellspringMode = document.getElementById('svb-as-wellspring-mode');
+        const wellspringModelId = document.getElementById('svb-as-wellspring-model-id');
         const wellspringWorkflowId = document.getElementById('svb-as-wellspring-workflow-id');
         const wellspringCharacterId = document.getElementById('svb-as-wellspring-character-id');
+        const wellspringVariantIds = document.getElementById('svb-as-wellspring-variant-ids');
+        const wellspringPerVariantBatch = document.getElementById('svb-as-wellspring-per-variant-batch');
+        const wellspringQualityPrompt = document.getElementById('svb-as-wellspring-quality-prompt');
+        const wellspringCfg = document.getElementById('svb-as-wellspring-cfg');
+        const wellspringSampler = document.getElementById('svb-as-wellspring-sampler');
+        const wellspringScheduler = document.getElementById('svb-as-wellspring-scheduler');
+        const wellspringLoras = document.getElementById('svb-as-wellspring-loras');
         const wellspringPayloadJson = document.getElementById('svb-as-wellspring-payload-json');
         renderReferenceImagePicker(preset.referenceImagePath);
         if (presetName && !presetName.value) presetName.value = preset.name || '';
@@ -52911,9 +53389,19 @@ async function openAssetStudio() {
         if (referenceStrength && !referenceStrength.value) referenceStrength.value = String(preset.referenceStrength ?? 0.65);
         if (referenceInfo && !referenceInfo.value) referenceInfo.value = String(preset.referenceInformationExtracted ?? 1);
         if (wellspringPresetId && !wellspringPresetId.value) wellspringPresetId.value = preset.wellspringPresetId || '';
+        if (wellspringMode && !wellspringMode.value) wellspringMode.value = preset.wellspringMode || 'auto';
+        if (wellspringModelId && !wellspringModelId.value) wellspringModelId.value = preset.wellspringModelId || '';
         if (wellspringWorkflowId && !wellspringWorkflowId.value) wellspringWorkflowId.value = preset.wellspringWorkflowId || '';
         if (wellspringCharacterId && !wellspringCharacterId.value) wellspringCharacterId.value = preset.wellspringCharacterId || '';
+        if (wellspringVariantIds && !wellspringVariantIds.value) wellspringVariantIds.value = svbSerializeWellspringIdList(preset.wellspringVariantIds);
+        if (wellspringPerVariantBatch && !wellspringPerVariantBatch.value) wellspringPerVariantBatch.value = preset.wellspringPerVariantBatch ? String(preset.wellspringPerVariantBatch) : '1';
+        if (wellspringQualityPrompt && !wellspringQualityPrompt.value) wellspringQualityPrompt.value = preset.wellspringQualityPrompt || '';
+        if (wellspringCfg && !wellspringCfg.value) wellspringCfg.value = preset.wellspringCfg === '' || preset.wellspringCfg === undefined ? '' : String(preset.wellspringCfg);
+        if (wellspringSampler && !wellspringSampler.value) wellspringSampler.value = preset.wellspringSampler || '';
+        if (wellspringScheduler && !wellspringScheduler.value) wellspringScheduler.value = preset.wellspringScheduler || '';
+        if (wellspringLoras && !wellspringLoras.value) wellspringLoras.value = svbSerializeWellspringLoras(preset.wellspringLoras);
         if (wellspringPayloadJson && !wellspringPayloadJson.value) wellspringPayloadJson.value = preset.wellspringPayloadJson || '';
+        renderWellspringRemoteSelects();
         renderGenerationConnectionSummary();
         renderGenerationPartList();
     }
@@ -52943,8 +53431,17 @@ async function openAssetStudio() {
         const referenceStrength = document.getElementById('svb-as-reference-strength');
         const referenceInfo = document.getElementById('svb-as-reference-info');
         const wellspringPresetId = document.getElementById('svb-as-wellspring-preset-id');
+        const wellspringMode = document.getElementById('svb-as-wellspring-mode');
+        const wellspringModelId = document.getElementById('svb-as-wellspring-model-id');
         const wellspringWorkflowId = document.getElementById('svb-as-wellspring-workflow-id');
         const wellspringCharacterId = document.getElementById('svb-as-wellspring-character-id');
+        const wellspringVariantIds = document.getElementById('svb-as-wellspring-variant-ids');
+        const wellspringPerVariantBatch = document.getElementById('svb-as-wellspring-per-variant-batch');
+        const wellspringQualityPrompt = document.getElementById('svb-as-wellspring-quality-prompt');
+        const wellspringCfg = document.getElementById('svb-as-wellspring-cfg');
+        const wellspringSampler = document.getElementById('svb-as-wellspring-sampler');
+        const wellspringScheduler = document.getElementById('svb-as-wellspring-scheduler');
+        const wellspringLoras = document.getElementById('svb-as-wellspring-loras');
         const wellspringPayloadJson = document.getElementById('svb-as-wellspring-payload-json');
         renderReferenceImagePicker(normalized.referenceImagePath);
         if (ratio) ratio.value = normalized.ratioId || '1:1';
@@ -52970,9 +53467,19 @@ async function openAssetStudio() {
         if (referenceStrength) referenceStrength.value = String(normalized.referenceStrength ?? 0.65);
         if (referenceInfo) referenceInfo.value = String(normalized.referenceInformationExtracted ?? 1);
         if (wellspringPresetId) wellspringPresetId.value = normalized.wellspringPresetId || '';
+        if (wellspringMode) wellspringMode.value = normalized.wellspringMode || 'auto';
+        if (wellspringModelId) wellspringModelId.value = normalized.wellspringModelId || '';
         if (wellspringWorkflowId) wellspringWorkflowId.value = normalized.wellspringWorkflowId || '';
         if (wellspringCharacterId) wellspringCharacterId.value = normalized.wellspringCharacterId || '';
+        if (wellspringVariantIds) wellspringVariantIds.value = svbSerializeWellspringIdList(normalized.wellspringVariantIds);
+        if (wellspringPerVariantBatch) wellspringPerVariantBatch.value = normalized.wellspringPerVariantBatch ? String(normalized.wellspringPerVariantBatch) : '1';
+        if (wellspringQualityPrompt) wellspringQualityPrompt.value = normalized.wellspringQualityPrompt || '';
+        if (wellspringCfg) wellspringCfg.value = normalized.wellspringCfg === '' || normalized.wellspringCfg === undefined ? '' : String(normalized.wellspringCfg);
+        if (wellspringSampler) wellspringSampler.value = normalized.wellspringSampler || '';
+        if (wellspringScheduler) wellspringScheduler.value = normalized.wellspringScheduler || '';
+        if (wellspringLoras) wellspringLoras.value = svbSerializeWellspringLoras(normalized.wellspringLoras);
         if (wellspringPayloadJson) wellspringPayloadJson.value = normalized.wellspringPayloadJson || '';
+        renderWellspringRemoteSelects();
         const profile = getSelectedImageProfile();
         const providersCompatible = areImageProvidersCompatible(profile.provider, normalized.provider);
         const warning = !providersCompatible
@@ -52998,7 +53505,19 @@ async function openAssetStudio() {
         const fixedTagsOn = [preset.promptPrefix, preset.promptSuffix, preset.negativePrefix, preset.negativeSuffix]
             .some(value => safeString(value).trim());
         const referenceOn = !!safeString(preset.referenceImagePath).trim();
-        const wellspringRouteOn = [preset.wellspringPresetId, preset.wellspringWorkflowId, preset.wellspringCharacterId, preset.wellspringPayloadJson]
+        const wellspringRouteOn = [
+            preset.wellspringPresetId,
+            preset.wellspringModelId,
+            preset.wellspringWorkflowId,
+            preset.wellspringCharacterId,
+            svbSerializeWellspringIdList(preset.wellspringVariantIds),
+            preset.wellspringQualityPrompt,
+            preset.wellspringCfg,
+            preset.wellspringSampler,
+            preset.wellspringScheduler,
+            svbSerializeWellspringLoras(preset.wellspringLoras),
+            preset.wellspringPayloadJson
+        ]
             .some(value => safeString(value).trim());
         const fixedTagNote = [referenceOn ? '참조 이미지' : '', wellspringRouteOn ? 'Wellspring 고급' : '', characterLockOn ? '캐릭터 고정' : '', fixedTagsOn ? '고정 태그' : ''].filter(Boolean).join(' · ');
         summary.innerHTML = `
@@ -53070,8 +53589,17 @@ async function openAssetStudio() {
             referenceStrength: currentPreset.referenceStrength,
             referenceInformationExtracted: currentPreset.referenceInformationExtracted,
             wellspringPresetId: currentPreset.wellspringPresetId,
+            wellspringMode: currentPreset.wellspringMode,
+            wellspringModelId: currentPreset.wellspringModelId,
             wellspringWorkflowId: currentPreset.wellspringWorkflowId,
             wellspringCharacterId: currentPreset.wellspringCharacterId,
+            wellspringVariantIds: currentPreset.wellspringVariantIds,
+            wellspringPerVariantBatch: currentPreset.wellspringPerVariantBatch,
+            wellspringQualityPrompt: currentPreset.wellspringQualityPrompt,
+            wellspringCfg: currentPreset.wellspringCfg,
+            wellspringSampler: currentPreset.wellspringSampler,
+            wellspringScheduler: currentPreset.wellspringScheduler,
+            wellspringLoras: currentPreset.wellspringLoras,
             wellspringPayloadJson: currentPreset.wellspringPayloadJson,
             allowEmptyParts: true,
             parts,
@@ -53155,6 +53683,7 @@ async function openAssetStudio() {
                 steps: Number(row.querySelector('.svb-as-part-steps')?.value) || source.steps || 26,
                 prompt: row.querySelector('.svb-as-part-prompt')?.value || source.prompt,
                 negative: row.querySelector('.svb-as-part-negative')?.value || source.negative,
+                wellspringVariantIds: svbNormalizeWellspringIdList(row.querySelector('.svb-as-part-wellspring-variants')?.value || source.wellspringVariantIds),
                 outputs: ensureArray(source.outputs)
             }, index, base);
         });
@@ -53169,6 +53698,8 @@ async function openAssetStudio() {
         const selectedReferenceName = safeString(referencePicker?.selectedOptions?.[0]?.dataset?.assetName).trim();
         const referenceStrengthValue = document.getElementById('svb-as-reference-strength')?.value;
         const referenceInfoValue = document.getElementById('svb-as-reference-info')?.value;
+        const wellspringPerVariantBatchValue = document.getElementById('svb-as-wellspring-per-variant-batch')?.value;
+        const wellspringCfgValue = document.getElementById('svb-as-wellspring-cfg')?.value;
         return normalizeImageGenerationPreset({
             ...base,
             name: readValue('svb-as-preset-name', base.name),
@@ -53187,8 +53718,17 @@ async function openAssetStudio() {
             referenceStrength: referenceStrengthValue === undefined || referenceStrengthValue === '' ? base.referenceStrength : Number(referenceStrengthValue),
             referenceInformationExtracted: referenceInfoValue === undefined || referenceInfoValue === '' ? base.referenceInformationExtracted : Number(referenceInfoValue),
             wellspringPresetId: readValue('svb-as-wellspring-preset-id', base.wellspringPresetId),
+            wellspringMode: readValue('svb-as-wellspring-mode', base.wellspringMode || 'auto'),
+            wellspringModelId: readValue('svb-as-wellspring-model-id', base.wellspringModelId),
             wellspringWorkflowId: readValue('svb-as-wellspring-workflow-id', base.wellspringWorkflowId),
             wellspringCharacterId: readValue('svb-as-wellspring-character-id', base.wellspringCharacterId),
+            wellspringVariantIds: svbNormalizeWellspringIdList(readValue('svb-as-wellspring-variant-ids', svbSerializeWellspringIdList(base.wellspringVariantIds))),
+            wellspringPerVariantBatch: wellspringPerVariantBatchValue === undefined || wellspringPerVariantBatchValue === '' ? base.wellspringPerVariantBatch : Number(wellspringPerVariantBatchValue),
+            wellspringQualityPrompt: readValue('svb-as-wellspring-quality-prompt', base.wellspringQualityPrompt),
+            wellspringCfg: wellspringCfgValue === undefined || wellspringCfgValue === '' ? base.wellspringCfg : Number(wellspringCfgValue),
+            wellspringSampler: readValue('svb-as-wellspring-sampler', base.wellspringSampler),
+            wellspringScheduler: readValue('svb-as-wellspring-scheduler', base.wellspringScheduler),
+            wellspringLoras: svbNormalizeWellspringLoras(readValue('svb-as-wellspring-loras', svbSerializeWellspringLoras(base.wellspringLoras))),
             wellspringPayloadJson: readValue('svb-as-wellspring-payload-json', base.wellspringPayloadJson),
             ratioId: readValue('svb-as-gen-ratio', base.ratioId),
             steps: Number(document.getElementById('svb-as-gen-steps')?.value) || base.steps,
@@ -53272,6 +53812,7 @@ async function openAssetStudio() {
                 <details class="svb-as-part-more">
                     <summary>네거티브 프롬프트</summary>
                     <textarea class="svb-as-input svb-as-part-negative" placeholder="이 파트의 네거티브 프롬프트">${escapeHtml(part.negative || '')}</textarea>
+                    <input class="svb-as-input svb-as-part-wellspring-variants" value="${escapeHtml(svbSerializeWellspringIdList(part.wellspringVariantIds))}" placeholder="Wellspring variantIds (쉼표로 구분)">
                 </details>
                 <div class="svb-as-output-head">
                     <strong>생성본</strong>
@@ -53386,7 +53927,17 @@ async function openAssetStudio() {
                 const ratioId = job.part.ratioId || preset.ratioId || profile.ratioId;
                 const steps = Number(job.part.steps || preset.steps || profile.steps) || 26;
                 setStatus(`프리셋 생성 중... ${done + 1}/${jobs.length} · ${job.part.label}`, 'info');
-                const result = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
+                const result = await svbGenerateImageWithProfileAndPreset(profile, preset, {
+                    prompt,
+                    negative,
+                    ratioId,
+                    steps,
+                    wellspringPresetId: job.part.wellspringPresetId,
+                    wellspringModelId: job.part.wellspringModelId,
+                    wellspringWorkflowId: job.part.wellspringWorkflowId,
+                    wellspringCharacterId: job.part.wellspringCharacterId,
+                    wellspringVariantIds: job.part.wellspringVariantIds
+                });
                 const output = await saveGeneratedBatchAssetToState(result, job.part, name);
                 output.partId = job.part.id;
                 output.prompt = result.prompt || prompt;
@@ -54916,11 +55467,41 @@ async function openAssetStudio() {
                                     <details class="svb-as-part-more">
                                         <summary>Wellspring 워크플로우 입력</summary>
                                         <div class="svb-as-grid">
-                                            <input class="svb-as-input" id="svb-as-wellspring-preset-id" placeholder="Wellspring presetId">
-                                            <input class="svb-as-input" id="svb-as-wellspring-workflow-id" placeholder="Wellspring workflowId">
+                                            <select class="svb-as-input" id="svb-as-wellspring-mode">
+                                                <option value="auto">자동: 워크플로/캐릭터가 있으면 native workflow</option>
+                                                <option value="nai">NAI 호환 generate-image만 사용</option>
+                                                <option value="native">Wellspring native 일반 생성</option>
+                                                <option value="workflow">Wellspring workflow 캐릭터 생성</option>
+                                            </select>
+                                            <button class="svb-as-btn" id="svb-as-wellspring-refresh" type="button">목록 불러오기</button>
                                         </div>
-                                        <input class="svb-as-input" id="svb-as-wellspring-character-id" placeholder="Wellspring characterId">
-                                        <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"workflowId":"...","characterId":"...","parameters":{"someField":"..."}}'></textarea>
+                                        <div class="svb-as-grid">
+                                            <select class="svb-as-input" id="svb-as-wellspring-preset-picker"></select>
+                                            <input class="svb-as-input" id="svb-as-wellspring-preset-id" placeholder="Wellspring preset_id">
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <input class="svb-as-input" id="svb-as-wellspring-model-id" placeholder="Wellspring model_id">
+                                            <input class="svb-as-input" id="svb-as-wellspring-variant-ids" placeholder="Wellspring variant_ids (쉼표로 구분)">
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <input class="svb-as-input" id="svb-as-wellspring-sampler" placeholder="sampler">
+                                            <input class="svb-as-input" id="svb-as-wellspring-scheduler" placeholder="scheduler">
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <input class="svb-as-input" id="svb-as-wellspring-cfg" type="number" min="0" max="30" step="0.1" placeholder="cfg">
+                                            <input class="svb-as-input" id="svb-as-wellspring-per-variant-batch" type="number" min="1" max="20" step="1" placeholder="per_variant_batch">
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <select class="svb-as-input" id="svb-as-wellspring-workflow-picker"></select>
+                                            <input class="svb-as-input" id="svb-as-wellspring-workflow-id" placeholder="Wellspring workflow_id">
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <select class="svb-as-input" id="svb-as-wellspring-character-picker"></select>
+                                            <input class="svb-as-input" id="svb-as-wellspring-character-id" placeholder="Wellspring character/project_id">
+                                        </div>
+                                        <textarea class="svb-as-input" id="svb-as-wellspring-quality-prompt" placeholder="quality_prompt"></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-wellspring-loras" placeholder='LoRA JSON 또는 id:strength 목록. 예: [{"id":"...","strength":0.8}]'></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"variant_ids":["neutral"],"loras":[{"id":"...","strength":0.8}]}'></textarea>
                                     </details>
                                     <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring 참조 이미지는 생성 호출에 같이 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
                                 </details>
@@ -55049,15 +55630,56 @@ async function openAssetStudio() {
     });
     addLocal(document.getElementById('svb-as-use-wellspring'), 'click', activateWellspringFromStudio);
     addLocal(document.getElementById('svb-as-restore-default-presets'), 'click', restoreDefaultGenerationPresetsFromStudio);
+    addLocal(document.getElementById('svb-as-wellspring-refresh'), 'click', () => {
+        refreshWellspringRemoteOptionsFromStudio().catch(error => {
+            Logger.error('Wellspring option refresh failed:', error);
+            setStatus(`Wellspring 목록 로드 실패: ${error?.message || error}`, 'error');
+        });
+    });
+    addLocal(document.getElementById('svb-as-wellspring-preset-picker'), 'change', event => {
+        const presetId = event.target.value || '';
+        const presetInput = document.getElementById('svb-as-wellspring-preset-id');
+        if (presetInput) presetInput.value = presetId;
+        const preset = wellspringRemoteOptions.presets.find(item => safeString(item.id || item.preset_id).trim() === presetId);
+        const modelInput = document.getElementById('svb-as-wellspring-model-id');
+        const models = ensureArray(preset?.models);
+        const firstModelId = safeString(models[0]?.id || models[0]?.model_id || models[0]).trim();
+        if (modelInput && firstModelId && !safeString(modelInput.value).trim()) modelInput.value = firstModelId;
+        renderGenerationConnectionSummary();
+    });
+    addLocal(document.getElementById('svb-as-wellspring-workflow-picker'), 'change', event => {
+        const workflowId = event.target.value || '';
+        const workflowInput = document.getElementById('svb-as-wellspring-workflow-id');
+        if (workflowInput) workflowInput.value = workflowId;
+        const workflow = wellspringRemoteOptions.workflows.find(item => safeString(item.id || item.workflow_id).trim() === workflowId);
+        const variantInput = document.getElementById('svb-as-wellspring-variant-ids');
+        const firstVariantId = safeString(ensureArray(workflow?.variants)[0]?.id || ensureArray(workflow?.variants)[0]?.variant_id).trim();
+        if (variantInput && firstVariantId && !safeString(variantInput.value).trim()) variantInput.value = firstVariantId;
+        loadWellspringProjectsForWorkflow(workflowId).catch(error => {
+            Logger.error('Wellspring project list failed:', error);
+            setStatus(`Wellspring 캐릭터 목록 실패: ${error?.message || error}`, 'error');
+        });
+        renderGenerationConnectionSummary();
+    });
+    addLocal(document.getElementById('svb-as-wellspring-character-picker'), 'change', event => {
+        const characterInput = document.getElementById('svb-as-wellspring-character-id');
+        if (characterInput) characterInput.value = event.target.value || '';
+        renderGenerationConnectionSummary();
+    });
     addLocal(document.getElementById('svb-as-reference-image-picker'), 'change', event => {
         const pathInput = document.getElementById('svb-as-reference-image-path');
         if (pathInput) pathInput.value = event.target.value || '';
         renderGenerationConnectionSummary();
         setStatus(event.target.value ? 'Wellspring 참조 이미지를 선택했습니다. 프리셋 저장을 누르면 유지됩니다.' : 'Wellspring 참조 이미지를 사용하지 않습니다.', 'info');
     });
-    ['svb-as-reference-image-path', 'svb-as-reference-strength', 'svb-as-reference-info', 'svb-as-wellspring-preset-id', 'svb-as-wellspring-workflow-id', 'svb-as-wellspring-character-id', 'svb-as-wellspring-payload-json'].forEach((id) => {
+    ['svb-as-reference-image-path', 'svb-as-reference-strength', 'svb-as-reference-info', 'svb-as-wellspring-mode', 'svb-as-wellspring-preset-id', 'svb-as-wellspring-model-id', 'svb-as-wellspring-workflow-id', 'svb-as-wellspring-character-id', 'svb-as-wellspring-variant-ids', 'svb-as-wellspring-per-variant-batch', 'svb-as-wellspring-quality-prompt', 'svb-as-wellspring-cfg', 'svb-as-wellspring-sampler', 'svb-as-wellspring-scheduler', 'svb-as-wellspring-loras', 'svb-as-wellspring-payload-json'].forEach((id) => {
         addLocal(document.getElementById(id), 'change', () => {
             if (id === 'svb-as-reference-image-path') renderReferenceImagePicker(document.getElementById(id)?.value || '');
+            if (id === 'svb-as-wellspring-workflow-id') {
+                loadWellspringProjectsForWorkflow(document.getElementById(id)?.value || '').catch(error => {
+                    Logger.warn('Wellspring projects reload failed:', error?.message || error);
+                });
+            }
             renderGenerationConnectionSummary();
         });
     });
@@ -56238,7 +56860,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.63",
+        name: "SuperVibeBot v1.5.64",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -56247,7 +56869,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.63 Settings",
+        "SuperVibeBot v1.5.64 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -56290,7 +56912,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.63");
+        Logger.info("SuperVibeBot v1.5.64");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
