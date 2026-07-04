@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.64
-//@version 1.5.64
+//@display-name 🐸 SuperVibeBot v1.5.65
+//@version 1.5.65
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.64는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.65는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.64 Release Notes
+ * SuperVibeBot v1.5.65 Release Notes
+ * - v1.5.65: makes planning and daily mode conversational calls single-attempt so transient model errors no longer loop through work-mode retry logs
+ * - v1.5.65: disables automatic sub-agent consultation for planning-only conversations and changes planning loading/error text to dialogue-oriented wording
+ * - v1.5.65: adds a runtime self-check for mode-specific model retry counts
  * - v1.5.64: adds Wellspring native generation and workflow/project/variant routing for character-consistent asset generation
  * - v1.5.64: lets Asset Studio load Wellspring presets, workflows, and projects, then store model, variant, LoRA, sampler, scheduler, CFG, and per-variant batch fields
  * - v1.5.64: preserves Kero asset workflow/reference fields and auto-reuses the first generated batch image as a reference when no reference image is set
@@ -12777,6 +12780,10 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             planningTodoNoMissingActionFallback: shouldAttemptKeroMissingActionFallback(planningTodoRequest, { userRequest: planningTodoRequest }) === false,
             planningGoalRemembered: !!pendingPlanningGoal?.objective && /기획/.test(pendingPlanningGoal.objective),
             planningGoalApprovalDetected,
+            planningRetryCountOne: getKeroModelRetryCountForMode('planning') === 1,
+            dailyRetryCountOne: getKeroModelRetryCountForMode('daily') === 1,
+            workRetryCountThree: getKeroModelRetryCountForMode('work') === 3,
+            workPlanningOnlyRetryCountOne: getKeroModelRetryCountForMode('work', { planningOnly: true }) === 1,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
             fullBuildProbeType: typeof fullBuildProbe === 'boolean'
@@ -12810,6 +12817,10 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.planningTodoNoMissingActionFallback) problems.push('planning/TODO request allowed missing-action fallback');
     if (!value.planningGoalRemembered) problems.push('planning goal candidate was not stored');
     if (!value.planningGoalApprovalDetected) problems.push('planning goal approval phrase was not detected');
+    if (!value.planningRetryCountOne) problems.push('planning mode retry count is not 1');
+    if (!value.dailyRetryCountOne) problems.push('daily mode retry count is not 1');
+    if (!value.workRetryCountThree) problems.push('work mode retry count is not 3');
+    if (!value.workPlanningOnlyRetryCountOne) problems.push('work planning-only retry count is not 1');
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
     if (!value.fullBuildProbeType) problems.push('gateway full-build probe did not return boolean');
@@ -13447,7 +13458,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.64',
+            '//@version 1.5.65',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -16011,6 +16022,12 @@ function isKeroExecutionMode(mode = currentKeroMode) {
 
 function isKeroPlanningMode(mode = currentKeroMode) {
     return normalizeKeroMode(mode) === 'planning';
+}
+
+function getKeroModelRetryCountForMode(mode = currentKeroMode, options = {}) {
+    const normalized = normalizeKeroMode(mode);
+    if (options.planningOnly === true || normalized === 'planning' || normalized === 'daily') return 1;
+    return isKeroExecutionMode(normalized) ? 3 : 1;
 }
 
 function getKeroModeMeta(mode = currentKeroMode) {
@@ -33915,8 +33932,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             ]
             : (loadingMode === 'planning'
                 ? [
-                    el('div', { class: 'kero-agent-trace-title', text: '케로 기획 정리 중' }),
-                    el('div', { class: 'chat-loading', text: '요구사항과 TODO를 정리하는 중...' })
+                    el('div', { class: 'kero-agent-trace-title', text: '케로랑 기획 대화 중' }),
+                    el('div', { class: 'chat-loading', text: '답변을 준비하는 중...' })
                 ]
             : [
                 el('div', { class: 'kero-agent-trace-title', text: '케로 작업 중' }),
@@ -35803,12 +35820,18 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 ${catchDetail}
 
 저장된 작업을 error로 되돌리지는 않았어. 작업 흐름에서 경고 항목만 확인하면 됩니다.`
-                : `으악! 에러가 났어... 😰
+                : (!isWorkMode
+                    ? `으악... 모델 응답을 끝까지 받지 못했어, 주인님.
+
+오류 내용: ${friendlyMessage}
+
+지금은 ${taskKeroMode === 'planning' ? '기획모드' : (taskKeroMode === 'daily' ? '일상모드' : '기획형 대화')}라서 저장/수정 작업은 실행하지 않았어. 잠시 뒤 다시 말해주면 같은 대화 흐름으로 이어갈게.`
+                    : `으악! 에러가 났어... 😰
 
 오류 내용: ${friendlyMessage}
 
 개굴... 이건 플러그인 내부 오류가 아니라 모델/API 연결 쪽에서 응답을 끝까지 못 받은 상황이야.
-대형 제작 요청이면 같은 요청을 그대로 반복하기보다 더 빠른 메인 모델로 바꾸거나, 로어북/상태창/첫 메시지처럼 작은 작업 단위로 나눠서 다시 진행하는 게 안전해.`;
+대형 제작 요청이면 같은 요청을 그대로 반복하기보다 더 빠른 메인 모델로 바꾸거나, 로어북/상태창/첫 메시지처럼 작은 작업 단위로 나눠서 다시 진행하는 게 안전해.`);
             if (typeof addBotMessage === 'function') {
                 await addBotMessage(errorText);
             } else {
@@ -35915,7 +35938,7 @@ ${chatContinuity.block}
 
         주인님 요청: ${userInput}`;
 
-        return await translateSingleChunk(dailyPrompt, userInput, 3, {
+        return await translateSingleChunk(dailyPrompt, userInput, getKeroModelRetryCountForMode('daily'), {
             useSubmodels: false,
             keroMode: 'daily',
             timeoutMs: 120000,
@@ -36414,19 +36437,25 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             return preplannedLargeRequest;
         }
 
-        updateKeroProgress(4, 5, keroContextOptions.useSubmodels === true
-            ? '메인 모델과 서브에이전트 검토를 호출하는 중...'
-            : '메인 모델을 호출하는 중...', requestProgressOptions);
-        const finalResponse = await translateSingleChunk(systemPrompt, userInput, 3, {
+        const conversationalPlanningRequest = !requestAllowsMutation || requestIsPlanningMode;
+        const finalModelOptions = {
             ...keroContextOptions,
+            useSubmodels: conversationalPlanningRequest ? false : keroContextOptions.useSubmodels,
             fromKero: true,
             userRequest: userInput,
             keroContextPayload: effectiveContextPayload,
             keroScope: scope,
             keroContextCompression: modelContext.report,
             ...(options.jobId ? { jobId: options.jobId } : {})
-        });
-        updateKeroProgress(5, 5, '모델 응답을 받았습니다. 결과를 정리하는 중...', requestProgressOptions);
+        };
+        const modelRetryCount = getKeroModelRetryCountForMode(requestKeroMode, { planningOnly: conversationalPlanningRequest });
+        updateKeroProgress(4, 5, conversationalPlanningRequest
+            ? '기획 대화 답변을 준비하는 중...'
+            : (finalModelOptions.useSubmodels === true
+                ? '메인 모델과 서브에이전트 검토를 호출하는 중...'
+                : '메인 모델을 호출하는 중...'), requestProgressOptions);
+        const finalResponse = await translateSingleChunk(systemPrompt, userInput, modelRetryCount, finalModelOptions);
+        updateKeroProgress(5, 5, conversationalPlanningRequest ? '기획 대화 답변을 받았습니다.' : '모델 응답을 받았습니다. 결과를 정리하는 중...', requestProgressOptions);
         return finalResponse;
     }
 
@@ -43663,7 +43692,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.64 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.65 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -56860,7 +56889,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.64",
+        name: "SuperVibeBot v1.5.65",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -56869,7 +56898,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.64 Settings",
+        "SuperVibeBot v1.5.65 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -56912,7 +56941,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.64");
+        Logger.info("SuperVibeBot v1.5.65");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
