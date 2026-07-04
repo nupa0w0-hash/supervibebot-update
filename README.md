@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.61`
+Latest version: `1.5.62`
 
 Update URL:
 
@@ -17,6 +17,10 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.62
+
+- Normalizes lorebook folder entries, resolves natural-language folder references such as `folder:"인물"` into folder keys, and preserves `folder` fields in character patch lorebook writes.
 
 ## 1.5.61
 

@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.61
-//@version 1.5.61
+//@display-name 🐸 SuperVibeBot v1.5.62
+//@version 1.5.62
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.61는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.62는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,8 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.61 Release Notes
+ * SuperVibeBot v1.5.62 Release Notes
+ * - v1.5.62: normalizes lorebook folder entries, resolves natural-language folder references, and preserves folder fields in character patch lorebook writes
  * - v1.5.61: points auto-update at raw SuperVibeBot.update.js, the compatibility file that currently returns fresh non-empty Range metadata
  * - v1.5.60: restores the auto-update URL to raw.githubusercontent.com because jsDelivr Range fetch can return an empty 206 body in Risu-style checks
  * - v1.5.59: adds Kero-managed sub-agent division of labor with Kero direct-work ownership and per-agent assigned scopes
@@ -563,6 +564,198 @@ function getFirstLorebookKeyCandidate(...values) {
     return '';
 }
 
+function normalizeLorebookFolderAlias(value) {
+    return safeString(value).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function makeLorebookFolderKeyFromLabel(label, index = 0) {
+    const source = safeString(label).trim() || `folder ${Number(index || 0) + 1}`;
+    const slug = source
+        .replace(/[\\]+/g, '/')
+        .split('/')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .pop() || source;
+    const safeSlug = slug
+        .replace(/\s+/g, '_')
+        .replace(/[^0-9A-Za-z가-힣ぁ-んァ-ン一-龥:_-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80) || `folder_${Number(index || 0) + 1}`;
+    return safeSlug.startsWith('folder:') ? safeSlug : `folder:${safeSlug}`;
+}
+
+function makeUniqueLorebookFolderKey(baseKey, usedKeys) {
+    const base = safeString(baseKey).trim() || 'folder:untitled';
+    let candidate = base;
+    let suffix = 2;
+    while (usedKeys.has(candidate)) {
+        candidate = `${base}_${suffix}`;
+        suffix += 1;
+    }
+    usedKeys.add(candidate);
+    return candidate;
+}
+
+function getLorebookFolderDisplayName(entry, index = 0) {
+    return safeString(
+        entry?.comment ||
+        entry?.name ||
+        entry?.title ||
+        entry?.label ||
+        entry?.folderName ||
+        entry?.folder_name ||
+        entry?.key ||
+        `폴더 ${Number(index || 0) + 1}`
+    ).trim();
+}
+
+function getLorebookFolderReferenceValue(entry) {
+    return safeString(
+        entry?.folder ??
+        entry?.folderKey ??
+        entry?.folder_key ??
+        entry?.parentFolder ??
+        entry?.parent_folder ??
+        entry?.parent ??
+        entry?.group ??
+        entry?.category ??
+        entry?.folderName ??
+        entry?.folder_name ??
+        ''
+    ).trim();
+}
+
+function rememberLorebookFolderAlias(aliasMap, alias, key) {
+    const normalized = normalizeLorebookFolderAlias(alias);
+    const safeKey = safeString(key).trim();
+    if (normalized && safeKey && !aliasMap.has(normalized)) aliasMap.set(normalized, safeKey);
+}
+
+function splitLorebookFolderPath(value) {
+    return safeString(value)
+        .replace(/[\\>]+/g, '/')
+        .split('/')
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
+function ensureLorebookFolderEntry(label, parentKey, output, aliasMap, usedKeys) {
+    const safeLabel = safeString(label).trim();
+    if (!safeLabel) return '';
+    const pathAlias = parentKey ? `${parentKey}/${safeLabel}` : safeLabel;
+    const existing = aliasMap.get(normalizeLorebookFolderAlias(pathAlias)) || aliasMap.get(normalizeLorebookFolderAlias(safeLabel));
+    if (existing) return existing;
+    const key = makeUniqueLorebookFolderKey(makeLorebookFolderKeyFromLabel(parentKey ? `${parentKey}_${safeLabel}` : safeLabel, output.length), usedKeys);
+    const folderEntry = {
+        key,
+        comment: safeLabel,
+        content: '',
+        mode: 'folder',
+        insertorder: output.length,
+        alwaysActive: false,
+        selective: false
+    };
+    if (parentKey) folderEntry.folder = parentKey;
+    output.push(folderEntry);
+    rememberLorebookFolderAlias(aliasMap, key, key);
+    rememberLorebookFolderAlias(aliasMap, safeLabel, key);
+    rememberLorebookFolderAlias(aliasMap, pathAlias, key);
+    return key;
+}
+
+function resolveLorebookFolderReference(rawValue, output, aliasMap, usedKeys) {
+    const raw = safeString(rawValue).trim();
+    if (!raw) return '';
+    const direct = aliasMap.get(normalizeLorebookFolderAlias(raw));
+    if (direct) return direct;
+    if (/^folder:/i.test(raw)) {
+        usedKeys.add(raw);
+        rememberLorebookFolderAlias(aliasMap, raw, raw);
+        return raw;
+    }
+    const parts = splitLorebookFolderPath(raw);
+    if (!parts.length) return '';
+    let parentKey = '';
+    let path = '';
+    parts.forEach((part) => {
+        path = path ? `${path}/${part}` : part;
+        const existing = aliasMap.get(normalizeLorebookFolderAlias(path));
+        parentKey = existing || ensureLorebookFolderEntry(part, parentKey, output, aliasMap, usedKeys);
+        rememberLorebookFolderAlias(aliasMap, path, parentKey);
+    });
+    return parentKey;
+}
+
+function prepareLorebookEntriesForFolderWrite(entries, existingLorebooks = [], options = {}) {
+    const sourceEntries = Array.isArray(entries) ? entries : [entries];
+    const output = [];
+    const aliasMap = new Map();
+    const usedKeys = new Set();
+
+    ensureArray(existingLorebooks).forEach((entry) => {
+        const key = safeString(entry?.key).trim();
+        if (key) usedKeys.add(key);
+        if (entry?.mode === 'folder' && key) {
+            rememberLorebookFolderAlias(aliasMap, key, key);
+            rememberLorebookFolderAlias(aliasMap, entry?.comment, key);
+            rememberLorebookFolderAlias(aliasMap, entry?.name, key);
+            rememberLorebookFolderAlias(aliasMap, entry?.title, key);
+        }
+    });
+
+    sourceEntries.forEach((entry, index) => {
+        if (!isPlainObject(entry) || safeString(entry.mode).trim().toLowerCase() !== 'folder') return;
+        const safe = makeCloneableData(entry);
+        const label = getLorebookFolderDisplayName(safe, index);
+        const parentRef = getLorebookFolderReferenceValue({ ...safe, folderName: '', folder_name: '', group: '', category: '' });
+        const parentKey = parentRef ? resolveLorebookFolderReference(parentRef, output, aliasMap, usedKeys) : '';
+        const originalKey = safeString(safe.key).trim();
+        const knownKey = aliasMap.get(normalizeLorebookFolderAlias(originalKey))
+            || aliasMap.get(normalizeLorebookFolderAlias(label));
+        if (knownKey) {
+            [originalKey, label, safe.name, safe.title, safe.label, safe.folderName, safe.folder_name].forEach((alias) => rememberLorebookFolderAlias(aliasMap, alias, knownKey));
+            return;
+        }
+        const folderKey = originalKey
+            ? makeUniqueLorebookFolderKey(originalKey, usedKeys)
+            : makeUniqueLorebookFolderKey(makeLorebookFolderKeyFromLabel(label, index), usedKeys);
+        const folderEntry = {
+            ...safe,
+            key: folderKey,
+            comment: label,
+            content: '',
+            mode: 'folder',
+            insertorder: Number.isFinite(Number(safe.insertorder)) ? Number(safe.insertorder) : output.length,
+            alwaysActive: false,
+            selective: false
+        };
+        if (parentKey) folderEntry.folder = parentKey;
+        else delete folderEntry.folder;
+        output.push(folderEntry);
+        [folderKey, originalKey, label, safe.name, safe.title, safe.label, safe.folderName, safe.folder_name].forEach((alias) => rememberLorebookFolderAlias(aliasMap, alias, folderKey));
+    });
+
+    sourceEntries.forEach((entry) => {
+        if (!isPlainObject(entry)) {
+            output.push(entry);
+            return;
+        }
+        if (safeString(entry.mode).trim().toLowerCase() === 'folder') return;
+        const safe = makeCloneableData(entry);
+        const folderRef = getLorebookFolderReferenceValue(safe);
+        if (folderRef) {
+            safe.folder = resolveLorebookFolderReference(folderRef, output, aliasMap, usedKeys);
+        }
+        output.push(safe);
+    });
+
+    if (options?.deferredActions && output.length !== sourceEntries.length) {
+        addKeroWorkstreamEvent('로어북 폴더 구조 보정', `폴더 항목 ${output.length - sourceEntries.length}개를 자동 생성/연결했습니다.`, 'info', options);
+    }
+    return output;
+}
+
 function normalizeLorebookPrimaryKeyForAiWrite(next, source) {
     let changed = false;
     const candidates = [source?.key, next?.key];
@@ -612,6 +805,20 @@ function sanitizeLorebookEntryForAiWrite(entry, index, options = {}) {
     const source = entry && typeof entry === 'object' ? entry : {};
     const warnings = [];
     let changed = result.changed;
+    const isFolderEntry = /^folder$/i.test(safeString(next.mode));
+
+    if (isFolderEntry) {
+        next.mode = 'folder';
+        next.comment = getLorebookFolderDisplayName(next, index);
+        if (!safeString(next.key).trim()) {
+            next.key = makeLorebookFolderKeyFromLabel(next.comment, index);
+            changed = true;
+            warnings.push(`#${index + 1} 폴더 key가 없어 comment 기반 key를 생성했습니다.`);
+        }
+        next.content = '';
+        next.alwaysActive = false;
+        next.selective = false;
+    }
 
     if (normalizeLorebookPrimaryKeyForAiWrite(next, source)) {
         changed = true;
@@ -12713,6 +12920,21 @@ function addSvbRuntimeLegacyFieldPolicySelfTest(checks) {
             keys: ['기존 키 배열'],
             keyVariants: ['기존 키 변형']
         }, 5, {}).entry;
+        const folderPrepared = prepareLorebookEntriesForFolderWrite([
+            { comment: '인물', mode: 'folder' },
+            { comment: '기사단장', key: '기사단장', content: '기사단장 설정', folder: '인물' },
+            { comment: '왕도', key: '왕도', content: '왕도 설정', category: '지역/중심지' }
+        ], [], {});
+        const folderEntry = folderPrepared.find((entry) => safeString(entry?.comment) === '인물' && safeString(entry?.mode) === 'folder');
+        const folderChild = folderPrepared.find((entry) => safeString(entry?.comment) === '기사단장');
+        const nestedFolder = folderPrepared.find((entry) => safeString(entry?.comment) === '중심지' && safeString(entry?.mode) === 'folder');
+        const nestedChild = folderPrepared.find((entry) => safeString(entry?.comment) === '왕도');
+        const patchFolderLore = normalizeCharacterPatchLore({
+            comment: '패치 자식',
+            key: '패치',
+            content: '패치 본문',
+            folder: 'folder:patched'
+        }, 6, {});
         const strippedCharacter = {
             desc: '디스크립션',
             personality: '삭제 대상',
@@ -12752,6 +12974,10 @@ function addSvbRuntimeLegacyFieldPolicySelfTest(checks) {
                 && !Object.prototype.hasOwnProperty.call(contentOnlyWrite, 'keys')
                 && !Object.prototype.hasOwnProperty.call(contentOnlyWrite, 'keyVariants')
                 && safeString(contentOnlyWrite.mode) === 'normal',
+            folderKeyGenerated: /^folder:/i.test(safeString(folderEntry?.key)),
+            folderChildLinked: safeString(folderChild?.folder) === safeString(folderEntry?.key),
+            nestedFolderLinked: /^folder:/i.test(safeString(nestedFolder?.key)) && safeString(nestedChild?.folder) === safeString(nestedFolder?.key),
+            patchLoreKeepsFolder: safeString(patchFolderLore?.folder) === 'folder:patched',
             targetAliasPersonality: normalizeKeroActionTargetName('personality'),
             targetAliasKoreanPersonality: normalizeKeroActionTargetName('성격'),
             targetAliasScenario: normalizeKeroActionTargetName('scenario'),
@@ -12784,12 +13010,16 @@ function addSvbRuntimeLegacyFieldPolicySelfTest(checks) {
     if (value.keyVariantHasKeys) problems.push('AI keyVariants/keys 필드 제거 실패');
     if (value.keyVariantHasSecondary) problems.push('AI secondaryKey/secondkey 변형 제거 실패');
     if (!value.contentOnlyLegacyRemoved) problems.push('content-only 로어북 적용 legacy 필드 제거 실패');
+    if (!value.folderKeyGenerated) problems.push('로어북 폴더 key 자동 생성 실패');
+    if (!value.folderChildLinked) problems.push('로어북 자식 folder 연결 실패');
+    if (!value.nestedFolderLinked) problems.push('로어북 중첩 폴더 연결 실패');
+    if (!value.patchLoreKeepsFolder) problems.push('캐릭터 patch 로어북 folder 보존 실패');
     if (value.targetAliasPersonality !== 'desc' || value.targetAliasKoreanPersonality !== 'desc' || value.targetAliasScenario !== 'desc') problems.push('personality/scenario target desc 매핑 실패');
     if (value.removedLegacyCount < 4 || !value.strippedKeepsCustomData || value.strippedHasLegacyCharacterField) problems.push('AI 캐릭터 저장 legacy 필드 정리 실패');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'legacy 필드 정책 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : 'secondkey/multiple/personality/scenario alias 기본 경로 차단 및 명시 요청 보존 확인',
+        problems.length ? `문제: ${problems.join(' / ')}` : 'secondkey/multiple/personality/scenario alias 차단 및 로어북 폴더 연결 보존 확인',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -13190,7 +13420,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.61',
+            '//@version 1.5.62',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -35439,6 +35669,8 @@ ${metaBlock}
 - 매우 큰 생성도 임의 상한으로 자르지 않는다. 요청 수량을 bulk_create count에 보존하고, 모델/전송 한계에 닿으면 완료 범위를 기준으로 이어간다.
 - 예시는 형식 설명용이며 분량 기준이 아니다. 실제 payload의 desc, firstMessage, lorebooks.content는 사용자가 요청한 품질과 분량을 충족하는 완성본문으로 작성한다.
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
+- 로어북 폴더 생성: 폴더는 별도 항목으로 {"comment":"인물","key":"folder:characters","content":"","mode":"folder"}를 먼저 만들고, 하위 항목에는 "folder":"folder:characters"를 넣는다. 사용자가 "인물 폴더에 넣어줘"처럼 자연어로 말하면 folder:"인물"처럼 써도 시스템이 같은 배치 안에서 folder key로 보정한다.
+- 로어북 폴더 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인물","key":"folder:characters","content":"","mode":"folder"},{"comment":"기사단장 아르벤","key":"아르벤,기사단장","content":"기사단장 아르벤의 역할, 관계, 비밀을 정리한다.","mode":"normal","folder":"folder:characters"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
@@ -35567,7 +35799,7 @@ ${metaBlock}
 - CBS 문법: Curly Braced Syntax (변수, 조건문, 반복문). Lua 로직 내부에 CBS를 직접 넣지 말고 ChatVar/State API를 사용한다.
 - Lua 5.4: 트리거 스크립트, 비동기 함수, print/log, setState/getState, listenEdit를 우선한다.
 - Regex: editinput/editoutput/editprocess/editdisplay 계열. editdisplay는 최종 표시 레이어다.
-- Lorebook 실사용 필드: key, comment, content, mode, insertorder, alwaysActive, selective, useRegex, folder. secondkey/multiple key는 SillyTavern/Card V1 계열 호환용 legacy/고급 기능이므로 작업/추천/생성 기본 경로에서 제외하고, 사용자가 AND 키를 명시 요청할 때만 쓴다.
+- Lorebook 실사용 필드: key, comment, content, mode, insertorder, alwaysActive, selective, useRegex, folder. 폴더는 mode:"folder" 항목이고 자식 항목은 folder에 부모 폴더 key/id를 넣는다. secondkey/multiple key는 SillyTavern/Card V1 계열 호환용 legacy/고급 기능이므로 작업/추천/생성 기본 경로에서 제외하고, 사용자가 AND 키를 명시 요청할 때만 쓴다.
 - ChatVar: 변수 네이밍 규칙 (cv 프리픽스 권장)
 
 ## 📝 응답 형식
@@ -41226,8 +41458,12 @@ function appendCharacterPatchList(nextChar, sources, keys, fieldName, label, cha
     const replaceMatch = getFirstPatchValue(sources, replaceKeys);
     const replace = replaceMatch.found && replaceMatch.value === true;
     const current = replace ? [] : ensureArray(getCharacterField(nextChar, fieldName)).slice();
+    const rawItems = normalizeCharacterPatchArray(match.value);
+    const preparedItems = fieldName === 'globalLore'
+        ? prepareLorebookEntriesForFolderWrite(rawItems, current, options)
+        : rawItems;
     let added = 0;
-    normalizeCharacterPatchArray(match.value).forEach((entry, index) => {
+    preparedItems.forEach((entry, index) => {
         const normalized = normalizer(entry, current.length + index, options);
         if (!normalized) return;
         current.push(normalized);
@@ -41252,7 +41488,8 @@ function normalizeCharacterPatchLore(entry, index, options = {}) {
         insertorder: Number.isFinite(parsedInsertOrder) ? parsedInsertOrder : index,
         alwaysActive: safe.alwaysActive === true,
         selective: safe.selective === true,
-        mode: normalizeLorebookModeForWrite(safe.mode || 'normal', options, safe)
+        mode: normalizeLorebookModeForWrite(safe.mode || 'normal', options, safe),
+        folder: getLorebookFolderReferenceValue(safe) || undefined
     };
     return sanitizeLorebookEntryForAiWrite(draft, index, options).entry;
 }
@@ -42857,7 +43094,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.61 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.62 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -48446,8 +48683,8 @@ async function createLorebookEntries(entries, options = {}) {
         return { success: 0, failed: ensureArray(entries).length || 1 };
     }
 
-    const payloads = Array.isArray(entries) ? entries : [entries];
     const lorebooks = ensureArray(getCharacterField(char, 'globalLore')).slice();
+    const payloads = prepareLorebookEntriesForFolderWrite(Array.isArray(entries) ? entries : [entries], lorebooks, options);
     const results = { requested: payloads.length, success: 0, created: 0, failed: 0, skipped: 0, itemResults: [] };
 
     payloads.forEach((entry, index) => {
@@ -55788,7 +56025,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.61",
+        name: "SuperVibeBot v1.5.62",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -55797,7 +56034,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.61 Settings",
+        "SuperVibeBot v1.5.62 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -55840,7 +56077,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.61");
+        Logger.info("SuperVibeBot v1.5.62");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
