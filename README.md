@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.72`
+Latest version: `1.5.73`
 
 Update URL:
 
@@ -17,6 +17,11 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.73
+
+- Gives planning mode a read-only selected/reference context, so it can discuss checked bots without asking the user to paste their contents.
+- Keeps planning mode non-mutating while preserving visibility into descriptions, first messages, lorebooks, regex, triggers, variables, and assets allowed by the reference scope.
 
 ## 1.5.72
 

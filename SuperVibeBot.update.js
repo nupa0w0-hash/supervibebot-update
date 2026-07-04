@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.72
-//@version 1.5.72
+//@display-name 🐸 SuperVibeBot v1.5.73
+//@version 1.5.73
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.72는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.73는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.72 Release Notes
+ * SuperVibeBot v1.5.73 Release Notes
+ * - v1.5.73: gives planning mode a read-only selected/reference context so it can discuss checked bots without saving actions
+ * - v1.5.73: keeps planning mode non-mutating while preserving visibility into descriptions, first messages, lorebooks, regex, triggers, variables, and assets allowed by the reference scope
  * - v1.5.72: routes planning/TODO conversations through a lightweight non-mutating planning chat path instead of the full work/action prompt
  * - v1.5.72: skips sub-agent consultation when CONTEXT_PAYLOAD is empty so `{}` packets cannot stall parallel review
  * - v1.5.72: uses a model-wait zombie threshold for chat locks instead of the 95-minute action-execution threshold
@@ -13522,7 +13524,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.72',
+            '//@version 1.5.73',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -36274,6 +36276,41 @@ ${chatContinuity.block}
             maxBotChars: 650,
             currentInputId: options.queuedInput?.id || options.currentInputId || ''
         });
+        let planningReadOnlyContextBlock = '';
+        try {
+            const scope = char ? await loadKeroScope(char) : { ...DEFAULT_KERO_SCOPE };
+            const context = char
+                ? (buildFullCharacterContext(char) || createEmptyCharacterContext(getCharacterDisplayName(char) || '이름 없음'))
+                : createEmptyCharacterContext(workMode === 'module' ? '모듈 기획 작업' : (workMode === 'plugin' ? '플러그인 기획 작업' : '캐릭터 기획 작업'));
+            const contextPayload = await buildKeroContextPayload(context, scope, char, { workTargetMode: workMode });
+            const modelContext = prepareKeroContextForModel(contextPayload);
+            const effectiveContextPayload = modelContext.payload || {};
+            const payloadText = hasUsableKeroContextPayload(effectiveContextPayload)
+                ? stringifyKeroContextPayload(effectiveContextPayload)
+                : '';
+            if (payloadText) {
+                const compressionBlock = buildKeroContextCompressionBlock(modelContext.report);
+                planningReadOnlyContextBlock = `## 읽기 전용 선택 자료
+- 아래 자료는 현재 선택 캐릭터/모듈/플러그인과 체크된 참고 자료에서 읽은 실제 내용이다.
+- 기획모드에서는 이 자료를 분석하고 비교할 수 있지만, 저장/생성/삭제/적용은 절대 하지 않는다.
+- 사용자에게는 내부 키 이름을 길게 노출하지 말고, "선택 자료에서 확인한 내용"처럼 자연스럽게 설명한다.
+- 자료에 없는 내용만 모른다고 말한다. 참고 자료가 실제로 들어있으면 다시 붙여넣으라고 요구하지 않는다.
+- 참고 자료 요약: ${formatReferencePayloadSummary(effectiveContextPayload)}
+${compressionBlock ? `\n${compressionBlock}\n` : ''}
+\`\`\`json
+${payloadText}
+\`\`\``;
+            } else {
+                planningReadOnlyContextBlock = `## 읽기 전용 선택 자료
+- 현재 선택 요약은 보이지만 실제 선택 자료 payload를 만들지 못했다.
+- 이 경우에만 사용자에게 참고범위/선택 상태를 다시 확인해 달라고 짧게 안내한다.`;
+            }
+        } catch (error) {
+            Logger.warn('Planning read-only context build failed:', error?.message || error);
+            planningReadOnlyContextBlock = `## 읽기 전용 선택 자료
+- 선택 자료를 읽는 중 오류가 발생했다: ${safeString(error?.message || error).slice(0, 300)}
+- 저장/적용은 하지 말고, 사용자가 선택 상태를 다시 확인할 수 있게 짧게 안내한다.`;
+        }
 
         const planningPrompt = `당신은 "케로 (Kero)"입니다. 지금은 기획모드입니다.
 
@@ -36281,7 +36318,7 @@ ${chatContinuity.block}
 - 주인님과 일상모드처럼 자연스럽게 대화하며 요구사항을 정리한다.
 - 저장, 생성, 삭제, 적용, @action 출력은 절대 하지 않는다.
 - 작업모드의 실행 지시나 목표모드의 진행 압력보다 현재 사용자 입력의 "먼저 기획/정리/TODO/상의" 의도가 우선한다.
-- CONTEXT_PAYLOAD, 액션 프로토콜, 서브에이전트 내부 회의록 같은 내부 구현 표현을 꺼내지 않는다.
+- 액션 프로토콜, 서브에이전트 내부 회의록, raw JSON 같은 내부 구현 표현을 사용자에게 그대로 꺼내지 않는다.
 - 사용자가 큰 제작 방향을 말하면 요구사항, TODO, 우선순위, 작업 단위, 완료 기준으로 정리한다.
 - 질문은 막히는 것만 최대 3개까지 한다. 답 없이도 진행 가능한 부분은 가정으로 적고 계속 정리한다.
 - 계획이 실행 가능한 수준이면 마지막에 목표로 설정하고 진행할 수 있다는 점만 짧게 안내한다.
@@ -36292,6 +36329,8 @@ ${chatContinuity.block}
 - 작업 대상 모드: ${modeMeta.label}
 - 대상: ${targetName}
 - 참고 자료: ${referenceSummary}
+
+${planningReadOnlyContextBlock}
 
 ${chatContinuity.block}
 
@@ -44064,7 +44103,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.72 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.73 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -57483,7 +57522,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.72",
+        name: "SuperVibeBot v1.5.73",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57492,7 +57531,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.72 Settings",
+        "SuperVibeBot v1.5.73 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57535,7 +57574,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.72");
+        Logger.info("SuperVibeBot v1.5.73");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
