@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.58`
+Latest version: `1.5.59`
 
 Update URL:
 
@@ -17,6 +17,10 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.59
+
+- Adds Kero-managed sub-agent division of labor: Kero keeps direct execution ownership while each sub-agent receives an assigned scope, deliverable, and forbidden scope.
 
 ## 1.5.58
 
