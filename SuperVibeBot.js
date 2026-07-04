@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.62
-//@version 1.5.62
+//@display-name 🐸 SuperVibeBot v1.5.63
+//@version 1.5.63
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.62는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.63는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,9 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.62 Release Notes
+ * SuperVibeBot v1.5.63 Release Notes
+ * - v1.5.63: adds Kero planning and goal modes so TODO/planning requests cannot execute save actions until the user approves goal-mode execution
+ * - v1.5.63: routes approved planning drafts into goal-mode missions and restores Kero's older playful speech/personality across daily, planning, work, and goal prompts
  * - v1.5.62: normalizes lorebook folder entries, resolves natural-language folder references, and preserves folder fields in character patch lorebook writes
  * - v1.5.61: points auto-update at raw SuperVibeBot.update.js, the compatibility file that currently returns fresh non-empty Range metadata
  * - v1.5.60: restores the auto-update URL to raw.githubusercontent.com because jsDelivr Range fetch can return an empty 206 body in Risu-style checks
@@ -5503,7 +5505,7 @@ function hasEnabledKeroSubmodels() {
 function shouldUseSubmodelsForKeroRequest(options = {}) {
     if (options.useSubmodels === true) return true;
     if (options.useSubmodels === false) return false;
-    if (currentKeroMode !== "work") return false;
+    if (!isKeroExecutionMode(currentKeroMode)) return false;
 
     const request = safeString(options.userRequest).trim();
     if (!request) return false;
@@ -8308,8 +8310,8 @@ async function restoreSettings(settings, options = { restoreApiKeys: true, resto
             results.success.push("테마 설정");
         }
 
-        if (settings.keroMode === 'work' || settings.keroMode === 'daily') {
-            currentKeroMode = settings.keroMode;
+        if (settings.keroMode) {
+            currentKeroMode = normalizeKeroMode(settings.keroMode);
             await Storage.set(KERO_MODE_KEY, currentKeroMode);
             results.success.push("케로 모드");
         }
@@ -9427,8 +9429,8 @@ function updateKeroMissionState(patch = {}, event = null) {
 }
 
 async function startKeroMission(userInput, options = {}) {
-    const missionKeroMode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
-    if (missionKeroMode !== 'work') return null;
+    const missionKeroMode = normalizeKeroMode(options.keroMode || currentKeroMode);
+    if (!isKeroExecutionMode(missionKeroMode)) return null;
     let char = null;
     try { char = await getCharacterData(); } catch (error) { Logger.debug('Mission character lookup fallback:', error?.message || error); }
     const storageId = await getKeroCharId(char);
@@ -9443,6 +9445,7 @@ async function startKeroMission(userInput, options = {}) {
         storageId,
         objective: safeString(userInput).slice(0, 2000),
         mode,
+        keroMode: missionKeroMode,
         status: 'running',
         fromQueue: options.fromQueue === true,
         attempt: existing?.objective === userInput ? Number(existing.attempt || 0) + 1 : 1,
@@ -12732,6 +12735,12 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             userRequest: singleDescRequest
         });
         const singleDescBulkSpecs = inferKeroBulkCreateSpecsFromText(singleDescRequest, { allowSmallCreate: true, fullBuild: false });
+        const planningTodoRequest = '아직 계속 기획 중이야. 요청 사항 정리해서 먼저 TODO 리스트를 만들어줘.';
+        const planningGoalPlan = '1. 요구사항 정리\n2. 작업 단위 분해';
+        rememberKeroPlanningGoalCandidate(planningTodoRequest, planningGoalPlan);
+        const pendingPlanningGoal = keroPendingPlanningGoal;
+        const planningApprovalDetected = !!getApprovedKeroPlanningGoal('목표로 설정하고 진행');
+        keroPendingPlanningGoal = null;
         let malformedFieldActionBlocked = false;
         try {
             recoverKeroActionDirectivesFromFieldText('본문\n@action { broken', 'self test field', [], { silentRecoveryEvent: true });
@@ -12756,6 +12765,12 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             singleDescNoCharacterSeedFallback: !singleDescFullFallback,
             singleDescNoPreplan: !singleDescPreplan,
             singleDescNoBulkSpecs: singleDescBulkSpecs.length === 0,
+            planningTodoDetected: isKeroPlanningOnlyRequest(planningTodoRequest) === true,
+            planningTodoNoMutationIntent: hasKeroExplicitMutationIntent(planningTodoRequest) === false,
+            planningTodoNoPreplan: shouldPreplanKeroLargeCharacterRequest(planningTodoRequest, { keroMode: 'work', workTargetMode: 'character', userRequest: planningTodoRequest }) === false,
+            planningTodoNoMissingActionFallback: shouldAttemptKeroMissingActionFallback(planningTodoRequest, { userRequest: planningTodoRequest }) === false,
+            planningGoalRemembered: !!pendingPlanningGoal?.objective && /기획/.test(pendingPlanningGoal.objective),
+            planningGoalApprovalDetected,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
             fullBuildProbeType: typeof fullBuildProbe === 'boolean'
@@ -12783,13 +12798,19 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.singleDescNoCharacterSeedFallback) problems.push('single desc edit created character seed fallback');
     if (!value.singleDescNoPreplan) problems.push('single desc edit triggered large-request preplan');
     if (!value.singleDescNoBulkSpecs) problems.push('single desc edit inferred bulk specs');
+    if (!value.planningTodoDetected) problems.push('planning/TODO request was not detected as planning-only');
+    if (!value.planningTodoNoMutationIntent) problems.push('planning/TODO request was misdetected as mutation intent');
+    if (!value.planningTodoNoPreplan) problems.push('planning/TODO request triggered large-request preplan');
+    if (!value.planningTodoNoMissingActionFallback) problems.push('planning/TODO request allowed missing-action fallback');
+    if (!value.planningGoalRemembered) problems.push('planning goal candidate was not stored');
+    if (!value.planningGoalApprovalDetected) problems.push('planning goal approval phrase was not detected');
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
     if (!value.fullBuildProbeType) problems.push('gateway full-build probe did not return boolean');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
-        problems.length ? `Problems: ${problems.join(' / ')}` : 'description/lorebook improve fallback create safe actions; usage questions do not create actions; malformed embedded @action is blocked',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'description/lorebook improve fallback create safe actions; planning/TODO requests do not execute; malformed embedded @action is blocked',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -13420,7 +13441,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.62',
+            '//@version 1.5.63',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15962,9 +15983,129 @@ let imageGenerationPresets = [];
 let activeImageGenerationPresetId = DEFAULT_IMAGE_GENERATION_PRESET_ID;
 let lastImageApiTestResult = null;
 let currentKeroMode = "daily";
+let keroPendingPlanningGoal = null;
 let keroRequireActionConfirmation = true;
 let chunkModeEnabled = false; // 청크 분할 모드 (기본: 비활성화)
 let chunkSize = DEFAULT_CHUNK_SIZE; // 청크 크기 (기본: 3000자)
+
+function normalizeKeroMode(value) {
+    const mode = safeString(value).trim().toLowerCase();
+    if (mode === 'work' || mode === 'planning' || mode === 'goal' || mode === 'daily') return mode;
+    if (mode === 'workmode' || mode === '작업' || mode === '작업모드') return 'work';
+    if (mode === 'plan' || mode === 'planner' || mode === 'planningmode' || mode === '기획' || mode === '계획' || mode === '플랜' || mode === '기획모드' || mode === '계획모드' || mode === '플랜모드') return 'planning';
+    if (mode === 'target' || mode === 'objective' || mode === 'goalmode' || mode === '목표' || mode === '목표모드') return 'goal';
+    if (mode === 'chat' || mode === 'casual' || mode === 'dailymode' || mode === '일상' || mode === '일상모드') return 'daily';
+    return 'daily';
+}
+
+function isKeroExecutionMode(mode = currentKeroMode) {
+    const normalized = normalizeKeroMode(mode);
+    return normalized === 'work' || normalized === 'goal';
+}
+
+function isKeroPlanningMode(mode = currentKeroMode) {
+    return normalizeKeroMode(mode) === 'planning';
+}
+
+function getKeroModeMeta(mode = currentKeroMode) {
+    const normalized = normalizeKeroMode(mode);
+    if (normalized === 'planning') {
+        return {
+            id: 'planning',
+            label: '기획',
+            title: '기획모드: 저장하지 않고 요구사항, TODO, 단계 계획을 유저와 함께 정리',
+            message: '기획모드 켰어, 주인님~ 개굴! 이제 저장 액션 없이 요구사항, TODO, 단계 계획부터 같이 정리할게. 괜찮아지면 목표로 설정해서 진행하면 돼.'
+        };
+    }
+    if (normalized === 'work') {
+        return {
+            id: 'work',
+            label: '작업',
+            title: '작업모드: 명시적인 수정/생성/삭제/적용 요청만 저장 액션 실행',
+            message: '작업모드 켰어. 명시적으로 실행 요청한 작업만 저장 액션으로 처리할게. 슈퍼 바이브!'
+        };
+    }
+    if (normalized === 'goal') {
+        return {
+            id: 'goal',
+            label: '목표',
+            title: '목표모드: 목표와 완료 기준을 잡고 목표 달성까지 실행',
+            message: '목표모드 켰어. 목표와 완료 기준을 잡고 필요한 작업을 끝까지 이어갈게, 개굴!'
+        };
+    }
+    return {
+        id: 'daily',
+        label: '일상',
+        title: '일상모드: 편한 대화 중심',
+        message: '일상모드로 돌아왔어. 편하게 말 걸어줘, 주인님~'
+    };
+}
+
+function getNextKeroMode(mode = currentKeroMode) {
+    const order = ['daily', 'planning', 'work', 'goal'];
+    const current = normalizeKeroMode(mode);
+    const index = order.indexOf(current);
+    return order[(index < 0 ? 0 : index + 1) % order.length];
+}
+
+function updateKeroModeToggle() {
+    const btn = document.getElementById('kero-work-mode-toggle');
+    if (!btn) return;
+    const meta = getKeroModeMeta(currentKeroMode);
+    btn.textContent = meta.label;
+    btn.title = meta.title;
+    btn.classList.toggle('active', meta.id !== 'daily');
+    btn.dataset.keroMode = meta.id;
+}
+
+function stripKeroPlanningGoalOffer(text = '') {
+    return safeString(text)
+        .replace(/\n{0,2}이 계획이 괜찮으면\s*"목표로 설정하고 진행"[\s\S]*$/i, '')
+        .trim();
+}
+
+function appendKeroPlanningGoalOffer(text = '') {
+    const source = safeString(text).trim();
+    if (!source) return source;
+    if (/목표(?:로|모드|를)?\s*(?:설정|전환|진행)|목표로\s*설정하고\s*진행/i.test(source)) return source;
+    return `${source}\n\n이 계획이 괜찮으면 "목표로 설정하고 진행"이라고 말해줘. 그러면 목표모드로 전환해서 목표로 저장하고 첫 실행 단위부터 진행할게.`;
+}
+
+function rememberKeroPlanningGoalCandidate(userRequest = '', assistantPlan = '') {
+    const request = safeString(userRequest).trim();
+    const plan = stripKeroPlanningGoalOffer(assistantPlan);
+    if (!request && !plan) return null;
+    const objective = [
+        '기획모드에서 승인된 목표를 실행한다.',
+        request ? `\n[사용자 원 요청]\n${request.slice(0, 5000)}` : '',
+        plan ? `\n[승인된 기획/TODO]\n${plan.slice(0, 9000)}` : ''
+    ].filter(Boolean).join('\n').trim();
+    keroPendingPlanningGoal = {
+        id: `planning-goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        userRequest: request,
+        plan,
+        objective,
+        createdAt: new Date().toISOString()
+    };
+    return keroPendingPlanningGoal;
+}
+
+function isKeroPlanningGoalApprovalRequest(text = '') {
+    const source = safeString(text).trim();
+    if (!source) return false;
+    if (isKeroNoApplyPlanningOnlyRequest(source)) return false;
+    return /^(?:ㅇㅇ|응|그래|좋아|괜찮아|고|ㄱㄱ|go|ok|okay|yes|이대로|그대로|진행|진행해|시작|시작해|해|해줘|가자|목표로|목표\s*설정|목표모드|작업모드)/i.test(source)
+        && /(?:목표|진행|시작|작업|이대로|그대로|해줘|가자|go|ok|okay|yes|ㅇㅇ|응|그래|좋아|괜찮아|ㄱㄱ)/i.test(source);
+}
+
+function isKeroPlanningGoalRejectionRequest(text = '') {
+    return /^(?:아니|ㄴㄴ|no|nope|보류|잠깐|아직|다시|수정|고쳐|바꿔|멈춰|중단)/i.test(safeString(text).trim());
+}
+
+function getApprovedKeroPlanningGoal(text = '') {
+    if (!keroPendingPlanningGoal?.objective) return null;
+    return isKeroPlanningGoalApprovalRequest(text) ? keroPendingPlanningGoal : null;
+}
 
 // Live Studio 상태 저장 (창을 닫아도 내용 유지)
 function getDefaultLiveStudioState() {
@@ -16444,7 +16585,7 @@ async function loadStoredState() {
     chunkModeEnabled = (await Storage.get(CHUNK_MODE_KEY)) === true;
     const storedChunkSize = await Storage.get(CHUNK_SIZE_KEY);
     chunkSize = Number(storedChunkSize) || DEFAULT_CHUNK_SIZE;
-    currentKeroMode = (await Storage.get(KERO_MODE_KEY)) === "work" ? "work" : "daily";
+    currentKeroMode = normalizeKeroMode(await Storage.get(KERO_MODE_KEY));
     keroRequireActionConfirmation = (await Storage.get(KERO_REQUIRE_ACTION_CONFIRMATION_KEY)) !== false;
     lastCharacterId = (await Storage.get('SuperVibeBot_lastCharacterId')) || null;
     manualSelectedCharId = (await Storage.get(MANUAL_CHARACTER_ID_KEY)) || null;
@@ -23731,7 +23872,7 @@ async function createTransUI() {
 
     const keroToolsIconBar = el("div", { class: "kero-tools-iconbar" }, [
 
-        el("button", { class: currentKeroMode === "work" ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-work-mode-toggle", title: "일상/작업 모드 전환", text: currentKeroMode === "work" ? "작업" : "일상" }),
+        el("button", { class: normalizeKeroMode(currentKeroMode) === "daily" ? "kero-icon-btn kero-mode-btn" : "kero-icon-btn kero-mode-btn active", id: "kero-work-mode-toggle", title: getKeroModeMeta(currentKeroMode).title, "data-kero-mode": normalizeKeroMode(currentKeroMode), text: getKeroModeMeta(currentKeroMode).label }),
         el("button", { class: keroRequireActionConfirmation ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-action-confirm-toggle", title: keroRequireActionConfirmation ? "수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행" : "자동 실행 ON: 저장 액션을 바로 실행", text: keroRequireActionConfirmation ? "확인" : "자동" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-workstream", title: "🧭 작업 흐름", text: "🧭" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-proposals", title: "제안 작업", text: "✓" }),
@@ -29123,7 +29264,7 @@ ${currentVars || '{}'}
         try {
             const action = proposal.action || proposal;
             result = await withKeroApprovalBypass(async () => {
-                if (currentKeroMode === 'work') {
+                if (isKeroExecutionMode(currentKeroMode)) {
                     const proposalActionId = safeString(action.actionJobId || action.jobId || action.stepId || action.planId || proposal.id);
                     if (proposalActionId) {
                         action.stepId = action.stepId || proposalActionId;
@@ -29474,7 +29615,7 @@ ${currentVars || '{}'}
                     actionRequest.actionJobId = actionRequest.actionJobId || actionRequest.stepId;
                     actionRequest.jobId = actionRequest.jobId || actionRequest.stepId;
                     let result;
-                    if (currentKeroMode === 'work') {
+                    if (isKeroExecutionMode(currentKeroMode)) {
                         const storageId = currentKeroPersistentStorageId || currentKeroMission?.storageId || '';
                         if (!storageId || !actionRequest.actionJobId) {
                             result = { success: false, detail: '검증에 필요한 캐릭터 저장소 또는 action job ID를 찾지 못했습니다.' };
@@ -33009,17 +33150,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 addKeroWorkstreamEvent('모드 전환 보류', '작업 중 모드 전환 요청을 현재 실행 보호를 위해 보류했습니다.', 'queued');
                 return;
             }
-            currentKeroMode = currentKeroMode === 'work' ? 'daily' : 'work';
+            currentKeroMode = getNextKeroMode(currentKeroMode);
             await Storage.set(KERO_MODE_KEY, currentKeroMode);
-            const btn = document.getElementById('kero-work-mode-toggle');
-            if (btn) {
-                btn.textContent = currentKeroMode === 'work' ? '작업' : '일상';
-                btn.classList.toggle('active', currentKeroMode === 'work');
-                btn.title = currentKeroMode === 'work' ? '작업모드: 수정 액션과 엄격 검토 활성' : '일상모드: 편한 대화 중심';
-            }
-            await addBotMessage(currentKeroMode === 'work'
-                ? '작업모드 켰어. 이제 수정/검토 요청은 더 엄격하게 처리할게.'
-                : '일상모드로 돌아왔어. 편하게 말 걸어줘, 주인님~');
+            updateKeroModeToggle();
+            await addBotMessage(getKeroModeMeta(currentKeroMode).message);
         }, 'kero-work-mode-toggle');
         bindSafeClick(document.getElementById('kero-action-confirm-toggle'), async () => {
             if (keroChatTaskRunning || keroProcessingQueuedInput) {
@@ -33072,7 +33206,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 await queueKeroInputDuringTask('계속 진행', {
                     queueAfterTask: true,
                     resumeOnly: true,
-                    keroMode: 'work',
+                    keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
                     workTargetMode: currentWorkTargetMode
                 });
                 return;
@@ -33083,7 +33217,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 skipUserEcho: true,
                 visibleUserInput: '계속 진행',
                 resumeOnly: true,
-                keroMode: 'work',
+                keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
                 workTargetMode: currentWorkTargetMode
             });
             await renderKeroWorkstream();
@@ -33094,7 +33228,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 await queueKeroInputDuringTask('재시도', {
                     queueAfterTask: true,
                     retryOnly: true,
-                    keroMode: 'work',
+                    keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
                     workTargetMode: currentWorkTargetMode
                 });
                 return;
@@ -33132,7 +33266,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 skipUserEcho: true,
                 visibleUserInput: '재시도',
                 retryOnly: true,
-                keroMode: 'work',
+                keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
                 workTargetMode: currentWorkTargetMode
             });
             await renderKeroWorkstream();
@@ -33410,16 +33544,21 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const historyDiv = document.getElementById('risu-trans-chat-history');
         if (!historyDiv) return;
 
-        const isDaily = options.mode === 'daily' || currentKeroMode !== 'work';
-        const traceContent = isDaily
+        const loadingMode = normalizeKeroMode(options.mode || currentKeroMode);
+        const traceContent = loadingMode === 'daily'
             ? [
                 el('div', { class: 'kero-agent-trace-title', text: '케로 답장 준비 중' }),
                 el('div', { class: 'chat-loading', text: '잠깐만 기다려줘, 개굴...' })
             ]
+            : (loadingMode === 'planning'
+                ? [
+                    el('div', { class: 'kero-agent-trace-title', text: '케로 기획 정리 중' }),
+                    el('div', { class: 'chat-loading', text: '요구사항과 TODO를 정리하는 중...' })
+                ]
             : [
                 el('div', { class: 'kero-agent-trace-title', text: '케로 작업 중' }),
                 el('div', { class: 'chat-loading', text: '작업을 준비하는 중...' })
-            ];
+                ]);
 
         const loadingDiv = el('div', { class: 'chat-message bot', id: 'chat-loading-msg' }, [
             el('div', { class: 'chat-bubble' }, [
@@ -33702,7 +33841,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     function addWelcomeMessage() {
         void addBotMessage(`케로 왔어, 주인님~ 개굴!
 
-평소에는 편하게 떠들어도 되고, 상단의 "일상" 버튼을 눌러 "작업"으로 바꾸면 RisuAI 봇 설정을 더 진지하게 분석하고 고쳐줄게.
+평소에는 편하게 떠들어도 되고, 상단의 모드 버튼으로 일상 → 기획 → 작업 → 목표를 바꿀 수 있어.
+기획모드에서는 먼저 TODO랑 작업 단위를 같이 정리하고, 괜찮으면 "목표로 설정하고 진행"이라고 말해서 목표모드로 넘기면 돼.
 
 왼쪽 위 작업대상 버튼에서 캐릭터, 모듈, 플러그인을 고를 수 있어. 아무것도 고르지 않으면 새 모듈/플러그인도 맨땅부터 설계해줄게.
 
@@ -34362,16 +34502,34 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const inputEl = document.getElementById('risu-trans-chat-input');
         const sendBtn = document.getElementById('risu-trans-chat-send');
         const originalText = sendBtn?.textContent || '전송';
-        const visibleUserInput = safeString(options.visibleUserInput || userInput);
-        const taskKeroMode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
+        let visibleUserInput = safeString(options.visibleUserInput || userInput);
+        let effectiveUserInput = safeString(userInput);
+        const approvedPlanningGoal = getApprovedKeroPlanningGoal(visibleUserInput);
+        if (approvedPlanningGoal) {
+            effectiveUserInput = approvedPlanningGoal.objective;
+            visibleUserInput = '목표로 설정하고 진행';
+            keroPendingPlanningGoal = null;
+            currentKeroMode = 'goal';
+            try {
+                await Storage.set(KERO_MODE_KEY, currentKeroMode);
+                updateKeroModeToggle();
+            } catch (error) {
+                Logger.warn('Kero planning goal mode switch failed:', error?.message || error);
+            }
+        } else if (keroPendingPlanningGoal && isKeroPlanningGoalRejectionRequest(visibleUserInput)) {
+            keroPendingPlanningGoal = null;
+        }
+        const taskKeroMode = approvedPlanningGoal ? 'goal' : normalizeKeroMode(options.keroMode || currentKeroMode);
         const taskWorkTargetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+        const taskPlanningOnlyRequest = isKeroPlanningMode(taskKeroMode) || isKeroPlanningOnlyRequest(visibleUserInput);
+        const taskAllowsMutation = isKeroExecutionMode(taskKeroMode) && !taskPlanningOnlyRequest;
         keroChatTaskRunning = true;
         try {
             updateKeroQueuedInputUi();
         } catch (error) {
             Logger.warn('Kero queue UI update failed after lock:', error?.message || error);
         }
-        const isWorkMode = taskKeroMode === 'work';
+        const isWorkMode = taskAllowsMutation;
         let backgroundJobId = null;
         try {
             backgroundJobId = isWorkMode ? createKeroBackgroundJob('케로 요청 처리', visibleUserInput.slice(0, 120)) : null;
@@ -34453,7 +34611,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             && currentMissionObjective
             ? currentMissionObjective
             : '';
-        const missionStartInput = startNowFollowupObjective || visibleUserInput;
+        const missionStartInput = approvedPlanningGoal?.objective || startNowFollowupObjective || visibleUserInput;
         const currentMissionSettled = ['done', 'cancelled'].includes(currentMissionStatus);
         const settledMissionRetryQueueCount = retryRequest && currentKeroMission && currentMissionSettled
             ? getKeroFailedInputCount(keroQueuedUserInputs, currentMissionId)
@@ -34624,6 +34782,14 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 inputEchoed = true;
             }
             addKeroWorkstreamEvent(options.fromQueue ? '대기 요청' : '사용자 요청', visibleUserInput.slice(0, 180), options.fromQueue ? 'queued' : 'input', taskProgressOptions);
+            if (approvedPlanningGoal) {
+                addKeroWorkstreamEvent(
+                    '기획안 목표 전환',
+                    '사용자 승인에 따라 직전 기획/TODO를 목표모드 실행 목표로 설정했습니다.',
+                    'context',
+                    taskProgressOptions
+                );
+            }
             if (backgroundJobId) {
                 updateKeroProgress(0, 4, '자료와 참고 범위를 구성하는 중...', taskProgressOptions);
             }
@@ -34846,7 +35012,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     };
                 }
             }
-            let modelUserInput = userInput;
+            let modelUserInput = effectiveUserInput;
             let modelVisibleUserInput = visibleUserInput;
             if (startNowFollowupObjective) {
                 modelUserInput = startNowFollowupObjective;
@@ -34901,6 +35067,16 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 && !isWorkTargetActionMode
                 && shouldRunMutationFromRequest
                 && (isKeroAutonomousExecutionRequest(taskRequestText) || isKeroGatewayFullCharacterBuildRequest(taskRequestText));
+            if (parsed.actions?.length && !isWorkMode) {
+                addKeroWorkstreamEvent(
+                    '기획/TODO 요청 액션 차단',
+                    '현재 입력은 기획/정리/질문 흐름이라 모델이 만든 저장 액션을 실행하지 않았습니다.',
+                    'warning',
+                    taskProgressOptions
+                );
+                parsed.invalidActions = [...ensureArray(parsed.invalidActions), ...ensureArray(parsed.actions).map((action) => makeCloneableData(action))];
+                parsed.actions = [];
+            }
             if (isWorkMode && parsed.actions?.length && !shouldRunMutationFromRequest && isKeroQuestionOnlyRequest(taskRequestText)) {
                 addKeroWorkstreamEvent(
                     '질문 응답 액션 차단',
@@ -34993,7 +35169,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     }
                 }
             }
-            const cleaned = stripMarkdownBold(parsed.text || '');
+            let cleaned = stripMarkdownBold(parsed.text || '');
+            if (cleaned && !isWorkMode && (taskKeroMode === 'planning' || (isKeroExecutionMode(taskKeroMode) && taskPlanningOnlyRequest))) {
+                rememberKeroPlanningGoalCandidate(taskRequestText, cleaned);
+                cleaned = appendKeroPlanningGoalOffer(cleaned);
+            }
             const shouldDeferAssistantText = isWorkMode && parsed.actions?.length > 0;
             if (cleaned && !shouldDeferAssistantText) {
                 await displayKeroAssistantResponseText(cleaned);
@@ -35358,6 +35538,8 @@ ${catchDetail}
 
 ## 일상모드 규칙
 - 주인님과 편하게 대화한다. 밝고 귀엽게, 케로답게 말한다.
+- 과거 케로 말투를 유지한다. "개굴!", "슈퍼 바이브!", "주인님~", "으악...", "(후드 끈 잡아당기며)" 같은 표현을 상황에 맞게 자연스럽게 쓴다.
+- 유능하지만 잔소리 섞인 애정이 있고, 칭찬에는 살짝 쑥스러워한다. 너무 차갑거나 사무적인 어시스턴트 말투로 고정되지 않는다.
 - 사용자가 명시적으로 RisuAI 작업, 수정, 분석, 생성, 삭제, 적용을 요청해도 실제 작업 흐름으로 들어가지 않는다.
 - 로어북, 정규식, 트리거, 모듈, 플러그인에 대한 사용법/개념/오류 원인 질문은 일반 지식 범위에서 답한다. 질문이라는 이유만으로 "일상모드라서 못한다"고 거절하지 않는다.
 - 실제 저장, 삭제, 적용, 현재 캐릭터/모듈/플러그인 데이터 분석처럼 작업 데이터 접근이 필요한 요청일 때만 "작업모드로 바꾸면 진행할게"라고 짧게 안내한다.
@@ -35380,8 +35562,10 @@ ${chatContinuity.block}
     }
 
     async function processUserRequest(userInput, options = {}) {
-        const requestKeroMode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
-        if (requestKeroMode !== 'work') {
+        const requestKeroMode = normalizeKeroMode(options.keroMode || currentKeroMode);
+        const requestAllowsMutation = isKeroExecutionMode(requestKeroMode) && !isKeroPlanningOnlyRequest(userInput);
+        const requestIsPlanningMode = isKeroPlanningMode(requestKeroMode) || isKeroPlanningOnlyRequest(userInput);
+        if (requestKeroMode === 'daily') {
             return await processDailyUserRequest(userInput);
         }
 
@@ -35430,6 +35614,7 @@ ${chatContinuity.block}
             skipSwitchView: true,
             userRequest: userInput,
             keroMode: requestKeroMode,
+            planningOnly: !requestAllowsMutation || requestIsPlanningMode,
             workTargetMode: workMode,
             keroScope: scope,
             keroContextPayload: effectiveContextPayload,
@@ -35437,7 +35622,7 @@ ${chatContinuity.block}
             ...(options.jobId ? { jobId: options.jobId } : {})
         });
 
-        if (/모든?\s*(로어북|로어|lorebook)/i.test(userInput) && context.lorebooks.length > 0) {
+        if (requestAllowsMutation && /모든?\s*(로어북|로어|lorebook)/i.test(userInput) && context.lorebooks.length > 0) {
             const selectedLorebookIndexes = getSelectedPartIndexes('lorebook', char);
             const loreItemsToProcess = selectedLorebookIndexes
                 .map(index => ({
@@ -35528,17 +35713,29 @@ const workTargetBlock = `## 🎯 현재 작업 대상
 ${workTargetWritePolicy}`;
 
         const wantsUIDesign = isUIDesignRequest(userInput);
-        const modeBlock = requestKeroMode === 'work'
-            ? `## 🛠 현재 모드: 작업모드
+        let modeBlock;
+        if (requestKeroMode === 'planning' || requestIsPlanningMode) {
+            modeBlock = `## 🧭 현재 모드: 기획모드
+- 현재 요청은 저장/생성/삭제/적용을 실행하지 않는다.
+- 사용자의 요구사항을 정리하고, TODO 리스트, 우선순위, 작업 단위, 확인할 질문, 완료 기준을 만든다.
+- 유저와 상의하며 방향을 발전시키는 모드다. 사용자가 "이제 실행", "작업 시작", "저장해", "적용해"처럼 명시하기 전까지 @action을 출력하지 않는다.
+- 작업모드/목표모드의 내부 실행 지시보다 현재 사용자 요청의 "먼저 정리/기획/TODO" 의도가 우선한다.
+- 답변은 실행 결과처럼 말하지 말고, 아직 기획 단계임을 분명히 한다.
+- 기획안이 실행 가능한 수준으로 정리되면 마지막에 "이 계획이 괜찮으면 목표로 설정하고 진행하자"는 식으로 승인을 받아 목표모드 실행으로 넘긴다.`;
+        } else if (requestKeroMode === 'goal') {
+            modeBlock = `## 🎯 현재 모드: 목표모드
+- 목표와 완료 기준을 먼저 잡고, 목표 달성까지 필요한 작업을 단계적으로 실행한다.
+- 사용자가 명시적으로 실행을 맡긴 목표는 확인 질문으로 멈추지 말고 가능한 작은 저장 단위부터 진행한다.
+- 단, 사용자가 "기획만", "TODO만", "저장하지 말고"라고 말하면 그 요청이 우선이며 @action을 출력하지 않는다.
+- 응답은 현재 목표, 다음 실행 단위, 검증 기준을 짧게 보여준다.
+- 기획모드에서 승인된 목표라면 직전 기획/TODO를 기준으로 바로 실행 목표를 세우고 작업모드처럼 실제 저장 액션을 진행한다.`;
+        } else {
+            modeBlock = `## 🛠 현재 모드: 작업모드
 - RisuAI 어시스턴트로서 정확성, 근거, 적용 전 확인을 최우선한다.
 - 사용자가 수정/개선/생성/삭제를 명확히 요청하면 액션 프로토콜을 사용할 수 있다.
-- 응답은 친근하되, 작업 설명은 짧고 명확하게 한다.`
-            : `## 🌿 현재 모드: 일상모드
-- 평소의 케로답게 밝고 귀엽게 대화한다. 개굴, 슈퍼 바이브 같은 말투를 자연스럽게 쓴다.
-- 사용자가 분석/아이디어/가벼운 질문을 하면 편하게 답한다.
-- 로어북/정규식/트리거/모듈/플러그인 사용법과 일반적인 오류 원인 질문은 답할 수 있다.
-- 실제 캐릭터 데이터 수정, 삭제, 적용 액션은 하지 않는다. 필요하면 "작업모드로 바꾸면 진행할게"라고 안내한다.
-- 일상모드에서는 @action을 출력하지 않는다.`;
+- 사용자가 "먼저 TODO", "요구사항 정리", "아직 기획", "계획만"처럼 말하면 실행보다 기획/정리가 우선이며 @action을 출력하지 않는다.
+- 응답은 케로답게 친근하되, 작업 설명은 짧고 명확하게 한다.`;
+        }
 
         let systemPrompt = `## 작업 안전 원칙
 - RisuAI 캐릭터/로어북/스크립트 데이터는 사용자의 작업물이다. 삭제, 덮어쓰기, 대량 치환은 반드시 사용자 요청과 확인 흐름을 따른다.
@@ -35561,6 +35758,8 @@ ${workTargetWritePolicy}`;
 - 외모: 에메랄드색 개구리 후드티를 푹 눌러쓴 158cm의 귀여운 보이. 줄무늬 니삭스와 짧은 팬츠 착용.
 - 성격: 유능하지만 잔소리가 많은 참견쟁이. "슈퍼 바이브!"가 말버릇. 칭찬에 약함.
 - 특기: 주인님이 요청하면 코드를 깔끔하게 고쳐줌. 일괄 수정의 마법사.
+- 말투 복원: 과거 케로처럼 "개굴!", "주인님~", "슈퍼 바이브!", "으악...", "(후드 끈 잡아당기며)"를 자연스럽게 쓴다. 작업모드에서도 완전히 무미건조하게 굳지 않는다.
+- 단, 캐릭터성은 설명 톤에만 적용한다. @action payload, 코드, JSON, 정규식, Lua, 모듈/플러그인 원문 안에는 케로 말투를 섞지 않는다.
 
 ${modeBlock}
 
@@ -35614,6 +35813,7 @@ ${metaBlock}
 - 칭찬에 쑥스러움: 주인님이 칭찬하면 "헤헤... 별거 아니야..."
 - 자신감: "내 실력 죽이지?", "맡겨만 둬!"
 - 당황: 오류 나면 "으악... 내 잘못 아니야... (후드 끈 잡아당기며)"
+- 작업/기획/목표모드에서도 이 말투를 기본으로 유지하되, 실제 작업 내용은 짧고 정확하게 말한다.
 - IMPORTANT: Do NOT use markdown bold like **text**. Risu chat does not render it. Never output '**' characters.
 
 ## 🔤 언어 규칙 (매우 중요!)
@@ -35622,7 +35822,9 @@ ${metaBlock}
 - 기존 콘텐츠 언어는 유지하고, 요청 없으면 번역 금지
 
 ## ✅ 액션 프로토콜 (매우 중요! - 반드시 준수!)
-현재 모드가 일상모드라면 이 액션 프로토콜은 비활성화된다. 일상모드에서는 @action을 절대 출력하지 말고, 필요한 경우 작업모드 전환을 안내한다.
+현재 모드가 일상모드/기획모드이거나, 사용자가 "먼저 TODO/기획/계획/요구사항 정리/아직 기획"처럼 실행보다 정리를 우선 요청했다면 이 액션 프로토콜은 비활성화된다.
+그 경우 @action을 절대 출력하지 말고 요구사항, TODO, 우선순위, 작업 단위, 확인 질문, 완료 기준만 정리한다. 시스템의 작업 진행 규칙보다 현재 사용자 입력의 기획/정리 의도가 우선이다.
+일상모드에서는 필요한 경우 작업모드 또는 목표모드 전환을 안내한다.
 사용자가 **명시적으로** 수정/개선/변경 등을 요청할 때만 @action을 출력해야 한다!
 ⚠️ 중요: 케로가 먼저 수정을 제안하거나 강요하지 마! 사용자가 직접 "수정해줘", "개선해줘" 등을 말해야만 @action 출력!
 ⚠️ 질문이나 분석 요청은 @action 없이 설명만 해주면 돼!
@@ -35749,7 +35951,7 @@ ${metaBlock}
 
 ### 🔄 복합 작업 자동 분해 규칙 (중요!)
 - 사용자가 여러 작업을 한 번에 말하면 케로가 알아서 작업 단위로 분해하고 순서대로 실행한다. 사용자가 "1번부터 해", "다음은 이거 해"처럼 AI 편의에 맞춰 다시 쪼개 지시하게 만들지 않는다.
-- 사용자가 "알아서", "최대한", "전체적으로", "다 고쳐", "만들어줘", "업그레이드해줘"라고 맡기면 실행 전 질문하지 말고 필요한 @action 배열 또는 단일 통합 @action을 출력한다.
+- 사용자가 "알아서", "최대한", "전체적으로", "다 고쳐", "만들어줘", "업그레이드해줘"라고 맡기면 실행 전 질문하지 말고 필요한 @action 배열 또는 단일 통합 @action을 출력한다. 단, 같은 요청 안에 "먼저 TODO/기획/정리/계획만/아직 기획" 의도가 있으면 실행하지 않는다.
 - 캐릭터/봇의 이름, desc, firstMessage, globalNote, lorebooks, regexScripts, backgroundHTML처럼 같은 캐릭터에 저장되는 여러 필드 작업은 가능하면 하나의 character update @action으로 묶는다.
 - 캐릭터 전체 제작/변환 요청에서 desc improve 하나만 출력하는 것은 실패다. 필요한 필드와 자료를 payload에 담아 실제 저장되게 한다.
 - 캐릭터 제작/재작성 요청에서는 100토큰짜리 요약으로 끝내지 않는다. desc는 정체성, 외형, 말투, 관계, 갈등, 운용 단서를 담고, 로어북은 핵심 항목별로 바로 주입 가능한 상세 설정을 제공한다.
@@ -35757,9 +35959,9 @@ ${metaBlock}
 - 상태창/HTML/CSS를 만들면 프리뷰용 <ui-design>을 보여줄 수 있지만, 반드시 같은 결과를 적절한 @action payload(backgroundHTML, regexScripts 등)에도 넣어 실제 저장되게 한다.
 - 이미지 에셋을 만들면 프롬프트 설명만 하지 말고 target:"asset" create @action에 assets 배열을 담아 실제 생성/등록되게 한다.
 - 여러 항목 생성이 주목적인 요청이면 create payload 배열 또는 bulk_create를 사용한다. 여러 항목 삭제는 delete @action 배열/idx 배열로 묶는다.
-- 사용자가 "먼저 계획만", "제안만", "확인 받고"라고 말한 경우 또는 필수 정보가 실제로 없어 저장 대상을 확정할 수 없는 경우에만 실행 전 질문한다. 큰 작업이라는 이유만으로 "시작해라고 말해줘" 같은 재확인을 요구하지 말고, 첫 저장 단위부터 실행한다.
-- 사용자가 "알아서", "알잘딱", "싹 다", "최종완료", "끝까지", "전부 다 해"처럼 위임하면 실행 권한을 이미 준 것이다. 선호 확인/승인 질문을 하지 말고 LLM이 최선의 결정을 내려 @action으로 저장 작업을 시작한다.
-- 저장/수정/생성 요청에서 계획, 방향성, 질문만 말하고 @action을 빼는 응답은 실패다. 가능한 최소 실행 단위라도 반드시 @action으로 낸다.
+- 사용자가 "먼저 계획만", "먼저 TODO", "요구사항 정리", "아직 기획", "제안만", "확인 받고"라고 말한 경우에는 저장/수정/생성 @action을 내지 않는다. 큰 작업이라는 이유만으로 멈추지는 않되, 사용자가 현재 입력에서 정리/기획을 요구하면 그 의도가 실행보다 우선이다.
+- 사용자가 "알아서", "알잘딱", "싹 다", "최종완료", "끝까지", "전부 다 해"처럼 위임하면 실행 권한을 이미 준 것이다. 선호 확인/승인 질문을 하지 말고 LLM이 최선의 결정을 내려 @action으로 저장 작업을 시작한다. 단, 기획모드 또는 기획형 입력에서는 적용하지 않는다.
+- 저장/수정/생성 요청에서 계획, 방향성, 질문만 말하고 @action을 빼는 응답은 실패다. 가능한 최소 실행 단위라도 반드시 @action으로 낸다. 단, 기획모드/기획형 입력/질문형 입력은 예외이며 @action을 내면 실패다.
 - payload가 너무 커질 것 같으면 모델 응답 한계에 맞춰 저장 가능한 첫 단위부터 실행하고, 남은 작업은 이어서 진행할 작업 큐/다음 단계로 명시한다. "첫 번째만 하고 끝"내지 않는다.
 - 대형 요청은 내부적으로 KeroTaskPlan처럼 계획/실행/검증 단계를 나눠 생각한다. @action 배열에는 가능하면 stepId, phase, acceptance, verifyAfter를 붙인다.
 - 검증 단계가 없거나 저장 결과를 확인하지 못한 대형 요청은 "완료"라고 말하지 않는다. "첫 저장 단위 완료, 다음 단계 진행"처럼 현재 상태를 정확히 말한다.
@@ -43094,7 +43296,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.62 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.63 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -45641,11 +45843,12 @@ function svbNormalizeSubAgentList(value, maxItems = 6, itemLimit = 260) {
 }
 
 function shouldAttemptKeroGatewayRecovery(options = {}) {
-    const mode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
-    return mode === "work"
+    const mode = normalizeKeroMode(options.keroMode || currentKeroMode);
+    return isKeroExecutionMode(mode)
         && options.fromKero === true
         && options.allowGatewayRecovery !== false
-        && options.gatewayRecovery !== true;
+        && options.gatewayRecovery !== true
+        && !isKeroPlanningOnlyRequest(getKeroRecoverySourceText(options));
 }
 
 function getKeroRecoverySourceText(options = {}) {
@@ -45912,7 +46115,7 @@ function isKeroImproveLikeRequest(text = '') {
 function hasKeroExplicitMutationIntent(text = '') {
     const source = safeString(text);
     if (!source.trim()) return false;
-    if (isKeroNoApplyPlanningOnlyRequest(source)) return false;
+    if (isKeroPlanningOnlyRequest(source)) return false;
     return /(수정해|수정\s*해|고쳐줘|고쳐\s*줘|고쳐봐|고쳐\s*봐|개선해|개선\s*해|다듬어줘|보완해|업데이트해|최신화해|바꿔줘|변경해|정리해줘|정리\s*해|리메이크\s*(?:해|해서|하|해줘)?|재구성\s*(?:해|해서|하|해줘)?|재창조\s*(?:해|해서|하|해줘)?|리빌드\s*(?:해|해서|하|해줘)?|전면\s*(?:교체|개편|개조)|싹\s*(?:바꿔|갈아|교체)|새롭게\s*(?:발전|확장|구성|만들)|풍성하게|추가해|삭제해|만들어줘|만들어\s*줘|생성해|작성해|제작해|구성해|세팅해|완성해|저장해|적용해|반영해|실행해|진행해|작업\s*진행|create|add|generate|make|build|remake|rebuild|improve|enhance|update|patch|fix|edit|revise|rewrite|delete|remove|apply|save)/i.test(source);
 }
 
@@ -45920,14 +46123,14 @@ function isKeroQuestionOnlyRequest(text = '') {
     const source = safeString(text);
     if (!source.trim()) return false;
     if (hasKeroExplicitMutationIntent(source)) return false;
-    if (isKeroNoApplyPlanningOnlyRequest(source)) return true;
+    if (isKeroPlanningOnlyRequest(source)) return true;
     return /(왜|원인|무슨|뭐가|무엇|어떻게|가능|될까|인가|확인|분석|검토|문제|오류|에러|버그|사용법|방법|의견|생각|알려줘|설명해|체크해|봐줘|봐|what|why|how|can|could|should)/i.test(source);
 }
 
 function shouldAttemptKeroMissingActionFallback(userText = '', options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     if (!request) return false;
-    if (isKeroQuestionOnlyRequest(request)) return false;
+    if (isKeroQuestionOnlyRequest(request) || isKeroPlanningOnlyRequest(request)) return false;
     return hasKeroExplicitMutationIntent(request) || isKeroGatewayFullCharacterBuildRequest(request);
 }
 
@@ -46585,19 +46788,29 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
 }
 
 function isKeroNoApplyPlanningOnlyRequest(text = '') {
-    return /(적용하지\s*(?:마|말고)|저장하지\s*(?:마|말고)|반영하지\s*(?:마|말고)|제안만|보기만|예시만|설명만|계획만|분석만|검토만|먼저\s*계획|일단\s*계획|plan\s*only|no\s*(apply|save))/i.test(safeString(text));
+    return /(적용하지\s*(?:마|말고)|저장하지\s*(?:마|말고)|반영하지\s*(?:마|말고)|생성하지\s*(?:마|말고)|만들지\s*(?:마|말고)|작업하지\s*(?:마|말고)|실행하지\s*(?:마|말고)|제안만|보기만|예시만|설명만|계획만|기획만|분석만|검토만|정리만|목록만|리스트만|todo만|TODO만|먼저\s*(?:계획|기획|정리|TODO|todo|리스트|목록)|일단\s*(?:계획|기획|정리|TODO|todo|리스트|목록)|plan\s*only|planning\s*only|todo\s*only|no\s*(apply|save|execute|create))/i.test(safeString(text));
+}
+
+function isKeroPlanningOnlyRequest(text = '') {
+    const source = safeString(text);
+    if (!source.trim()) return false;
+    if (isKeroNoApplyPlanningOnlyRequest(source)) return true;
+    const planningSignal = /(기획|계획|TODO|todo|투두|할\s*일|체크\s*리스트|체크리스트|요구\s*사항|요청\s*사항|우선\s*순위|로드맵|작업\s*단위|단계\s*정리|차근\s*차근|상의|논의|방향(?:성)?|스펙|명세|설계|정리해서\s*먼저|먼저\s*정리|먼저\s*TODO|planning|checklist|requirements?|roadmap|spec)/i.test(source);
+    const deferSignal = /(아직|계속\s*기획|먼저|우선|일단|차근\s*차근|상의|논의|정리해서|정리하고|목록으로|리스트로|TODO로|todo로|해달라고|보여줘|만들어\s*줘|작성해\s*줘)/i.test(source);
+    const explicitImmediateExecution = /(바로|즉시|지금|이제)\s*(?:실행|진행|저장|적용|반영|생성|만들|시작)|(?:실행|저장|적용|반영)\s*해(?:줘)?|작업\s*시작|작업\s*진행/i.test(source);
+    return planningSignal && deferSignal && !explicitImmediateExecution;
 }
 
 function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     if (!request) return false;
     if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return false;
-    const mode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
-    if (mode !== 'work') return false;
+    const mode = normalizeKeroMode(options.keroMode || currentKeroMode);
+    if (!isKeroExecutionMode(mode)) return false;
     const targetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     if (['module', 'plugin'].includes(targetMode)) return false;
     if (options.gatewayRecovery === true || options.disableLargeRequestPreplan === true) return false;
-    if (isKeroNoApplyPlanningOnlyRequest(request)) return false;
+    if (isKeroPlanningOnlyRequest(request)) return false;
     if (isKeroQuestionOnlyRequest(request)) return false;
     if (!isKeroCreateLikeRequest(request) && !isKeroGatewayFullCharacterBuildRequest(request)) return false;
     if (isKeroGatewayFullCharacterBuildRequest(request)) return true;
@@ -48134,8 +48347,8 @@ async function waitForSubAgentConsultationsWithHardCap(tasks = [], submodels = [
 
 async function buildSubmodelConsultationBlock(systemPrompt, userText, options = {}) {
     if (options.useSubmodels === false) return "";
-    const consultationMode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
-    if (consultationMode !== "work") return "";
+    const consultationMode = normalizeKeroMode(options.keroMode || currentKeroMode);
+    if (!isKeroExecutionMode(consultationMode)) return "";
     const configuredSubmodels = normalizeSubAgentModels(apiHubSubmodels).filter((item) => item.enabled !== false).slice(0, KERO_SUBAGENT_MAX_CONFIGURED);
     if (!configuredSubmodels.length) return "";
     const adaptiveLimits = getSvbAdaptiveRuntimeLimits({ force: true });
@@ -48442,8 +48655,8 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
         effectiveProgressOptions = { detached: true, allowCurrentJobFallback: false };
     }
     effectiveOptions.progressOptions = effectiveProgressOptions;
-    const effectiveKeroMode = safeString(effectiveOptions.keroMode || currentKeroMode) || currentKeroMode;
-    if (effectiveKeroMode === "work") {
+    const effectiveKeroMode = normalizeKeroMode(effectiveOptions.keroMode || currentKeroMode);
+    if (isKeroExecutionMode(effectiveKeroMode)) {
         effectiveOptions.timeoutMs = resolveKeroWorkModelCallTimeoutMs(effectiveOptions);
         effectiveSystemPrompt = appendKeroSteeringBlockToPrompt(effectiveSystemPrompt, effectiveOptions.keroSteeringBlock);
     }
@@ -56025,7 +56238,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.62",
+        name: "SuperVibeBot v1.5.63",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -56034,7 +56247,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.62 Settings",
+        "SuperVibeBot v1.5.63 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -56077,7 +56290,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.62");
+        Logger.info("SuperVibeBot v1.5.63");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

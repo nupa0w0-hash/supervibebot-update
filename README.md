@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.62`
+Latest version: `1.5.63`
 
 Update URL:
 
@@ -17,6 +17,11 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.63
+
+- Adds Kero planning mode and goal mode. Planning/TODO requests now stay non-mutating until the user approves `목표로 설정하고 진행`, then Kero switches into goal execution.
+- Blocks save/action recovery paths for planning-only requests even while work/goal mode is active, and restores Kero's older playful tone across the new modes.
 
 ## 1.5.62
 
