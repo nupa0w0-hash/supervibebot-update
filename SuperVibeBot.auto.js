@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.74
-//@version 1.5.74
+//@display-name 🐸 SuperVibeBot v1.5.75
+//@version 1.5.75
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.74는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.75는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.74 Release Notes
+ * SuperVibeBot v1.5.75 Release Notes
+ * - v1.5.75: lets Kero use generated image assets as part of status windows, backgroundHTML, profile panels, interfaces, maps, emblems, items, and splash/title views
+ * - v1.5.75: teaches integrated visual jobs to create assets first and then reference them from saved HTML/CSS with {{asset::name}} or {{image::name}}
+ * - v1.5.75: carries the same visual asset workflow into missing-action and gateway recovery prompts without adding images to pure text/code/planning work
  * - v1.5.74: narrows planning goal approval so casual replies no longer jump into goal execution
  * - v1.5.74: shows the current goal/mission in the workstream panel with runtime stop/cancel controls
  * - v1.5.74: adds clearer main-model and sub-agent activity events during long waits
@@ -1646,7 +1649,21 @@ const UI_DESIGN_FORMAT = `
 
 이 형식으로 제공하면 사용자가 라이브 프리뷰로 즉시 확인할 수 있습니다.
 단, UI/상태창/HTML/CSS 생성물이 사용자의 실제 작업 요청 일부라면 프리뷰만 보여주고 끝내지 말고, 같은 결과를 적절한 @action payload(backgroundHTML, regexScripts 등)에도 넣어 실제 저장까지 진행하세요.
+상태창/배경/인터페이스 품질이 이미지로 올라가는 경우에는 이미지 에셋 create @action을 먼저 만들고, 저장 HTML/CSS에서 {{asset::이름}} 또는 {{image::이름}}으로 참조하세요.
 만약 일반 로어북/Description 작업이라면 기존처럼 제공하세요.`;
+
+const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
+
+## Visual Asset Workflow
+- Image generation is not limited to explicit asset requests. When generated images would materially improve a bot, status window, backgroundHTML, profile panel, interface, map, emblem, item card, title/splash view, or visual frame, include image asset creation as part of the work.
+- Do not replace the real requested edit with an image-only answer. For integrated visual work, output an @action JSON array in this order: first target:"asset" create actions, then the character/background/regex/lorebook/module action that references the generated asset names.
+- Use registered asset references in saved code: {{asset::asset_name}}, {{image::asset_name}}, or <img src="{{asset::asset_name}}"> inside backgroundHTML/regex display HTML.
+- Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
+- Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
+- Keep image prompts 2D/anime/illustration oriented. Avoid photo, realistic, live action, 3D render, CGI, text, logo, and watermark terms. Put readable UI text in HTML/CSS, not inside the generated image.
+- For the same character across multiple images, keep identityName and identityPrompt stable, and vary only expression, pose, clothing layer, scene, or camera framing in each assets[].prompt.
+- Choose ratios by use: wide backgrounds/status art 16:9 or 4:3, portrait/profile 13:19, icons/emblems/items 1:1, horizontal headers/frames wide ratios when supported.
+- If the visual result depends on Wellspring workflow/character/preset/profile fields provided in context, preserve and pass those fields in the asset create payload instead of inventing incompatible route fields.`;
 
 /* === External Runtimes (Live Studio) === */
 const LUAJS_CDN_URL = 'https://cdn.jsdelivr.net/npm/@doridian/luajs@1.0.8/dist/luajs.mjs';
@@ -13537,7 +13554,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.74',
+            '//@version 1.5.75',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -37026,6 +37043,7 @@ ${metaBlock}
 - 캐릭터 제작/재작성 요청에서는 100토큰짜리 요약으로 끝내지 않는다. desc는 정체성, 외형, 말투, 관계, 갈등, 운용 단서를 담고, 로어북은 핵심 항목별로 바로 주입 가능한 상세 설정을 제공한다.
 - 서로 다른 대상/시스템을 건드리는 작업은 @action JSON 배열로 순서대로 담는다. 예: character update 후 lorebook bulk_create, plugin update 후 검토용 regex create 등.
 - 상태창/HTML/CSS를 만들면 프리뷰용 <ui-design>을 보여줄 수 있지만, 반드시 같은 결과를 적절한 @action payload(backgroundHTML, regexScripts 등)에도 넣어 실제 저장되게 한다.
+- 상태창/배경HTML/프로필 패널/인터페이스/지도/문장/아이템 카드/타이틀 화면처럼 이미지가 품질을 올리는 작업이면 에셋 요청이 따로 없었더라도 target:"asset" create @action을 먼저 넣고, 뒤따르는 저장 액션에서 {{asset::이름}} 또는 {{image::이름}}으로 참조한다.
 - 이미지 에셋을 만들면 프롬프트 설명만 하지 말고 target:"asset" create @action에 assets 배열을 담아 실제 생성/등록되게 한다.
 - 여러 항목 생성이 주목적인 요청이면 create payload 배열 또는 bulk_create를 사용한다. 여러 항목 삭제는 delete @action 배열/idx 배열로 묶는다.
 - 사용자가 "먼저 계획만", "먼저 TODO", "요구사항 정리", "아직 기획", "제안만", "확인 받고"라고 말한 경우에는 저장/수정/생성 @action을 내지 않는다. 큰 작업이라는 이유만으로 멈추지는 않되, 사용자가 현재 입력에서 정리/기획을 요구하면 그 의도가 실행보다 우선이다.
@@ -37093,6 +37111,8 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
 
 ---
 주인님 요청: ${visibleUserInput}${visibleUserInput !== userInput ? `\n\n## 내부 후속 처리 메모\n${userInput}` : ''}`;
+
+        systemPrompt += KERO_VISUAL_ASSET_WORKFLOW_GUIDE;
 
         if (wantsUIDesign) {
             systemPrompt += UI_DESIGN_FORMAT;
@@ -44378,7 +44398,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.74 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.75 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -47805,6 +47825,8 @@ Rules:
 - If this is a full character/bot build, create the first executable save unit now: prefer one character update with at least 3 useful fields among name, desc, firstMessage, globalNote, backgroundHTML.
 - Put remaining worldbuilding, character roster, history, factions, relationships, rules, and lore into target:"lorebook" bulk_create actions.
 - Never use personality or scenario fields. Put those details into desc if needed.
+- If visual UI/status/background/profile quality would materially improve, include a target:"asset" create action before the character update and reference generated asset names in backgroundHTML/regexScripts with {{asset::name}} or {{image::name}}.
+- Do not generate images for pure text edits, code bugfixes, or planning-only requests.
 - If a single response is too large, emit a smaller first character update plus bulk_create jobs; do not ask the user what to do next.
 - If you cannot make a character update safely, emit bulk_create jobs that let the next LLM chunks continue the work.`;
     const payload = {
@@ -48253,6 +48275,8 @@ ${workTargetRule}
 - 캐릭터 전체 제작/변환 요청이면 character update로 name, desc, firstMessage, globalNote, backgroundHTML/상태창의 첫 완성 단위를 저장하고, 큰 로어북 묶음은 bulk_create로 넘긴다.
 - personality/성격, scenario/시나리오 필드는 쓰지 말고 desc에 통합한다.
 - 상태창/HTML/CSS를 만들면 프리뷰만 보여주지 말고 backgroundHTML 또는 regexScripts에 실제 저장 payload를 넣는다.
+- 상태창, 배경, 프로필 패널, 인터페이스, 지도, 문장, 아이템 카드, 타이틀/스플래시처럼 이미지가 품질을 올리는 작업이면 target:"asset" create 액션을 먼저 만들고, 뒤따르는 character/background/regex 액션에서 {{asset::name}} 또는 {{image::name}}으로 참조한다.
+- 순수 텍스트 수정, 코드 버그수정, 설정 변경, 기획/분석 전용 요청에서는 이미지 생성을 끼워 넣지 않는다.
 - 작업이 매우 크면 "이번 응답에서 첫 저장 단위를 적용하고, 나머지는 bulk_create/작업 큐가 이어간다"는 짧은 안내 후 @action을 출력한다.
 - @action은 응답 마지막에 단독으로 둔다. 복합 작업은 JSON 배열로 묶는다.
 
@@ -57830,7 +57854,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.74",
+        name: "SuperVibeBot v1.5.75",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57839,7 +57863,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.74 Settings",
+        "SuperVibeBot v1.5.75 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57882,7 +57906,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.74");
+        Logger.info("SuperVibeBot v1.5.75");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

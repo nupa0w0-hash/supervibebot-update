@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.74`
+Latest version: `1.5.75`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.75
+
+- Lets Kero use generated image assets as part of status windows, backgroundHTML, profile panels, interfaces, maps, emblems, items, and splash/title views.
+- Makes integrated visual jobs create assets first, then reference them from saved HTML/CSS with `{{asset::name}}` or `{{image::name}}`.
+- Applies the same visual asset workflow to missing-action and gateway recovery prompts while skipping pure text, code, analysis, and planning-only work.
 
 ## 1.5.74
 
