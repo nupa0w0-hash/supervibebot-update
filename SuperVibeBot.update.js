@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.76
-//@version 1.5.76
+//@display-name 🐸 SuperVibeBot v1.5.77
+//@version 1.5.77
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.76는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.77는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.76 Release Notes
+ * SuperVibeBot v1.5.77 Release Notes
+ * - v1.5.77: clears approval-required mission steps when proposal actions are approved or rejected so mobile approval cannot leave a stale blocked action
+ * - v1.5.77: reconciles orphaned approval-required steps when the proposal panel has no matching pending proposal after mobile/webview reloads
+ * - v1.5.77: treats explicit proposal approval as the confirmation for nested action prompts, including work-target delete confirmation paths
  * - v1.5.76: replaces generic main-model wait heartbeats with visible task/activity/status details so long waits show what Kero is doing
  * - v1.5.76: prevents asset-focused requests such as character standing/emotion image batches from being misrouted into lorebook bulk_create jobs
  * - v1.5.76: passes cancellation signals into Kero image asset generation and clarifies stop/cancel controls in the workstream panel
@@ -13573,7 +13576,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.76',
+            '//@version 1.5.77',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -29918,6 +29921,8 @@ ${currentVars || '{}'}
         if (!list.length) return { deferred: false, count: 0 };
         const char = await getCharacterData().catch(() => null);
         const deferred = [];
+        const approvalBatchId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const approvalStepId = `approval-required-${approvalBatchId}`;
         for (let index = 0; index < list.length; index += 1) {
             const sourceAction = list[index];
             const action = makeCloneableData(sourceAction);
@@ -29927,11 +29932,15 @@ ${currentVars || '{}'}
             action.jobId = action.jobId || actionId;
             action._missionId = action._missionId || options.missionId || currentKeroMission?.id || '';
             action.missionId = action.missionId || options.missionId || currentKeroMission?.id || '';
+            action._approvalBatchId = action._approvalBatchId || approvalBatchId;
+            action._approvalStepId = action._approvalStepId || approvalStepId;
             const target = normalizeKeroActionTargetName(action.target);
             const preview = ['module', 'plugin'].includes(target)
                 ? getWorkTargetActionPreview(action)
                 : await getActionPreview(action, char);
             const proposal = addKeroProposal({
+                approvalBatchId,
+                approvalStepId,
                 target,
                 type: safeString(action.type),
                 idx: action.idx,
@@ -29943,13 +29952,14 @@ ${currentVars || '{}'}
         if (currentKeroMission) {
             const detail = `수정 전 확인이 켜져 있어 저장 액션 ${deferred.length}개를 제안함에 보류했습니다. 승인하면 실행하고 거부하면 저장하지 않습니다.`;
             const step = {
-                id: `approval-required-${Date.now()}`,
+                id: approvalStepId,
                 missionId: options.missionId || currentKeroMission.id || '',
                 title: '수정 전 확인 대기',
                 target: 'proposal',
                 actionType: 'approval_required',
                 status: 'blocked',
                 detail,
+                approvalBatchId,
                 updatedAt: new Date().toISOString()
             };
             updateKeroMissionState({
@@ -29976,15 +29986,137 @@ ${currentVars || '{}'}
         renderKeroProposals();
     }
 
+    function getKeroProposalApprovalStepId(proposal = {}) {
+        const action = proposal?.action || {};
+        return safeString(proposal.approvalStepId || action._approvalStepId || action.approvalStepId || '');
+    }
+
+    function getKeroProposalApprovalBatchId(proposal = {}) {
+        const action = proposal?.action || {};
+        return safeString(proposal.approvalBatchId || action._approvalBatchId || action.approvalBatchId || '');
+    }
+
+    function getKeroPendingApprovalStepIds() {
+        return new Set(pendingKeroProposals.map(getKeroProposalApprovalStepId).filter(Boolean));
+    }
+
+    function settleKeroProposalApprovalStep(proposal = {}, disposition = 'approved', detail = '') {
+        if (!currentKeroMission) return { updated: false };
+        const stepId = getKeroProposalApprovalStepId(proposal);
+        if (!stepId) return { updated: false };
+        const batchId = getKeroProposalApprovalBatchId(proposal);
+        const remaining = pendingKeroProposals.filter((entry) => {
+            const entryStepId = getKeroProposalApprovalStepId(entry);
+            if (entryStepId) return entryStepId === stepId;
+            const entryBatchId = getKeroProposalApprovalBatchId(entry);
+            return batchId && entryBatchId === batchId;
+        }).length;
+        const done = remaining <= 0;
+        const nextStepStatus = done ? (disposition === 'rejected' ? 'cancelled' : 'done') : 'blocked';
+        const nextDetail = safeString(detail || (done
+            ? (disposition === 'rejected'
+                ? '수정 전 확인 제안을 거부해 승인 대기를 종료했습니다.'
+                : '수정 전 확인 제안을 승인해 승인 대기를 종료했습니다.')
+            : `수정 전 확인 제안 ${remaining}개가 아직 승인/거부 대기 중입니다.`));
+        let changed = false;
+        const nextSteps = ensureArray(currentKeroMission.steps).map((step) => {
+            if (safeString(step?.id) !== stepId) return step;
+            changed = true;
+            return {
+                ...step,
+                status: nextStepStatus,
+                detail: nextDetail,
+                updatedAt: new Date().toISOString()
+            };
+        });
+        if (!changed) return { updated: false };
+        const hasBlockedApproval = nextSteps.some((step) =>
+            safeString(step?.actionType) === 'approval_required'
+            && safeString(step?.status) === 'blocked'
+        );
+        const hasAttention = nextSteps.some((step) =>
+            ['warning', 'blocked', 'failed', 'error', 'interrupted'].includes(safeString(step?.status))
+            && !(safeString(step?.actionType) === 'approval_required' && safeString(step?.id) === stepId)
+        );
+        const currentStatus = safeString(currentKeroMission.status || '');
+        const nextMissionStatus = hasBlockedApproval
+            ? 'blocked'
+            : (hasAttention ? 'warning' : (['blocked', 'interrupted'].includes(currentStatus) ? 'running' : (currentStatus || 'running')));
+        updateKeroMissionState({ steps: nextSteps }, {
+            title: done ? '수정 전 확인 처리 완료' : '수정 전 확인 대기',
+            detail: nextDetail,
+            status: nextMissionStatus
+        });
+        return { updated: true, done, remaining };
+    }
+
+    function reconcileKeroOrphanedApprovalRequiredSteps(reason = 'approval_reconcile') {
+        if (!currentKeroMission) return { reconciled: 0 };
+        const pendingStepIds = getKeroPendingApprovalStepIds();
+        if (pendingKeroProposals.length > 0 && pendingStepIds.size === 0) {
+            return { reconciled: 0, skipped: true };
+        }
+        let reconciled = 0;
+        const nowIso = new Date().toISOString();
+        const nextSteps = ensureArray(currentKeroMission.steps).map((step) => {
+            if (safeString(step?.actionType) !== 'approval_required') return step;
+            if (safeString(step?.status) !== 'blocked') return step;
+            const stepId = safeString(step?.id);
+            if (pendingStepIds.has(stepId)) return step;
+            reconciled += 1;
+            return {
+                ...step,
+                status: 'cancelled',
+                detail: '승인 대기 제안이 현재 세션에 남아 있지 않아 stale 승인 대기를 해제했습니다. 같은 작업이 필요하면 다시 요청해 주세요.',
+                updatedAt: nowIso,
+                reconciledAt: nowIso,
+                reconcileReason: reason
+            };
+        });
+        if (reconciled <= 0) return { reconciled: 0 };
+        const hasAttention = nextSteps.some((step) => ['warning', 'blocked', 'failed', 'error', 'interrupted'].includes(safeString(step?.status)));
+        updateKeroMissionState({ steps: nextSteps }, {
+            title: 'stale 승인 대기 정리',
+            detail: `현재 제안함에 없는 승인 대기 단계 ${reconciled}개를 정리했습니다.`,
+            status: hasAttention ? 'warning' : 'running'
+        });
+        addKeroWorkstreamEvent(
+            'stale 승인 대기 정리',
+            `현재 제안함에 없는 승인 대기 단계 ${reconciled}개를 해제했습니다.`,
+            'warning'
+        );
+        return { reconciled };
+    }
+
     function isSensitiveProposalRemoval(proposal) {
         const action = proposal?.action || proposal || {};
         return ['module', 'plugin'].includes(action.target) || action.type === 'delete';
+    }
+
+    function shouldKeepApprovedKeroProposal(job = null, result = null) {
+        if (result?.keepProposal === true) return true;
+        if (isKeroExecutionFailure(result) || result?.ok === false) return true;
+        if (!job || typeof job !== 'object') {
+            return !(result === true || result?.success === true || result?.handled === true);
+        }
+        const status = safeString(job.status || '').toLowerCase();
+        if (['failed', 'error', 'blocked', 'interrupted', 'running', 'queued'].includes(status)) return true;
+        if (status === 'warning') {
+            const executionResult = job.verification?.executionResult || job.executionResult || {};
+            if (isKeroExecutionFailure(executionResult)) return true;
+            const failed = Number(executionResult.failed || 0);
+            const changed = Number(executionResult.created || executionResult.changed || executionResult.success || 0);
+            if (failed > 0 && changed <= 0) return true;
+            return false;
+        }
+        return false;
     }
 
     async function approveKeroProposal(proposalId) {
         const proposal = pendingKeroProposals.find((entry) => entry.id === proposalId);
         if (!proposal) return;
         let result;
+        let approvedJob = null;
         try {
             const action = proposal.action || proposal;
             result = await withKeroApprovalBypass(async () => {
@@ -30017,10 +30149,20 @@ ${currentVars || '{}'}
                     if (storageId && proposalActionId) {
                         const jobs = await loadKeroActionJobs(storageId).catch(() => ({}));
                         job = jobs?.[proposalActionId];
+                        approvedJob = job || null;
                         jobStatus = safeString(job?.status || '');
                         jobDetail = safeString(job?.lastError || job?.verification?.detail || '');
                     }
                     if (!isKeroActionJobVerifiedSuccess(job)) {
+                        if (!shouldKeepApprovedKeroProposal(job, null)) {
+                            return {
+                                success: true,
+                                verifiedViaQueue: true,
+                                status: jobStatus || 'warning',
+                                warning: true,
+                                detail: getKeroActionJobIncompleteDetail(job, action, jobDetail || `${getTargetLabel(action.target)} ${getKeroActionLabel(action.type)} 검증 경고가 남아 있습니다.`)
+                            };
+                        }
                         return {
                             success: false,
                             keepProposal: true,
@@ -30038,7 +30180,7 @@ ${currentVars || '{}'}
             renderKeroProposals();
             return { kept: true, error };
         }
-        if (result?.keepProposal || isKeroExecutionFailure(result) || result?.ok === false) {
+        if (shouldKeepApprovedKeroProposal(approvedJob, result)) {
             if (result?.detail) {
                 await addBotMessage(`⚠️ ${result.detail}`);
             }
@@ -30046,6 +30188,12 @@ ${currentVars || '{}'}
             return { kept: true, result };
         }
         removeKeroProposal(proposalId);
+        settleKeroProposalApprovalStep(proposal, 'approved', result?.warning
+            ? `제안은 승인/실행됐고 검증 경고는 액션 job에 남겼습니다: ${safeString(result.detail).slice(0, 240)}`
+            : '제안을 승인해 실행했습니다.');
+        if (result?.warning && result?.detail) {
+            await addBotMessage(`⚠️ 제안은 승인되어 실행됐고, 승인 대기는 종료했습니다. 검증 경고: ${result.detail}`);
+        }
         return { kept: false, result };
     }
 
@@ -30064,6 +30212,7 @@ ${currentVars || '{}'}
             }
         }
         removeKeroProposal(proposalId);
+        settleKeroProposalApprovalStep(proposal, 'rejected', '제안을 거부해 승인 대기를 종료했습니다.');
         await addBotMessage('작업을 취소했어요.');
         return { kept: false };
     }
@@ -32082,7 +32231,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
         if (type === 'delete') {
             const targetPreview = preview && preview !== '미리보기 없음' ? ` · ${preview.slice(0, 120)}` : '';
-            const confirmed = confirm(
+            const confirmed = confirmUnlessKeroApprovalBypass(
                 `${label} 삭제는 중요한 작업입니다. 정말 진행할까요?\n\n` +
                 `${preview.slice(0, 900)}\n\n` +
                 '취소하면 저장된 데이터는 변경하지 않습니다.'
@@ -33756,6 +33905,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         } catch (error) {
             Logger.warn('Kero workstream guard flush failed:', error?.message || error);
+        }
+        try {
+            if (currentKeroMission) reconcileKeroOrphanedApprovalRequiredSteps('workstream_render');
+        } catch (error) {
+            Logger.warn('Kero approval-required step reconcile failed:', error?.message || error);
         }
         const summary = document.getElementById('kero-workstream-summary');
         const goalBox = document.getElementById('kero-workstream-goal');
@@ -35575,6 +35729,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         let bulkJobSummary = null;
         let bulkAutoResumeResult = null;
         let bulkAutoResumeNotice = '';
+        if (isWorkMode && currentKeroMission) {
+            reconcileKeroOrphanedApprovalRequiredSteps('chat_task_preflight');
+        }
         const retryRequest = isWorkMode && isKeroExplicitRetryRequest(visibleUserInput);
         const resumeRequest = isWorkMode && (isKeroMissionResumeRequest(visibleUserInput) || retryRequest);
         const currentMissionStatus = safeString(currentKeroMission?.status || '');
@@ -44463,7 +44620,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.76 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.77 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -57939,7 +58096,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.76",
+        name: "SuperVibeBot v1.5.77",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57948,7 +58105,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.76 Settings",
+        "SuperVibeBot v1.5.77 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57991,7 +58148,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.76");
+        Logger.info("SuperVibeBot v1.5.77");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

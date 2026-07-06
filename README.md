@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.76`
+Latest version: `1.5.77`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.77
+
+- Clears approval-required mission steps when proposal actions are approved or rejected, preventing mobile approval from leaving stale blocked actions behind.
+- Reconciles orphaned approval-required steps when the proposal panel has no matching pending proposal after mobile/webview reloads.
+- Treats explicit proposal approval as the confirmation for nested action prompts, including work-target delete confirmation paths.
 
 ## 1.5.76
 
