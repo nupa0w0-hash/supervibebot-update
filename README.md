@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.79`
+Latest version: `1.5.80`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.80
+
+- Removes duplicated user-request text from long-running Kero activity/status heartbeats.
+- Replaces JSON-validation heartbeat wording with concrete image-prompt planning and image-generation wait states.
+- Makes workstream stop/cancel buttons act as control-panel actions without adding extra chat messages.
+- Limits image-asset prompt planning to one main-model attempt so failed API waits do not repeat 3/3 before reporting.
 
 ## 1.5.79
 

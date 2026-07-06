@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.79
-//@version 1.5.79
+//@display-name 🐸 SuperVibeBot v1.5.80
+//@version 1.5.80
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.79는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.80는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.79 Release Notes
+ * SuperVibeBot v1.5.80 Release Notes
+ * - v1.5.80: removes duplicated user-request text from long-running Kero activity/status heartbeats
+ * - v1.5.80: replaces JSON-validation heartbeat wording with concrete image-planning/execution wait states
+ * - v1.5.80: makes workstream stop/cancel buttons act as control-panel actions without adding chat messages
+ * - v1.5.80: limits image-asset prompt planning to one main-model attempt so failed API waits do not repeat 3/3 before reporting
  * - v1.5.79: prevents blank Wellspring CFG fields from being converted to cfg:0 in native image generation requests
  * - v1.5.79: sanitizes Wellspring native numeric payload fields after extra payload merge so cfg/steps/size/batch values cannot be sent below server minimums
  * - v1.5.79: updates Asset Studio Wellspring CFG input to use the server-side minimum of 1
@@ -13586,7 +13590,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.79',
+            '//@version 1.5.80',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15571,10 +15575,12 @@ function getCurrentKeroTaskAbortSignal() {
 function requestKeroTaskInterruption(options = {}) {
     const cancelMission = options.cancelMission === true || options.cancel === true;
     const hasActiveTask = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
-    if (!hasActiveTask) return false;
     const reason = safeString(options.reason || (cancelMission
         ? '사용자가 작업을 취소했습니다.'
         : '사용자가 현재 작업을 중지했습니다.')) || '사용자가 작업을 중단했습니다.';
+    const missionStatus = safeString(currentKeroMission?.status || '');
+    const hasOpenMission = Boolean(currentKeroMission && !['done', 'cancelled'].includes(missionStatus));
+    if (!hasActiveTask && !(cancelMission && hasOpenMission)) return false;
     currentKeroTaskAbortReason = reason;
     currentKeroTaskCancelRequested = cancelMission;
     try {
@@ -15592,7 +15598,32 @@ function requestKeroTaskInterruption(options = {}) {
         updateKeroBackgroundJob(currentKeroRequestJobId, { detail: reason, silent: true });
     }
     addKeroWorkstreamEvent(cancelMission ? '사용자 취소 요청' : '사용자 중지 요청', reason, cancelMission ? 'cancelled' : 'interrupted', progressOptions);
-    updateKeroProgress(1, 1, reason, progressOptions);
+    if (cancelMission && hasOpenMission) {
+        updateKeroMissionState({
+            status: 'cancelled',
+            lastError: reason,
+            cancelledAt: new Date().toISOString()
+        }, {
+            title: '사용자 취소 요청',
+            detail: reason,
+            status: 'cancelled'
+        });
+    } else if (hasOpenMission) {
+        updateKeroMissionState({
+            status: 'interrupted',
+            lastError: reason,
+            interruptedAt: new Date().toISOString()
+        }, {
+            title: '사용자 중지 요청',
+            detail: reason,
+            status: 'interrupted'
+        });
+    }
+    if (hasActiveTask) updateKeroProgress(1, 1, reason, progressOptions);
+    if (!hasActiveTask) {
+        currentKeroTaskAbortReason = '';
+        currentKeroTaskCancelRequested = false;
+    }
     try {
         renderKeroBackgroundStatus({ immediate: true });
         if (typeof keroWorkstreamRenderer === 'function') scheduleKeroWorkstreamRender('user_abort', { urgent: true });
@@ -16018,27 +16049,29 @@ function inferKeroVisibleActivityDetail(userText = '', options = {}) {
     const workMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
     const modeMeta = typeof getWorkTargetModeMeta === 'function' ? getWorkTargetModeMeta(workMode) : null;
     const targetLabel = modeMeta?.label || (workMode === 'module' ? '모듈' : (workMode === 'plugin' ? '플러그인' : '캐릭터'));
-    let task = '요청을 실행 가능한 저장 액션으로 구성';
+    let task = '요청을 실행 가능한 저장 단계로 구성';
     if (options.gatewayRecovery === true) {
         task = '타임아웃 복구용 작은 실행 단위 구성';
     } else if (isKeroAssetFocusedRequest(request)) {
-        task = '이미지 에셋 프롬프트와 등록 액션 구성';
+        task = '이미지 프롬프트와 저장 목록 구성';
     } else if (hasKeroAssetIntent(request) && /(상태창|status|backgroundHTML|html|css|인터페이스|ui|배경|profile|프로필)/i.test(request)) {
-        task = '시각 에셋과 HTML/CSS 저장 액션 구성';
+        task = '시각 에셋과 HTML/CSS 저장 단계 구성';
     } else if (/(로어북|lorebook|세계관|설정집|인물|관계|세력)/i.test(request)) {
         task = '로어북/세계관 항목 구조화';
     } else if (/(트리거|trigger|lua|변수|variable|정규식|regex)/i.test(request)) {
         task = '트리거/변수/정규식 실행 구조 점검';
     } else if (/(디스크립션|description|desc|첫\s*메시지|first\s*message|글로벌\s*노트|global\s*note)/i.test(request)) {
-        task = '핵심 캐릭터 필드 저장 액션 구성';
+        task = '핵심 캐릭터 필드 저장 단계 구성';
     } else if (isKeroPlanningOnlyRequest(request)) {
         task = '기획/TODO 답변 구성';
     }
-    const nextStep = options.fromKero === true
-        ? '응답 수신 뒤 @action 파싱/검증/저장 예정'
-        : '응답 수신 뒤 결과 정리 예정';
-    const requestHint = request ? `요청: ${limitSvbMiddleText(request, 120, 'kero_activity_request')}` : '';
-    return [targetLabel, task, nextStep, requestHint].filter(Boolean).join(' · ');
+    let nextStep = '응답 수신 뒤 결과 정리';
+    if (options.fromKero === true) {
+        nextStep = isKeroAssetFocusedRequest(request)
+            ? '응답 수신 뒤 이미지 생성 실행'
+            : '응답 수신 뒤 저장/실행 단계 정리';
+    }
+    return [targetLabel, task, nextStep].filter(Boolean).join(' · ');
 }
 
 function getKeroMainModelActivityLabel(options = {}) {
@@ -16070,11 +16103,18 @@ function getKeroMainModelActivityLabel(options = {}) {
 function buildKeroHeartbeatStatus(label = '', elapsedSec = 0, tick = 0, options = {}) {
     const activity = safeString(options.activityDetail || inferKeroVisibleActivityDetail(options.userRequest || '', options)).trim();
     const provider = getKeroMainModelActivityLabel(options);
-    const phases = [
-        '모델 응답 대기',
-        '응답 수신 후 액션 JSON 검증 예정',
-        '중지/취소 요청 시 현재 호출 중단 가능'
-    ];
+    const request = safeString(options.userRequest || '').trim();
+    const phases = isKeroAssetFocusedRequest(request)
+        ? [
+            '메인 모델이 이미지 프롬프트 세트를 작성 중',
+            '아직 이미지 API 호출 전',
+            '중지/취소 버튼 사용 가능'
+        ]
+        : [
+            '메인 모델 응답 대기',
+            '응답 수신 뒤 실행 단계 정리 예정',
+            '중지/취소 버튼 사용 가능'
+        ];
     const phase = phases[Math.max(0, tick - 1) % phases.length];
     const base = activity || safeString(label || '메인 모델 작업').trim() || '메인 모델 작업';
     return `${base} · ${provider} · ${phase} · ${Math.max(1, Math.round(Number(elapsedSec) || 1))}초째`;
@@ -16273,6 +16313,7 @@ function isKeroPlanningMode(mode = currentKeroMode) {
 function getKeroModelRetryCountForMode(mode = currentKeroMode, options = {}) {
     const normalized = normalizeKeroMode(mode);
     if (options.planningOnly === true || normalized === 'planning' || normalized === 'daily') return 1;
+    if (isKeroAssetFocusedRequest(options.userRequest || options.visibleUserInput || '')) return 1;
     return isKeroExecutionMode(normalized) ? 3 : 1;
 }
 
@@ -19495,6 +19536,8 @@ function buildMainCSS() {
         #${CONTAINER_ID} .chat-subtitle { font-size: 12px; color: #6b7280; }
         #${CONTAINER_ID} .kero-tools-iconbar { display: flex; gap: 6px; margin-left: auto; }
         #${CONTAINER_ID} .kero-icon-btn { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--rt-border); background: var(--rt-bg-primary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; }
+        #${CONTAINER_ID} .kero-runtime-quick-control { width: auto; min-width: 42px; padding: 0 8px; font-size: 11px; font-weight: 700; border-color: #f59e0b; color: var(--rt-text-primary); }
+        #${CONTAINER_ID} #kero-runtime-cancel-quick-btn { border-color: #ef4444; color: #b91c1c; }
         #${CONTAINER_ID} .kero-mode-btn { width: auto; min-width: 46px; padding: 0 8px; font-size: 12px; font-weight: 700; color: var(--rt-text-primary); }
         #${CONTAINER_ID} .kero-icon-btn.active { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
         #${CONTAINER_ID} .kero-tools-drawer { position: absolute; left: 0; right: 0; bottom: 0; max-height: 70%; display: flex; flex-direction: column; background: var(--rt-bg-primary); border-top: 1px solid var(--rt-border); box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.18); border-radius: 16px 16px 0 0; padding: 10px; z-index: 5; }
@@ -20367,6 +20410,7 @@ function buildMainCSS() {
             #${CONTAINER_ID} .kero-tools-iconbar{gap:4px;margin-left:4px;max-width:52vw;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scrollbar-width:none}
             #${CONTAINER_ID} .kero-tools-iconbar::-webkit-scrollbar{display:none}
             #${CONTAINER_ID} .kero-icon-btn{width:28px;height:28px;border-radius:9px;font-size:13px;flex:0 0 28px}
+            #${CONTAINER_ID} .kero-runtime-quick-control{width:auto;min-width:40px;padding:0 7px;font-size:11px;flex:0 0 auto}
             #${CONTAINER_ID} .kero-mode-btn{min-width:40px;padding:0 6px;font-size:11px;flex-basis:auto}
             #${CONTAINER_ID} .chat-history{min-height:0;padding:8px;gap:8px}
             #${CONTAINER_ID} .chat-bubble{max-width:92%;padding:8px 10px;font-size:12px;line-height:1.45}
@@ -24624,6 +24668,8 @@ async function createTransUI() {
         el("button", { class: normalizeKeroMode(currentKeroMode) === "daily" ? "kero-icon-btn kero-mode-btn" : "kero-icon-btn kero-mode-btn active", id: "kero-work-mode-toggle", title: getKeroModeMeta(currentKeroMode).title, "data-kero-mode": normalizeKeroMode(currentKeroMode), text: getKeroModeMeta(currentKeroMode).label }),
         el("button", { class: keroRequireActionConfirmation ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-action-confirm-toggle", title: keroRequireActionConfirmation ? "수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행" : "자동 실행 ON: 저장 액션을 바로 실행", text: keroRequireActionConfirmation ? "확인" : "자동" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-workstream", title: "🧭 작업 흐름", text: "🧭" }),
+        el("button", { class: "kero-icon-btn kero-runtime-quick-control", id: "kero-runtime-stop-quick-btn", title: "현재 모델 호출/실행 중지", text: "중지", disabled: true }),
+        el("button", { class: "kero-icon-btn kero-runtime-quick-control", id: "kero-runtime-cancel-quick-btn", title: "현재 미션과 남은 작업 취소", text: "취소", disabled: true }),
         el("button", { class: "kero-icon-btn", id: "kero-open-proposals", title: "제안 작업", text: "✓" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-scope", title: "🎯 범위 설정", text: "🎯" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-memory", title: "🧠 메모리", text: "🧠" }),
@@ -34030,9 +34076,15 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         }
         const runtimeActive = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
-        ['kero-runtime-stop-btn', 'kero-runtime-cancel-btn'].forEach((id) => {
+        const missionStatus = safeString(currentKeroMission?.status || '');
+        const missionOpen = Boolean(currentKeroMission && !['done', 'cancelled'].includes(missionStatus));
+        ['kero-runtime-stop-btn', 'kero-runtime-stop-quick-btn'].forEach((id) => {
             const btn = document.getElementById(id);
             if (btn) btn.disabled = !runtimeActive;
+        });
+        ['kero-runtime-cancel-btn', 'kero-runtime-cancel-quick-btn'].forEach((id) => {
+            const btn = document.getElementById(id);
+            if (btn) btn.disabled = !(runtimeActive || missionOpen);
         });
         renderKeroQueuePanel(currentKeroMission?.id || '');
         if (!list) return true;
@@ -34172,7 +34224,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         });
 
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => {
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle):not(.kero-runtime-quick-control)').forEach(btn => {
             btn.classList.toggle('active', btn.id === `kero-open-${which}`);
         });
 
@@ -34189,7 +34241,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     function closeKeroToolsDrawer() {
         const drawer = document.getElementById('kero-tools-drawer');
         if (drawer) drawer.style.display = 'none';
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle):not(.kero-runtime-quick-control)').forEach(btn => btn.classList.remove('active'));
     }
 
     function updateKeroActionConfirmToggle() {
@@ -34411,31 +34463,32 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             await renderKeroWorkstream();
         }, 'kero-runtime-retry-btn');
 
-        bindSafeClick(document.getElementById('kero-runtime-stop-btn'), async () => {
+        const handleKeroRuntimeStopButtonClick = async () => {
             const stopped = requestKeroTaskInterruption({
                 cancelMission: false,
-                reason: '사용자가 작업 흐름 패널에서 현재 호출/실행 중지를 요청했습니다.'
+                reason: '사용자가 작업 제어 버튼으로 현재 호출/실행 중지를 요청했습니다.'
             });
             if (!stopped) {
-                await addBotMessage('지금 중지할 진행 중 작업이 없습니다.');
-            } else {
-                await addBotMessage('현재 호출/실행 중지를 요청했어. 이미 완료된 저장은 되돌리지 않고, 남은 흐름을 확인 필요 상태로 정리할게.');
+                addKeroWorkstreamEvent('중지할 작업 없음', '현재 중지할 모델 호출/실행 작업이 없습니다.', 'info');
             }
             await renderKeroWorkstream();
-        }, 'kero-runtime-stop-btn');
+        };
 
-        bindSafeClick(document.getElementById('kero-runtime-cancel-btn'), async () => {
+        const handleKeroRuntimeCancelButtonClick = async () => {
             const cancelled = requestKeroTaskInterruption({
                 cancelMission: true,
-                reason: '사용자가 작업 흐름 패널에서 미션 취소를 요청했습니다.'
+                reason: '사용자가 작업 제어 버튼으로 미션 취소를 요청했습니다.'
             });
             if (!cancelled) {
-                await addBotMessage('지금 취소할 진행 중 작업이 없습니다.');
-            } else {
-                await addBotMessage('현재 미션 취소를 요청했어. 이미 완료된 저장은 되돌리지 않고, 진행 중 호출과 남은 액션을 중단할게.');
+                addKeroWorkstreamEvent('취소할 작업 없음', '현재 취소할 진행 작업이나 열린 미션이 없습니다.', 'info');
             }
             await renderKeroWorkstream();
-        }, 'kero-runtime-cancel-btn');
+        };
+
+        bindSafeClick(document.getElementById('kero-runtime-stop-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-btn');
+        bindSafeClick(document.getElementById('kero-runtime-stop-quick-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-quick-btn');
+        bindSafeClick(document.getElementById('kero-runtime-cancel-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-btn');
+        bindSafeClick(document.getElementById('kero-runtime-cancel-quick-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-quick-btn');
 
         const scopeResetBtn = document.getElementById('kero-scope-reset-btn');
         bindSafeClick(scopeResetBtn, async () => {
@@ -37447,7 +37500,11 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
             signal: options.signal || keroContextOptions.signal || null,
             ...(options.jobId ? { jobId: options.jobId } : {})
         };
-        const modelRetryCount = getKeroModelRetryCountForMode(requestKeroMode, { planningOnly: conversationalPlanningRequest });
+        const modelRetryCount = getKeroModelRetryCountForMode(requestKeroMode, {
+            planningOnly: conversationalPlanningRequest,
+            userRequest: userInput,
+            visibleUserInput
+        });
         updateKeroProgress(4, 5, conversationalPlanningRequest
             ? '기획 대화 답변을 준비하는 중...'
             : (finalModelOptions.useSubmodels === true
@@ -44696,7 +44753,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.79 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.80 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -50166,7 +50223,7 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
             const modelActivityLabel = getKeroMainModelActivityLabel(attemptOptions);
             addKeroWorkstreamEvent(
                 '메인 모델 호출',
-                `${modelActivityLabel} · ${attempt}/${retries} · ${limitSvbMiddleText(userText, 240, 'main_user_request')}`,
+                `${modelActivityLabel} · ${attempt}/${retries} · ${attemptOptions.activityDetail}`,
                 'progress',
                 attemptProgressOptions
             );
@@ -58172,7 +58229,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.79",
+        name: "SuperVibeBot v1.5.80",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58181,7 +58238,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.79 Settings",
+        "SuperVibeBot v1.5.80 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58224,7 +58281,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.79");
+        Logger.info("SuperVibeBot v1.5.80");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
