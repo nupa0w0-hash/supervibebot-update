@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.83
-//@version 1.5.83
+//@display-name 🐸 SuperVibeBot v1.5.84
+//@version 1.5.84
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.83는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.84는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,6 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.84 Release Notes
+ * - v1.5.84: adds Wellspring LoRA training support from generated gallery jobs, uploaded local assets, and selected Asset Studio images
+ * - v1.5.84: stores trained Wellspring LoRA refs per Asset Studio identity and auto-reuses them for matching Kero asset batches
+ * - v1.5.84: lets Asset Studio load Wellspring LoRAs/training jobs and apply a selected LoRA to workflow/native generation presets
+ *
  * SuperVibeBot v1.5.83 Release Notes
  * - v1.5.83: updates CI and runtime diagnostics to validate the refs/heads/main update channel
  * - v1.5.82: switches the plugin update URL to raw refs/heads/main to avoid stale /main raw cache during rapid releases
@@ -3042,6 +3047,9 @@ const WELLSPRING_IMAGE_PRESETS_ENDPOINT = "/v1/images/presets";
 const WELLSPRING_IMAGE_GENERATIONS_ENDPOINT = "/v1/images/generations";
 const WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT = "/v1/images/workflows";
 const WELLSPRING_IMAGE_JOBS_ENDPOINT = "/v1/images/jobs";
+const WELLSPRING_IMAGE_TRAINING_ENDPOINT = "/v1/images/training";
+const WELLSPRING_IMAGE_TRAINING_UPLOADS_ENDPOINT = "/v1/images/training/uploads";
+const WELLSPRING_IMAGE_LORAS_MINE_ENDPOINT = "/v1/images/loras/mine";
 const WELLSPRING_IMAGE_API_PROFILE_ID = "wellspring-nai-compatible";
 const WELLSPRING_IMAGE_GENERATION_PRESET_ID = "wellspring-profile-basic";
 const WELLSPRING_DEFAULT_PRESET_MODEL_CACHE = new Map();
@@ -10123,7 +10131,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13598,7 +13606,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.83',
+            '//@version 1.5.84',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -23116,7 +23124,14 @@ function svbResolveWellspringImageUrl(profile, imageUrl = "") {
 async function svbFetchWellspringJobImage(profile, job = {}) {
     const imageUrl = svbResolveWellspringImageUrl(profile, job.image_url || job.imageUrl || job.image || job.url || job.output_url || job.outputUrl);
     if (!imageUrl) throw new Error("Wellspring job에 image_url이 없습니다.");
-    if (/^data:image\//i.test(imageUrl)) return svbDataUrlToImageResult(imageUrl);
+    const attachJobMeta = (result) => ({
+        ...result,
+        wellspringJobId: safeString(job.id || job.job_id || job.jobId).trim(),
+        wellspringRunId: safeString(job.workflow_run_id || job.run_id || job.runId).trim(),
+        wellspringImageUrl: imageUrl,
+        wellspringJob: makeCloneableData(job)
+    });
+    if (/^data:image\//i.test(imageUrl)) return attachJobMeta(svbDataUrlToImageResult(imageUrl));
     const raw = await svbImageFetchRaw(imageUrl, {
         method: "GET",
         headers: svbGetWellspringApiHeaders(profile, "image/*, application/octet-stream, application/json")
@@ -23125,7 +23140,7 @@ async function svbFetchWellspringJobImage(profile, job = {}) {
         const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
         throw new Error(`${profile.name} 이미지 가져오기 실패 (${raw.status}): ${text.slice(0, 300)}`);
     }
-    return await svbParseImageApiResponse(profile, raw);
+    return attachJobMeta(await svbParseImageApiResponse(profile, raw));
 }
 
 async function svbWaitForWellspringJobImage(profile, initialData, options = {}) {
@@ -23255,6 +23270,176 @@ async function svbGenerateWellspringNativeImage(profile, options) {
         body: payload
     }, `${profile.name} native 생성`, profile.timeoutMs);
     return await svbWaitForWellspringJobImage(profile, data, options);
+}
+
+function svbWellspringTrainingRecommendedSteps(datasetCount = 1) {
+    const count = Math.max(1, Math.floor(Number(datasetCount) || 1));
+    return Math.max(20, Math.min(3000, count * 30));
+}
+
+function svbExtractWellspringLoraId(lora = {}) {
+    return safeString(lora.id || lora.lora_id || lora.loraId || lora.name).trim();
+}
+
+function svbExtractWellspringTrainingId(job = {}) {
+    return safeString(job.id || job.training_id || job.trainingId || job.job_id || job.jobId).trim();
+}
+
+function svbCollectWellspringTrainingJobs(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data.filter(Boolean);
+    return ensureArray(data.jobs || data.items || data.data || data.training || data.trainings || data.job).filter(Boolean);
+}
+
+function svbCollectWellspringLoras(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data.filter(Boolean);
+    return ensureArray(data.loras || data.items || data.data || data.models || data).filter(Boolean);
+}
+
+async function svbReadImageResultFromAssetPath(path, fallbackName = "") {
+    const cleanPath = safeString(path).trim();
+    if (!cleanPath) throw new Error("Training image path is empty.");
+    const fallbackExt = safeString(svbGetFileExt(fallbackName) || svbGetFileExt(cleanPath) || "png").replace(/^\./, "").toLowerCase() || "png";
+    if (cleanPath.startsWith("data:")) return svbDataUrlToImageResult(cleanPath, fallbackExt);
+    const data = await svbReadRisuAssetBytes(cleanPath);
+    if (!data) throw new Error(`Training image could not be read: ${cleanPath}`);
+    if (typeof data === "string") {
+        const text = data.trim();
+        return text.startsWith("data:")
+            ? svbDataUrlToImageResult(text, fallbackExt)
+            : svbDataUrlToImageResult(`data:${svbAssetMimeFromExt(fallbackExt)};base64,${text.replace(/\s+/g, "")}`, fallbackExt);
+    }
+    const bytes = data instanceof Uint8Array ? data : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
+    if (!bytes) throw new Error(`Training image has unsupported data format: ${cleanPath}`);
+    return svbBytesToImageResult(bytes, fallbackExt);
+}
+
+async function svbUploadWellspringTrainingImage(profile, image = {}, options = {}) {
+    const normalized = normalizeImageApiProfile(profile);
+    if (!safeString(normalized.apiKey).trim()) throw new Error("Wellspring ws-key is required for LoRA training uploads.");
+    const imageResult = image.bytes
+        ? svbBytesToImageResult(image.bytes, image.ext || svbGetFileExt(image.name) || "png")
+        : await svbReadImageResultFromAssetPath(image.path || image.url || image.imagePath, image.name || image.filename);
+    const ext = safeString(imageResult.ext || image.ext || svbGetFileExt(image.name) || "png").replace(/^\./, "").toLowerCase() || "png";
+    const filename = svbNormalizeAssetName(image.filename || image.name || image.assetName || `training_${Date.now()}`, "training");
+    const finalName = svbGetFileExt(filename) ? filename : `${filename}.${ext}`;
+    const params = new URLSearchParams({ filename: finalName });
+    const data = await svbWellspringFetchJson(joinImageApiUrl(getWellspringImageApiBase(normalized.endpoint), `${WELLSPRING_IMAGE_TRAINING_UPLOADS_ENDPOINT}?${params.toString()}`), {
+        method: "POST",
+        headers: {
+            ...svbGetWellspringApiHeaders(normalized),
+            "Content-Type": "application/octet-stream"
+        },
+        body: imageResult.bytes,
+        signal: options.signal || null
+    }, `${normalized.name} LoRA training upload`, normalized.timeoutMs);
+    const uploadId = safeString(data?.id || data?.upload_id || data?.uploadId || data?.upload?.id).trim();
+    if (!uploadId) throw new Error("Wellspring training upload did not return an upload id.");
+    return { id: uploadId, uploadId, filename: finalName, data };
+}
+
+async function svbFetchWellspringMineLoras(profile) {
+    const normalized = normalizeImageApiProfile(profile);
+    if (!safeString(normalized.apiKey).trim()) throw new Error("Wellspring ws-key is required to load LoRAs.");
+    const data = await svbWellspringFetchJson(joinImageApiUrl(getWellspringImageApiBase(normalized.endpoint), WELLSPRING_IMAGE_LORAS_MINE_ENDPOINT), {
+        method: "GET",
+        headers: svbGetWellspringApiHeaders(normalized)
+    }, `${normalized.name} LoRA list`, 30000);
+    return svbCollectWellspringLoras(data);
+}
+
+async function svbStartWellspringLoraTraining(profile, options = {}) {
+    const normalized = normalizeImageApiProfile(profile);
+    if (!isWellspringImageProvider(normalized.provider)) throw new Error("Wellspring profile is required for LoRA training.");
+    if (!safeString(normalized.apiKey).trim()) throw new Error("Wellspring ws-key is required for LoRA training.");
+    const signal = options.signal || null;
+    const galleryJobIds = svbNormalizeWellspringIdList(options.galleryJobIds || options.gallery_job_ids || options.jobIds || options.wellspringJobIds);
+    const uploadIds = svbNormalizeWellspringIdList(options.uploadIds || options.upload_ids || options.wellspringUploadIds);
+    const trainingAssets = ensureArray(options.trainingAssets || options.assets || options.images).filter(Boolean);
+    for (const asset of trainingAssets) {
+        throwIfSvbAborted(signal, "Wellspring LoRA training was cancelled before upload completed.");
+        if (asset?.uploadId || asset?.upload_id) {
+            uploadIds.push(safeString(asset.uploadId || asset.upload_id).trim());
+            continue;
+        }
+        if (asset?.wellspringJobId || asset?.jobId || asset?.job_id) {
+            galleryJobIds.push(safeString(asset.wellspringJobId || asset.jobId || asset.job_id).trim());
+            continue;
+        }
+        const path = safeString(asset?.path || asset?.url || asset?.imagePath).trim();
+        if (!path) continue;
+        const uploaded = await svbUploadWellspringTrainingImage(normalized, asset, { signal });
+        uploadIds.push(uploaded.id);
+    }
+    const uniqueGalleryJobIds = [...new Set(galleryJobIds.map(id => safeString(id).trim()).filter(Boolean))];
+    const uniqueUploadIds = [...new Set(uploadIds.map(id => safeString(id).trim()).filter(Boolean))];
+    const datasetCount = uniqueGalleryJobIds.length + uniqueUploadIds.length;
+    if (datasetCount < 1) throw new Error("Wellspring LoRA training needs at least one gallery job id, upload id, or local image asset.");
+    const loraName = safeString(options.loraName || options.lora_name || options.trainingName || options.name).trim();
+    if (!loraName) throw new Error("Wellspring LoRA training needs loraName.");
+    const steps = svbPositiveInteger(options.steps || options.trainingSteps || options.loraSteps, svbWellspringTrainingRecommendedSteps(datasetCount), 1, 3000);
+    const body = {
+        lora_name: loraName,
+        steps,
+        gallery_job_ids: uniqueGalleryJobIds,
+        upload_ids: uniqueUploadIds
+    };
+    const data = await svbWellspringFetchJson(joinImageApiUrl(getWellspringImageApiBase(normalized.endpoint), WELLSPRING_IMAGE_TRAINING_ENDPOINT), {
+        method: "POST",
+        headers: svbGetWellspringApiHeaders(normalized),
+        body,
+        signal
+    }, `${normalized.name} LoRA training`, Math.max(30000, Number(normalized.timeoutMs) || 180000));
+    const job = data?.job || data?.training || data;
+    return {
+        success: true,
+        loraName,
+        steps,
+        galleryJobIds: uniqueGalleryJobIds,
+        uploadIds: uniqueUploadIds,
+        trainingId: svbExtractWellspringTrainingId(job),
+        job,
+        data
+    };
+}
+
+async function svbWaitForWellspringLoraTraining(profile, started = {}, options = {}) {
+    const normalized = normalizeImageApiProfile(profile);
+    const base = getWellspringImageApiBase(normalized.endpoint);
+    const headers = svbGetWellspringApiHeaders(normalized);
+    const trainingId = safeString(started.trainingId || svbExtractWellspringTrainingId(started.job)).trim();
+    const loraName = safeString(started.loraName || started.lora_name || started.name).trim();
+    const timeoutMs = Math.max(0, Number(options.timeoutMs || options.trainingTimeoutMs) || 0);
+    const startedAt = Date.now();
+    while (!timeoutMs || Date.now() - startedAt < timeoutMs) {
+        throwIfSvbAborted(options.signal || null, "Wellspring LoRA training wait was cancelled.");
+        await new Promise(resolve => setTimeout(resolve, 4000));
+        const trainingData = await svbWellspringFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_TRAINING_ENDPOINT), {
+            method: "GET",
+            headers
+        }, `${normalized.name} LoRA training status`, 30000);
+        const jobs = svbCollectWellspringTrainingJobs(trainingData);
+        const job = jobs.find(item => {
+            const id = svbExtractWellspringTrainingId(item);
+            const name = safeString(item.lora_name || item.loraName || item.name).trim();
+            return (trainingId && id === trainingId) || (loraName && name === loraName);
+        }) || null;
+        if (job) {
+            const status = safeString(job.status || job.state).toLowerCase();
+            if (/failed|error|cancelled|canceled/.test(status)) {
+                throw new Error(`Wellspring LoRA training failed${job.error ? `: ${safeString(job.error?.message || job.error)}` : ""}`);
+            }
+        }
+        const loras = await svbFetchWellspringMineLoras(normalized).catch(() => []);
+        const completed = loras.find(lora => {
+            const id = svbExtractWellspringLoraId(lora);
+            const name = safeString(lora.lora_name || lora.loraName || lora.name || lora.title).trim();
+            return (job?.lora_id && id === safeString(job.lora_id).trim()) || (loraName && name === loraName);
+        });
+        if (completed) return { success: true, job, lora: completed };
+    }
+    throw new Error("Wellspring LoRA training wait timed out before a completed LoRA appeared.");
 }
 
 async function svbGenerateNaiCompatibleImage(profile, options) {
@@ -27792,7 +27977,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -32511,7 +32696,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return [payload];
         }
         const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId'].forEach((key) => {
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
         });
         return Object.keys(direct).length ? [direct] : [];
@@ -32694,6 +32879,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
             const identityPrompt = safeString(item.identityPrompt || stored?.prompt).trim();
             const identityNegative = safeString(item.identityNegative || stored?.negative).trim();
+            const storedLoras = svbNormalizeWellspringLoras(stored?.wellspringLoras || stored?.loras);
+            const itemLoras = svbNormalizeWellspringLoras(item.wellspringLoras || item.loras);
             if (identityName && (item.identityPrompt || item.identityNegative)) {
                 meta = svbSetAssetIdentityPrompt(meta, identityName, item.identityPrompt || stored?.prompt || '', item.identityNegative || stored?.negative || '');
                 dirty = true;
@@ -32702,7 +32889,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 ...item,
                 identityName,
                 identityPrompt,
-                identityNegative
+                identityNegative,
+                wellspringLoras: itemLoras.length ? itemLoras : storedLoras
             };
         });
         if (dirty) {
@@ -32848,6 +33036,109 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             : svbNormalizeAssetName(`${base}_${suffix}`, 'asset');
     }
 
+    function collectKeroAssetTrainingSources(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        return [
+            payloadObj.wellspringTraining,
+            payloadObj.loraTraining,
+            payloadObj.training,
+            payloadObj,
+            action.wellspringTraining,
+            action.loraTraining,
+            action.training,
+            action
+        ].filter(isPlainObject);
+    }
+
+    function getKeroAssetTrainingValue(action = {}, keys = [], fallback = undefined) {
+        for (const source of collectKeroAssetTrainingSources(action)) {
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+            }
+        }
+        return fallback;
+    }
+
+    function isKeroAssetTrainingTruthy(value) {
+        if (value === true) return true;
+        if (value === false || value === null || value === undefined) return false;
+        const text = safeString(value).trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y', 'on', 'auto', 'train', 'lora'].includes(text);
+    }
+
+    function resolveKeroAssetLoraTrainingOptions(action = {}, items = [], createdAssets = [], char = null) {
+        const explicit = getKeroAssetTrainingValue(action, ['trainLora', 'trainLoRA', 'wellspringTrainLora', 'autoTrainLora', 'enabled'], undefined);
+        const hasTrainingObject = collectKeroAssetTrainingSources(action).some((source) =>
+            source && source !== action && (
+                Object.prototype.hasOwnProperty.call(source, 'loraName')
+                || Object.prototype.hasOwnProperty.call(source, 'lora_name')
+                || Object.prototype.hasOwnProperty.call(source, 'galleryJobIds')
+                || Object.prototype.hasOwnProperty.call(source, 'uploadIds')
+            )
+        );
+        const enabled = isKeroAssetTrainingTruthy(explicit) || hasTrainingObject;
+        if (!enabled) return { enabled: false };
+        const identityName = svbNormalizeAssetIdentityName(
+            getKeroAssetTrainingValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '')
+            || items.find(item => item.identityName)?.identityName
+            || createdAssets.find(item => item.identityName)?.identityName
+            || getCharacterDisplayName(char)
+        );
+        const rawLoraName = safeString(getKeroAssetTrainingValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim();
+        const loraName = rawLoraName.slice(0, 40);
+        const loraStrength = svbOptionalNumberAtLeast(getKeroAssetTrainingValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2);
+        const waitForTraining = isKeroAssetTrainingTruthy(getKeroAssetTrainingValue(action, ['waitForTraining', 'wait', 'waitForCompletion'], false));
+        const autoUseTrainedLora = getKeroAssetTrainingValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false;
+        return {
+            enabled: true,
+            identityName,
+            loraName,
+            loraStrength,
+            waitForTraining,
+            autoUseTrainedLora,
+            profileId: safeString(getKeroAssetTrainingValue(action, ['profileId', 'profile'], '')).trim(),
+            steps: svbOptionalNumber(getKeroAssetTrainingValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined), undefined),
+            galleryJobIds: [
+                ...svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], [])),
+                ...createdAssets.map(asset => safeString(asset.wellspringJobId || asset.jobId).trim()).filter(Boolean)
+            ],
+            uploadIds: svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], [])),
+            trainingAssets: createdAssets
+                .filter(asset => safeString(asset.path).trim())
+                .map(asset => ({
+                    name: asset.name,
+                    path: asset.path,
+                    ext: asset.ext,
+                    wellspringJobId: asset.wellspringJobId
+                })),
+            trainingTimeoutMs: Math.max(0, Number(getKeroAssetTrainingValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
+        };
+    }
+
+    async function saveKeroAssetLoraTrainingMeta(char, trainingOptions = {}, started = {}, completed = null) {
+        if (!char || !trainingOptions.identityName) return;
+        let meta = svbReadAssetStudioMetaFromCharacter(char);
+        const identityName = trainingOptions.identityName;
+        const existing = svbFindAssetIdentityEntry(meta, identityName) || { name: identityName, prompt: '', negative: '' };
+        meta.identities[identityName] = {
+            ...existing,
+            name: identityName,
+            wellspringLoraName: started.loraName || trainingOptions.loraName || existing.wellspringLoraName || '',
+            wellspringTrainingId: started.trainingId || existing.wellspringTrainingId || '',
+            updatedAt: new Date().toISOString()
+        };
+        const loraId = completed?.lora ? svbExtractWellspringLoraId(completed.lora) : '';
+        if (loraId && trainingOptions.autoUseTrainedLora !== false) {
+            meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength: trainingOptions.loraStrength || 0.8 }], {
+                loraName: started.loraName || trainingOptions.loraName,
+                trainingId: started.trainingId
+            });
+        }
+        svbWriteAssetStudioMetaToCharacter(char, meta);
+        const ok = await svbSaveAssetStudioCharacter(char, completed?.lora ? 'asset-lora-trained' : 'asset-lora-training-started');
+        if (!ok) throw new Error('Failed to save Asset Studio LoRA metadata.');
+    }
+
     async function runKeroAssetCreateAction(action = {}, options = {}) {
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
         const actionSignal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
@@ -32953,16 +33244,30 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 });
                 throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
                 const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
+                const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase()) || null;
                 if (allowAutoReferenceForProfile && !autoReferencePath) {
-                    const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
-                    const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase());
                     if (savedAsset?.path) {
                         autoReferencePath = savedAsset.path;
                         autoReferenceName = savedAsset.name || name;
                     }
                 }
                 created += 1;
-                createdAssets.push({ target: item.target, name, identityName: item.identityName || '', prompt: imageResult.prompt || prompt, negative: imageResult.negative || negative, stylePreset: normalizeKeroAssetStyleKey(item.stylePreset), ratioId, steps, referenceImagePath });
+                createdAssets.push({
+                    target: item.target,
+                    name,
+                    path: savedAsset?.path || '',
+                    ext: savedAsset?.ext || imageResult.ext || svbGetFileExt(savedAsset?.path) || 'png',
+                    identityName: item.identityName || '',
+                    prompt: imageResult.prompt || prompt,
+                    negative: imageResult.negative || negative,
+                    stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
+                    ratioId,
+                    steps,
+                    referenceImagePath,
+                    wellspringJobId: imageResult.wellspringJobId || '',
+                    wellspringRunId: imageResult.wellspringRunId || ''
+                });
             } catch (error) {
                 failed += 1;
                 failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
@@ -32978,8 +33283,41 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             await addBotMessage(`⚠️ ${detail}`);
             return { success: created > 0 ? true : false, requested, created, failed, detail, createdAssets, failedAssets };
         }
-        await addBotMessage(`✅ 이미지 에셋 ${created}장을 생성하고 캐릭터에 등록했습니다.`);
-        return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료`, createdAssets };
+        const trainingOptions = resolveKeroAssetLoraTrainingOptions(action, items, createdAssets, char);
+        let trainingResult = null;
+        if (trainingOptions.enabled) {
+            try {
+                const trainingProfile = pickKeroAssetImageProfile(trainingOptions.profileId);
+                if (!isWellspringImageProvider(trainingProfile.provider)) throw new Error('Wellspring profile is required for LoRA training.');
+                addKeroWorkstreamEvent('Wellspring LoRA training', `${trainingOptions.loraName} dataset ${trainingOptions.galleryJobIds.length + trainingOptions.uploadIds.length + trainingOptions.trainingAssets.length}`, 'action', actionProgressOptions);
+                updateKeroProgress(requested, requested, `Wellspring LoRA training start: ${trainingOptions.loraName}`, actionProgressOptions);
+                const started = await svbStartWellspringLoraTraining(trainingProfile, {
+                    ...trainingOptions,
+                    signal: actionSignal
+                });
+                await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
+                trainingResult = { started };
+                if (trainingOptions.waitForTraining) {
+                    updateKeroProgress(requested, requested, `Wellspring LoRA training wait: ${trainingOptions.loraName}`, actionProgressOptions);
+                    const completed = await svbWaitForWellspringLoraTraining(trainingProfile, started, {
+                        signal: actionSignal,
+                        trainingTimeoutMs: trainingOptions.trainingTimeoutMs
+                    });
+                    await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
+                    trainingResult.completed = completed;
+                }
+            } catch (error) {
+                Logger.error('Kero Wellspring LoRA training failed:', error);
+                trainingResult = { error: error?.message || String(error) };
+                await addBotMessage(`⚠️ 이미지 에셋은 ${created}장 저장했지만 Wellspring LoRA 학습 시작에 실패했습니다: ${error?.message || error}`);
+                return { success: true, requested, created, failed: 0, trainingFailed: true, detail: `Image assets saved, LoRA training failed: ${error?.message || error}`, createdAssets, trainingResult };
+            }
+        }
+        const trainingSuffix = trainingResult?.completed?.lora
+            ? ` Wellspring LoRA "${trainingOptions.loraName}"까지 identity에 연결했습니다.`
+            : (trainingResult?.started ? ` Wellspring LoRA "${trainingOptions.loraName}" 학습을 시작했습니다.` : '');
+        await addBotMessage(`✅ 이미지 에셋 ${created}장을 생성하고 캐릭터에 등록했습니다.${trainingSuffix}`);
+        return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료${trainingSuffix}`, createdAssets, trainingResult };
     }
 
     function getKeroAssetManageSources(action = {}) {
@@ -33020,6 +33358,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (/^(?:pattern|patternrename|renamepattern|rename|batchrename|bulkrename)$/.test(key)) return 'pattern_rename';
         if (/^(?:batchreplace|bulkreplace|replaceimages?|replaceasset|replaceassets)$/.test(key)) return 'batch_replace';
         if (/^(?:zipimport|importzip|imagezipimport|importimagezip|backupimport)$/.test(key)) return 'zip_import';
+        if (/^(?:trainlora|loratrain|loratraining|wellspringtrainlora|wellspringloratraining|traininglora)$/.test(key)) return 'train_lora';
+        if (/^(?:refreshloras?|listloras?|syncloras?|wellspringloras?)$/.test(key)) return 'refresh_loras';
         if (/^(?:delete|remove|purge)$/.test(key)) return 'delete';
         if (!key && getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')) return 'pattern_rename';
         if (!key && getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '') !== '') return 'move_folder';
@@ -33123,6 +33463,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             normalize_extensions: '확장자 정리',
             move_folder: '폴더 이동',
             pattern_rename: '패턴 이름 변경',
+            train_lora: 'Wellspring LoRA 학습',
+            refresh_loras: 'Wellspring LoRA 갱신',
             delete: '삭제'
         };
         return labels[operation] || operation || '에셋 관리';
@@ -33148,6 +33490,121 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             .replace(/\{ext\}/g, ext);
     }
 
+    function getKeroAssetManageTrainingIdentity(action = {}, char = null) {
+        return svbNormalizeAssetIdentityName(
+            getKeroAssetManageValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '')
+            || getCharacterDisplayName(char)
+        );
+    }
+
+    function getKeroAssetManageTrainingAssets(refs = []) {
+        return ensureArray(refs)
+            .map((ref) => {
+                const asset = ref.asset || {};
+                const path = safeString(asset.path).trim();
+                if (!path) return null;
+                return {
+                    name: asset.name || `${ref.kind}_${ref.idx + 1}`,
+                    path,
+                    ext: asset.ext || svbGetFileExt(path) || 'png'
+                };
+            })
+            .filter(Boolean);
+    }
+
+    async function runKeroAssetTrainLoraAction(action = {}, char = null, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const lists = getKeroAssetManageLists(char);
+        const refs = selectKeroAssetManageRefs(lists, action, 'train_lora');
+        const identityName = getKeroAssetManageTrainingIdentity(action, char);
+        const loraName = safeString(getKeroAssetManageValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim().slice(0, 40);
+        const galleryJobIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], []));
+        const uploadIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], []));
+        const trainingAssets = getKeroAssetManageTrainingAssets(refs);
+        if (!loraName) {
+            const detail = 'Wellspring LoRA 학습에는 loraName 또는 identityName이 필요합니다.';
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+        if (!galleryJobIds.length && !uploadIds.length && !trainingAssets.length) {
+            const detail = 'Wellspring LoRA 학습 데이터가 없습니다. names/folder/all:true로 에셋을 고르거나 galleryJobIds/uploadIds를 넣어야 합니다.';
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
+        if (!isWellspringImageProvider(profile.provider)) {
+            const detail = 'Wellspring LoRA 학습에는 Wellspring 이미지 프로필이 필요합니다.';
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+        const signal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
+        addKeroWorkstreamEvent('Wellspring LoRA 학습', `${loraName} · local ${trainingAssets.length} · gallery ${galleryJobIds.length} · upload ${uploadIds.length}`, 'action', actionProgressOptions);
+        updateKeroProgress(0, Math.max(1, trainingAssets.length + galleryJobIds.length + uploadIds.length), `Wellspring LoRA 학습 시작: ${loraName}`, actionProgressOptions);
+        const started = await svbStartWellspringLoraTraining(profile, {
+            loraName,
+            steps: getKeroAssetManageValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined),
+            galleryJobIds,
+            uploadIds,
+            trainingAssets,
+            signal
+        });
+        const trainingOptions = {
+            identityName,
+            loraName,
+            loraStrength: svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2),
+            autoUseTrainedLora: getKeroAssetManageValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false
+        };
+        await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
+        let completed = null;
+        if (getKeroAssetManageBoolean(action, ['waitForTraining', 'wait', 'waitForCompletion'])) {
+            completed = await svbWaitForWellspringLoraTraining(profile, started, {
+                signal,
+                trainingTimeoutMs: Math.max(0, Number(getKeroAssetManageValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
+            });
+            await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
+        }
+        const detail = completed?.lora
+            ? `Wellspring LoRA 학습 완료 및 ${identityName} identity 연결: ${loraName}`
+            : `Wellspring LoRA 학습 시작: ${loraName}`;
+        await addBotMessage(`✅ ${detail}`);
+        return { success: true, requested: trainingAssets.length + galleryJobIds.length + uploadIds.length, changed: 1, detail, started, completed };
+    }
+
+    async function runKeroAssetRefreshLorasAction(action = {}, char = null, options = {}) {
+        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
+        if (!isWellspringImageProvider(profile.provider)) {
+            const detail = 'Wellspring LoRA 갱신에는 Wellspring 이미지 프로필이 필요합니다.';
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
+        }
+        const loras = await svbFetchWellspringMineLoras(profile);
+        const identityName = getKeroAssetManageTrainingIdentity(action, char);
+        const wanted = safeString(getKeroAssetManageValue(action, ['loraId', 'lora_id', 'loraName', 'lora_name', 'name'], '')).trim();
+        let attached = null;
+        if (identityName && wanted) {
+            attached = loras.find((lora) => {
+                const id = svbExtractWellspringLoraId(lora);
+                const name = safeString(lora.lora_name || lora.loraName || lora.name || lora.title).trim();
+                return id === wanted || name === wanted;
+            }) || null;
+            if (attached) {
+                const loraId = svbExtractWellspringLoraId(attached);
+                const strength = svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2);
+                let meta = svbReadAssetStudioMetaFromCharacter(char);
+                meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength }], {
+                    loraName: safeString(attached.lora_name || attached.loraName || attached.name || wanted).trim()
+                });
+                svbWriteAssetStudioMetaToCharacter(char, meta);
+                await svbSaveAssetStudioCharacter(char, 'asset-lora-refresh');
+            }
+        }
+        const detail = attached
+            ? `Wellspring LoRA ${wanted}를 ${identityName} identity에 연결했습니다.`
+            : `Wellspring LoRA ${loras.length}개를 확인했습니다.`;
+        await addBotMessage(`✅ ${detail}`);
+        return { success: true, requested: 1, changed: attached ? 1 : 0, detail, loras: loras.map(lora => ({ id: svbExtractWellspringLoraId(lora), name: lora.name || lora.lora_name || lora.loraName || '' })) };
+    }
+
     async function runKeroAssetManageAction(action = {}, options = {}) {
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
         const char = await getCharacterData();
@@ -33163,6 +33620,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const detail = '파일 선택이 필요한 작업은 케로가 직접 로컬 파일을 고를 수 없어 에셋 스튜디오 버튼에서 실행해야 합니다.';
             await addBotMessage(`⚠️ ${detail}`);
             return { success: false, failed: 1, detail };
+        }
+        if (operation === 'train_lora') {
+            return await runKeroAssetTrainLoraAction(action, char, options);
+        }
+        if (operation === 'refresh_loras') {
+            return await runKeroAssetRefreshLorasAction(action, char, options);
         }
 
         const lists = getKeroAssetManageLists(char);
@@ -37446,6 +37909,10 @@ ${metaBlock}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt에는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 안정적인 2D anime tag로 쓰고, 각 assets[].prompt에는 표정/포즈/장면 차이를 쓴다. 예: @action {"type":"create","target":"asset","payload":{"identityName":"문아진","identityPrompt":"1girl, solo, distinct oval face, sharp amber eyes, short black hair with violet inner color, ...","identityNegative":"different character, wrong hair color, wrong eye color","assets":[{"assetType":"emotion","name":"neutral","prompt":"neutral expression, upper body, looking at viewer"},{"assetType":"emotion","name":"happy","prompt":"soft smile, bright eyes, upper body"}]}}
 - Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- 이미지 생성 직후 Wellspring LoRA 학습까지 필요하면 같은 create asset payload에 trainLora:true, loraName, trainingSteps, waitForTraining:false를 넣는다. 생성된 이미지의 Wellspring gallery job id 또는 저장 에셋을 학습 데이터로 재사용한다.
+- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"문아진","identityPrompt":"1girl, solo, short black hair with violet inner color, sharp amber eyes, Korean military cadet uniform, ...","trainLora":true,"loraName":"문아진_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"moon_ajin_profile","prompt":"upper body, neutral expression, white background"},{"assetType":"emotion","name":"moon_ajin_smile","prompt":"soft smile, upper body, white background"}]}}
+- 이미 등록된 에셋으로 Wellspring LoRA를 학습하려면 asset_manage train_lora를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"train_lora","identityName":"문아진","loraName":"문아진_identity","kind":"all","names":["moon_ajin_profile","moon_ajin_smile"],"trainingSteps":600,"waitForTraining":false}
+- 완료된 Wellspring LoRA를 identity에 연결하려면 asset_manage refresh_loras를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"refresh_loras","identityName":"문아진","loraName":"문아진_identity","loraStrength":0.8}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
@@ -44891,7 +45358,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.83 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.84 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -54027,6 +54494,9 @@ function svbNormalizeAssetIdentityEntry(value = {}, fallbackName = '') {
         name,
         prompt: safeString(source.prompt || source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.positive || source.tags).trim(),
         negative: safeString(source.negative || source.identityNegative || source.characterNegative || source.uc).trim(),
+        wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || source.wellspringLora || source.lora),
+        wellspringLoraName: safeString(source.wellspringLoraName || source.loraName || source.lora_name).trim(),
+        wellspringTrainingId: safeString(source.wellspringTrainingId || source.trainingId || source.training_id).trim(),
         updatedAt: safeString(source.updatedAt || source.date).trim()
     };
 }
@@ -54036,7 +54506,7 @@ function svbNormalizeAssetIdentityMap(value = {}) {
     const addEntry = (entry, fallbackName = '') => {
         const normalized = svbNormalizeAssetIdentityEntry(entry, fallbackName);
         if (!normalized.name) return;
-        if (!normalized.prompt && !normalized.negative) return;
+        if (!normalized.prompt && !normalized.negative && !ensureArray(normalized.wellspringLoras).length && !normalized.wellspringTrainingId && !normalized.wellspringLoraName) return;
         identities[normalized.name] = {
             ...normalized,
             updatedAt: normalized.updatedAt || new Date().toISOString()
@@ -54063,14 +54533,62 @@ function svbSetAssetIdentityPrompt(meta = {}, name = '', prompt = '', negative =
     if (!cleanName) return next;
     const cleanPrompt = safeString(prompt).trim();
     const cleanNegative = safeString(negative).trim();
+    const previous = next.identities[cleanName] || {};
     if (!cleanPrompt && !cleanNegative) {
-        delete next.identities[cleanName];
+        const hasWellspringIdentityState = ensureArray(previous.wellspringLoras).length
+            || safeString(previous.wellspringLoraName || previous.wellspringTrainingId).trim();
+        if (hasWellspringIdentityState) {
+            next.identities[cleanName] = {
+                ...previous,
+                name: cleanName,
+                prompt: '',
+                negative: '',
+                updatedAt: new Date().toISOString()
+            };
+        } else {
+            delete next.identities[cleanName];
+        }
         return next;
     }
     next.identities[cleanName] = {
+        ...previous,
         name: cleanName,
         prompt: cleanPrompt,
         negative: cleanNegative,
+        updatedAt: new Date().toISOString()
+    };
+    return next;
+}
+
+function svbSetAssetIdentityWellspringLoras(meta = {}, name = '', loras = [], details = {}) {
+    const cleanName = svbNormalizeAssetIdentityName(name);
+    const next = svbNormalizeAssetStudioMeta(meta);
+    if (!cleanName) return next;
+    const normalizedLoras = svbNormalizeWellspringLoras(loras);
+    const previous = next.identities[cleanName] || { name: cleanName, prompt: '', negative: '' };
+    if (!normalizedLoras.length) {
+        const nextLoraName = safeString(details.loraName || details.name || previous.wellspringLoraName).trim();
+        const nextTrainingId = safeString(details.trainingId || details.training_id || previous.wellspringTrainingId).trim();
+        if (previous.prompt || previous.negative || nextLoraName || nextTrainingId) {
+            next.identities[cleanName] = {
+                ...previous,
+                name: cleanName,
+                wellspringLoras: [],
+                wellspringLoraName: nextLoraName,
+                wellspringTrainingId: nextTrainingId,
+                updatedAt: new Date().toISOString()
+            };
+        } else {
+            delete next.identities[cleanName];
+        }
+        return next;
+    }
+    next.identities[cleanName] = {
+        ...previous,
+        name: cleanName,
+        wellspringLoras: normalizedLoras,
+        wellspringLoraName: safeString(details.loraName || details.name || previous.wellspringLoraName).trim(),
+        wellspringTrainingId: safeString(details.trainingId || details.training_id || previous.wellspringTrainingId).trim(),
         updatedAt: new Date().toISOString()
     };
     return next;
@@ -54333,7 +54851,7 @@ async function openAssetStudio() {
     let pendingBatchReplaceKind = 'additional';
     let generatedImageResult = null;
     let generationRequestId = 0;
-    let wellspringRemoteOptions = { presets: [], workflows: [], projects: [] };
+    let wellspringRemoteOptions = { presets: [], workflows: [], projects: [], loras: [], trainingJobs: [] };
 
     function setStatus(message, type = 'info') {
         const el = document.getElementById('svb-as-status');
@@ -54546,6 +55064,7 @@ async function openAssetStudio() {
         const presetPicker = document.getElementById('svb-as-wellspring-preset-picker');
         const workflowPicker = document.getElementById('svb-as-wellspring-workflow-picker');
         const characterPicker = document.getElementById('svb-as-wellspring-character-picker');
+        const loraPicker = document.getElementById('svb-as-wellspring-lora-picker');
         const presetValue = safeString(document.getElementById('svb-as-wellspring-preset-id')?.value).trim();
         const workflowValue = safeString(document.getElementById('svb-as-wellspring-workflow-id')?.value).trim();
         const characterValue = safeString(document.getElementById('svb-as-wellspring-character-id')?.value).trim();
@@ -54583,6 +55102,16 @@ async function openAssetStudio() {
             characterPicker.innerHTML = options.join('');
             characterPicker.value = wellspringRemoteOptions.projects.some(item => safeString(item.id || item.project_id || item.character_id).trim() === characterValue) ? characterValue : '';
         }
+        if (loraPicker) {
+            const options = ['<option value="">Wellspring LoRA 선택</option>'];
+            wellspringRemoteOptions.loras.forEach((lora) => {
+                const id = svbExtractWellspringLoraId(lora);
+                if (!id) return;
+                const name = safeString(lora.name || lora.lora_name || lora.loraName || lora.title || id).trim();
+                options.push(`<option value="${escapeHtml(id)}" data-lora-name="${escapeHtml(name)}">${escapeHtml(name)} · ${escapeHtml(id)}</option>`);
+            });
+            loraPicker.innerHTML = options.join('');
+        }
     }
 
     async function loadWellspringProjectsForWorkflow(workflowId) {
@@ -54618,14 +55147,20 @@ async function openAssetStudio() {
             return;
         }
         const base = getWellspringImageApiBase(profile.endpoint);
-        setStatus('Wellspring 프리셋/워크플로 목록을 불러오는 중...', 'info');
+        setStatus('Wellspring 프리셋/워크플로/LoRA 목록을 불러오는 중...', 'info');
         const headers = svbGetWellspringApiHeaders(profile);
-        const [presetsData, workflowsData] = await Promise.all([
+        const [presetsData, workflowsData, lorasData, trainingData] = await Promise.all([
             svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_PRESETS_ENDPOINT), { method: 'GET', headers }, `${profile.name} 프리셋`, 30000),
-            svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT), { method: 'GET', headers }, `${profile.name} 워크플로`, 30000)
+            svbImageFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_WORKFLOWS_ENDPOINT), { method: 'GET', headers }, `${profile.name} 워크플로`, 30000),
+            svbWellspringFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_LORAS_MINE_ENDPOINT), { method: 'GET', headers }, `${profile.name} LoRA`, 30000).catch(error => ({ __svbError: error })),
+            svbWellspringFetchJson(joinImageApiUrl(base, WELLSPRING_IMAGE_TRAINING_ENDPOINT), { method: 'GET', headers }, `${profile.name} LoRA 학습`, 30000).catch(error => ({ __svbError: error }))
         ]);
         wellspringRemoteOptions.presets = ensureArray(presetsData?.presets || presetsData?.items || presetsData?.data || presetsData).filter(Boolean);
         wellspringRemoteOptions.workflows = ensureArray(workflowsData?.workflows || workflowsData?.items || workflowsData?.data || workflowsData).filter(Boolean);
+        wellspringRemoteOptions.loras = lorasData?.__svbError ? [] : svbCollectWellspringLoras(lorasData);
+        wellspringRemoteOptions.trainingJobs = trainingData?.__svbError ? [] : svbCollectWellspringTrainingJobs(trainingData);
+        if (lorasData?.__svbError) Logger.warn('Wellspring LoRA list load failed:', lorasData.__svbError?.message || lorasData.__svbError);
+        if (trainingData?.__svbError) Logger.warn('Wellspring LoRA training list load failed:', trainingData.__svbError?.message || trainingData.__svbError);
         const presetInput = document.getElementById('svb-as-wellspring-preset-id');
         const modelInput = document.getElementById('svb-as-wellspring-model-id');
         const modeInput = document.getElementById('svb-as-wellspring-mode');
@@ -54641,7 +55176,7 @@ async function openAssetStudio() {
         const workflowId = safeString(document.getElementById('svb-as-wellspring-workflow-id')?.value).trim();
         if (workflowId) await loadWellspringProjectsForWorkflow(workflowId);
         else renderWellspringRemoteSelects();
-        setStatus(`Wellspring 목록 로드 완료: 프리셋 ${wellspringRemoteOptions.presets.length}개 · 워크플로 ${wellspringRemoteOptions.workflows.length}개 · 캐릭터 ${wellspringRemoteOptions.projects.length}개`, 'success');
+        setStatus(`Wellspring 목록 로드 완료: 프리셋 ${wellspringRemoteOptions.presets.length}개 · 워크플로 ${wellspringRemoteOptions.workflows.length}개 · 캐릭터 ${wellspringRemoteOptions.projects.length}개 · LoRA ${wellspringRemoteOptions.loras.length}개 · 학습 ${wellspringRemoteOptions.trainingJobs.length}개`, 'success');
     }
 
     function collectReferenceImageChoices() {
@@ -54752,6 +55287,84 @@ async function openAssetStudio() {
         if (nameInput) nameInput.value = '';
         renderIdentityPromptPicker('');
         renderGenerationConnectionSummary();
+    }
+
+    function appendWellspringLoraFromPicker() {
+        const picker = document.getElementById('svb-as-wellspring-lora-picker');
+        const loraId = safeString(picker?.value).trim();
+        if (!loraId) {
+            setStatus('적용할 Wellspring LoRA를 선택해주세요.', 'error');
+            return;
+        }
+        const lora = wellspringRemoteOptions.loras.find(item => svbExtractWellspringLoraId(item) === loraId) || { id: loraId };
+        const input = document.getElementById('svb-as-wellspring-loras');
+        const current = svbNormalizeWellspringLoras(input?.value || []);
+        if (!current.some(item => safeString(item.id).trim() === loraId)) {
+            const strength = Math.max(0, Math.min(2, Number(lora.strength ?? lora.default_strength ?? lora.defaultStrength) || 0.8));
+            current.push({ id: loraId, strength });
+        }
+        if (input) input.value = svbSerializeWellspringLoras(current);
+        renderGenerationConnectionSummary();
+        const label = safeString(lora.name || lora.lora_name || lora.loraName || lora.title || loraId).trim();
+        setStatus(`Wellspring LoRA를 프리셋 입력에 적용했습니다: ${label}`, 'success');
+    }
+
+    async function trainWellspringLoraFromSelectedAssets() {
+        const profile = getSelectedWellspringProfile();
+        if (!isWellspringImageProvider(profile.provider)) {
+            setStatus('Wellspring 프로필을 먼저 선택하세요.', 'error');
+            return;
+        }
+        if (!safeString(profile.apiKey).trim()) {
+            setStatus('Wellspring ws-key가 비어 있습니다. 설정 > 이미지 API 설정에서 저장하세요.', 'error');
+            return;
+        }
+        const refs = [
+            ...getAssetRefsForKind('additional', true),
+            ...getAssetRefsForKind('emotion', true)
+        ].filter(ref => safeString(ref?.asset?.path).trim());
+        if (!refs.length) {
+            setStatus('LoRA 학습에 사용할 추가/감정 에셋을 먼저 선택해주세요.', 'error');
+            return;
+        }
+        const identityName = svbNormalizeAssetIdentityName(
+            document.getElementById('svb-as-identity-name')?.value
+            || document.getElementById('svb-as-identity-picker')?.value
+            || getCharacterDisplayName(char)
+        );
+        const loraNameInput = document.getElementById('svb-as-wellspring-training-name');
+        const rawLoraName = safeString(loraNameInput?.value || identityName || getCharacterDisplayName(char) || 'character_lora').trim();
+        const loraName = rawLoraName.slice(0, 40);
+        if (loraNameInput && !safeString(loraNameInput.value).trim()) loraNameInput.value = loraName;
+        const stepsInput = document.getElementById('svb-as-wellspring-training-steps');
+        const steps = svbPositiveInteger(stepsInput?.value, svbWellspringTrainingRecommendedSteps(refs.length), 1, 3000);
+        if (stepsInput && !safeString(stepsInput.value).trim()) stepsInput.value = String(steps);
+        const trainingAssets = refs.map(ref => ({
+            name: ref.asset.name || `${ref.kind}_${ref.idx + 1}`,
+            path: ref.asset.path,
+            ext: ref.asset.ext || svbGetFileExt(ref.asset.path) || 'png',
+            wellspringJobId: ref.asset.wellspringJobId || ref.asset.jobId || ref.asset.job_id
+        }));
+        setStatus(`Wellspring LoRA 학습 시작 중: ${loraName} · 이미지 ${trainingAssets.length}장`, 'info');
+        const started = await svbStartWellspringLoraTraining(profile, {
+            loraName,
+            steps,
+            trainingAssets
+        });
+        const prompt = document.getElementById('svb-as-character-prompt')?.value || '';
+        const negative = document.getElementById('svb-as-character-negative')?.value || '';
+        if (identityName && (safeString(prompt).trim() || safeString(negative).trim())) {
+            assetStudioMeta = svbSetAssetIdentityPrompt(assetStudioMeta, identityName, prompt, negative);
+        }
+        if (identityName) {
+            assetStudioMeta = svbSetAssetIdentityWellspringLoras(assetStudioMeta, identityName, [], {
+                loraName: started.loraName || loraName,
+                trainingId: started.trainingId
+            });
+        }
+        await saveCurrentAssets(`Wellspring LoRA 학습을 시작했습니다: ${started.loraName || loraName}`);
+        renderIdentityPromptPicker(identityName);
+        await refreshWellspringRemoteOptionsFromStudio().catch(error => Logger.warn('Wellspring refresh after LoRA training failed:', error?.message || error));
     }
 
     function renderGenerationControls() {
@@ -56979,6 +57592,17 @@ async function openAssetStudio() {
                                             <select class="svb-as-input" id="svb-as-wellspring-character-picker"></select>
                                             <input class="svb-as-input" id="svb-as-wellspring-character-id" placeholder="Wellspring character/project_id">
                                         </div>
+                                        <div class="svb-as-grid">
+                                            <select class="svb-as-input" id="svb-as-wellspring-lora-picker"></select>
+                                            <button class="svb-as-btn" id="svb-as-wellspring-lora-add" type="button">LoRA 적용</button>
+                                        </div>
+                                        <div class="svb-as-grid">
+                                            <input class="svb-as-input" id="svb-as-wellspring-training-name" placeholder="LoRA 학습 이름">
+                                            <input class="svb-as-input" id="svb-as-wellspring-training-steps" type="number" min="1" max="3000" step="1" placeholder="training steps">
+                                        </div>
+                                        <div class="svb-as-generate-actions compact">
+                                            <button class="svb-as-btn" id="svb-as-wellspring-train-selected" type="button">선택 에셋으로 LoRA 학습</button>
+                                        </div>
                                         <textarea class="svb-as-input" id="svb-as-wellspring-quality-prompt" placeholder="quality_prompt"></textarea>
                                         <textarea class="svb-as-input" id="svb-as-wellspring-loras" placeholder='LoRA JSON 또는 id:strength 목록. 예: [{"id":"...","strength":0.8}]'></textarea>
                                         <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"variant_ids":["neutral"],"loras":[{"id":"...","strength":0.8}]}'></textarea>
@@ -57172,6 +57796,13 @@ async function openAssetStudio() {
         const characterInput = document.getElementById('svb-as-wellspring-character-id');
         if (characterInput) characterInput.value = event.target.value || '';
         renderGenerationConnectionSummary();
+    });
+    addLocal(document.getElementById('svb-as-wellspring-lora-add'), 'click', appendWellspringLoraFromPicker);
+    addLocal(document.getElementById('svb-as-wellspring-train-selected'), 'click', () => {
+        trainWellspringLoraFromSelectedAssets().catch(error => {
+            Logger.error('Wellspring LoRA training from Asset Studio failed:', error);
+            setStatus(`Wellspring LoRA 학습 실패: ${error?.message || error}`, 'error');
+        });
     });
     addLocal(document.getElementById('svb-as-reference-image-picker'), 'change', event => {
         const pathInput = document.getElementById('svb-as-reference-image-path');
@@ -58367,7 +58998,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.83",
+        name: "SuperVibeBot v1.5.84",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58376,7 +59007,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.83 Settings",
+        "SuperVibeBot v1.5.84 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58419,7 +59050,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.83");
+        Logger.info("SuperVibeBot v1.5.84");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
