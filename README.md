@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.78`
+Latest version: `1.5.79`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.79
+
+- Prevents blank Wellspring CFG fields from being converted to `cfg: 0` in native image generation requests.
+- Sanitizes Wellspring native numeric payload fields after extra payload merge so `cfg`, `steps`, size, and batch values cannot be sent below server minimums.
+- Updates Asset Studio Wellspring CFG input to use the server-side minimum of 1.
 
 ## 1.5.78
 

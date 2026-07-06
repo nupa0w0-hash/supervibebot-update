@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.78
-//@version 1.5.78
+//@display-name 🐸 SuperVibeBot v1.5.79
+//@version 1.5.79
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.78는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.79는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,6 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.79 Release Notes
+ * - v1.5.79: prevents blank Wellspring CFG fields from being converted to cfg:0 in native image generation requests
+ * - v1.5.79: sanitizes Wellspring native numeric payload fields after extra payload merge so cfg/steps/size/batch values cannot be sent below server minimums
+ * - v1.5.79: updates Asset Studio Wellspring CFG input to use the server-side minimum of 1
+ *
  * SuperVibeBot v1.5.78 Release Notes
  * - v1.5.78: shows the real active main LLM endpoint in work-mode heartbeats, so API Hub/NanoGPT no longer appears as the stale Google Gemini default
  * - v1.5.78: uses API Hub provider/model settings for main-model call events instead of the separate Google model selector state
@@ -13581,7 +13586,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.78',
+            '//@version 1.5.79',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -21954,8 +21959,30 @@ function svbPickFirstString(...values) {
 }
 
 function svbOptionalNumber(value, fallback = undefined) {
+    if (typeof value === "string" && !value.trim()) return fallback;
+    if (value === null || value === undefined) return fallback;
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
+}
+
+function svbOptionalNumberAtLeast(value, minimum = 1, fallback = undefined, maximum = undefined) {
+    const number = svbOptionalNumber(value, fallback);
+    if (!Number.isFinite(number)) return fallback;
+    const min = Number.isFinite(Number(minimum)) ? Number(minimum) : 1;
+    if (number < min) return fallback;
+    const max = Number(maximum);
+    return Number.isFinite(max) ? Math.min(max, number) : number;
+}
+
+function svbPositiveInteger(value, fallback = 1, minimum = 1, maximum = undefined) {
+    const number = svbOptionalNumber(value, fallback);
+    const min = Number.isFinite(Number(minimum)) ? Math.floor(Number(minimum)) : 1;
+    const max = Number(maximum);
+    const safeFallback = Number.isFinite(Number(fallback)) ? Math.floor(Number(fallback)) : min;
+    let next = Number.isFinite(number) ? Math.floor(number) : safeFallback;
+    if (next < min) next = safeFallback >= min ? safeFallback : min;
+    if (Number.isFinite(max)) next = Math.min(Math.floor(max), next);
+    return next;
 }
 
 function normalizeImagePresetOutput(output = {}, index = 0) {
@@ -22087,7 +22114,7 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
     merged.wellspringQualityPrompt = safeString(merged.wellspringQualityPrompt || merged.qualityPrompt || defaults.wellspringQualityPrompt || defaults.qualityPrompt).trim();
     merged.wellspringSampler = safeString(merged.wellspringSampler || merged.samplerName || defaults.wellspringSampler || defaults.samplerName).trim();
     merged.wellspringScheduler = safeString(merged.wellspringScheduler || merged.scheduler || defaults.wellspringScheduler || defaults.scheduler).trim();
-    merged.wellspringCfg = svbOptionalNumber(merged.wellspringCfg ?? merged.cfg ?? defaults.wellspringCfg ?? defaults.cfg, "");
+    merged.wellspringCfg = svbOptionalNumberAtLeast(merged.wellspringCfg ?? merged.cfg ?? defaults.wellspringCfg ?? defaults.cfg, 1, "");
     merged.wellspringVariantIds = svbNormalizeWellspringIdList(merged.wellspringVariantIds || merged.variantIds || merged.variant_ids || defaults.wellspringVariantIds || defaults.variantIds || defaults.variant_ids);
     merged.wellspringPerVariantBatch = Math.max(1, Math.min(20, Number(merged.wellspringPerVariantBatch || merged.perVariantBatch || merged.per_variant_batch || defaults.wellspringPerVariantBatch || defaults.perVariantBatch || defaults.per_variant_batch) || 1));
     merged.wellspringLoras = svbNormalizeWellspringLoras(merged.wellspringLoras || merged.loras || defaults.wellspringLoras || defaults.loras);
@@ -22273,6 +22300,7 @@ function buildImageProfileForGenerationPreset(profile, preset) {
     const normalizedPreset = normalizeImageGenerationPreset(preset);
     const provider = resolveImageGenerationProvider(normalizedProfile.provider, normalizedPreset.provider);
     const isWellspringRoute = isWellspringImageProvider(provider);
+    const wellspringCfg = svbOptionalNumberAtLeast(normalizedPreset.wellspringCfg, 1, undefined, 30);
     return normalizeImageApiProfile({
         ...normalizedProfile,
         provider,
@@ -22289,7 +22317,7 @@ function buildImageProfileForGenerationPreset(profile, preset) {
         headersTemplate: normalizedPreset.headersTemplate,
         sampler: (isWellspringRoute ? normalizedPreset.wellspringSampler : "") || normalizedPreset.sampler,
         scheduler: (isWellspringRoute ? normalizedPreset.wellspringScheduler : "") || normalizedPreset.scheduler,
-        scale: isWellspringRoute && Number.isFinite(Number(normalizedPreset.wellspringCfg)) ? Number(normalizedPreset.wellspringCfg) : normalizedPreset.scale,
+        scale: isWellspringRoute && wellspringCfg !== undefined ? wellspringCfg : normalizedPreset.scale,
         cfgRescale: normalizedPreset.cfgRescale,
         ucPreset: normalizedPreset.ucPreset,
         qualityToggle: normalizedPreset.qualityToggle
@@ -22954,6 +22982,22 @@ function svbGetWellspringGenerationRouteLabel(profile, options = {}) {
     return "Wellspring NAI 호환";
 }
 
+function svbSanitizeWellspringNativeNumericPayload(payload = {}, defaults = {}) {
+    if (!payload || typeof payload !== "object") return payload;
+    payload.steps = svbPositiveInteger(payload.steps, defaults.steps || 26, 1, 150);
+    payload.width = svbPositiveInteger(payload.width, defaults.width || 1024, 1, 8192);
+    payload.height = svbPositiveInteger(payload.height, defaults.height || 1024, 1, 8192);
+    if (payload.cfg !== undefined) {
+        const cfg = svbOptionalNumberAtLeast(payload.cfg, 1, undefined, 30);
+        if (cfg === undefined) delete payload.cfg;
+        else payload.cfg = cfg;
+    }
+    if (payload.per_variant_batch !== undefined) {
+        payload.per_variant_batch = svbPositiveInteger(payload.per_variant_batch, 1, 1, 20);
+    }
+    return payload;
+}
+
 function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps, options = {}) {
     const payload = {
         prompt,
@@ -22964,7 +23008,7 @@ function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps
         sampler: svbPickFirstString(options.wellspringSampler, options.sampler, profile.sampler),
         scheduler: svbPickFirstString(options.wellspringScheduler, options.scheduler, profile.scheduler),
         steps,
-        cfg: svbOptionalNumber(options.wellspringCfg ?? options.cfg ?? profile.scale, undefined),
+        cfg: svbOptionalNumberAtLeast(options.wellspringCfg ?? options.cfg ?? profile.scale, 1, undefined, 30),
         width: ratio.width,
         height: ratio.height
     };
@@ -22984,6 +23028,7 @@ function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps
         if (payload[key] === undefined || payload[key] === "") delete payload[key];
     });
     svbMergeImagePayloadExtra(payload, svbParseImagePayloadExtraJson(options.wellspringPayloadJson, "Wellspring 추가 payload"));
+    svbSanitizeWellspringNativeNumericPayload(payload, { width: ratio.width, height: ratio.height, steps });
     return payload;
 }
 
@@ -32439,7 +32484,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 wellspringVariantIds: svbNormalizeWellspringIdList(source.wellspringVariantIds || source.variantIds || source.variant_ids || source.wellspringVariantId || source.variantId || source.variant_id || payloadObj.wellspringVariantIds || payloadObj.variantIds || payloadObj.variant_ids || action.wellspringVariantIds || action.variantIds || action.variant_ids),
                 wellspringPerVariantBatch: svbOptionalNumber(source.wellspringPerVariantBatch ?? source.perVariantBatch ?? source.per_variant_batch ?? payloadObj.wellspringPerVariantBatch ?? payloadObj.perVariantBatch ?? payloadObj.per_variant_batch ?? action.wellspringPerVariantBatch ?? action.perVariantBatch ?? action.per_variant_batch, undefined),
                 wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt || payloadObj.wellspringQualityPrompt || payloadObj.qualityPrompt || payloadObj.quality_prompt || action.wellspringQualityPrompt || action.qualityPrompt || action.quality_prompt).trim(),
-                wellspringCfg: svbOptionalNumber(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, undefined),
+                wellspringCfg: svbOptionalNumberAtLeast(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, 1, undefined, 30),
                 wellspringSampler: safeString(source.wellspringSampler || source.sampler || payloadObj.wellspringSampler || payloadObj.sampler || action.wellspringSampler || action.sampler).trim(),
                 wellspringScheduler: safeString(source.wellspringScheduler || source.scheduler || payloadObj.wellspringScheduler || payloadObj.scheduler || action.wellspringScheduler || action.scheduler).trim(),
                 wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || payloadObj.wellspringLoras || payloadObj.loras || action.wellspringLoras || action.loras),
@@ -44651,7 +44696,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.78 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.79 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -56728,7 +56773,7 @@ async function openAssetStudio() {
                                             <input class="svb-as-input" id="svb-as-wellspring-scheduler" placeholder="scheduler">
                                         </div>
                                         <div class="svb-as-grid">
-                                            <input class="svb-as-input" id="svb-as-wellspring-cfg" type="number" min="0" max="30" step="0.1" placeholder="cfg">
+                                            <input class="svb-as-input" id="svb-as-wellspring-cfg" type="number" min="1" max="30" step="0.1" placeholder="cfg (1 이상)">
                                             <input class="svb-as-input" id="svb-as-wellspring-per-variant-batch" type="number" min="1" max="20" step="1" placeholder="per_variant_batch">
                                         </div>
                                         <div class="svb-as-grid">
@@ -58127,7 +58172,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.78",
+        name: "SuperVibeBot v1.5.79",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58136,7 +58181,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.78 Settings",
+        "SuperVibeBot v1.5.79 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58179,7 +58224,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.78");
+        Logger.info("SuperVibeBot v1.5.79");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
