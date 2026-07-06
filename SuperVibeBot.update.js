@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.80
-//@version 1.5.80
+//@display-name 🐸 SuperVibeBot v1.5.81
+//@version 1.5.81
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.80는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.81는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.80 Release Notes
+ * SuperVibeBot v1.5.81 Release Notes
+ * - v1.5.81: routes image/asset target aliases through the asset executor instead of raw target comparisons
+ * - v1.5.81: recovers image-focused character-update actions that contain asset prompt payloads into asset create actions
+ * - v1.5.81: shows stop/cancel controls directly inside the visible Kero work-in-progress bubble
+ * - v1.5.81: keeps all stop/cancel buttons wired to one shared runtime interruption handler
  * - v1.5.80: removes duplicated user-request text from long-running Kero activity/status heartbeats
  * - v1.5.80: replaces JSON-validation heartbeat wording with concrete image-planning/execution wait states
  * - v1.5.80: makes workstream stop/cancel buttons act as control-panel actions without adding chat messages
@@ -13590,7 +13594,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.80',
+            '//@version 1.5.81',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -19613,6 +19617,10 @@ function buildMainCSS() {
         #${CONTAINER_ID} .chat-loading::after { content: '...'; animation: dots 1.5s infinite; }
         #${CONTAINER_ID} .kero-agent-trace { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
         #${CONTAINER_ID} .kero-agent-trace-title { font-size: 12px; font-weight: 700; color: #047857; }
+        #${CONTAINER_ID} .kero-loading-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+        #${CONTAINER_ID} .kero-loading-control-btn { min-height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--rt-border); background: var(--rt-bg-primary); color: var(--rt-text-primary); font-size: 12px; font-weight: 700; cursor: pointer; }
+        #${CONTAINER_ID} .kero-loading-stop-btn { border-color: #f59e0b; }
+        #${CONTAINER_ID} .kero-loading-cancel-btn { border-color: #ef4444; color: #b91c1c; }
         #${CONTAINER_ID} .kero-agent-trace-step { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #4b5563; }
         #${CONTAINER_ID} .kero-agent-trace-step::before { content: ''; width: 7px; height: 7px; border-radius: 999px; background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
         #${CONTAINER_ID} .kero-message-artifacts { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -32434,18 +32442,60 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     function collectKeroAssetCreateSources(action = {}) {
         const payload = action?.payload;
         const payloadObj = isPlainObject(payload) ? payload : {};
+        if (Array.isArray(payload) && payload.length) return payload;
+        const collected = [];
+        const seen = new Set();
+        const pushArray = (source, forcedTarget = '') => {
+            if (!Array.isArray(source) || !source.length) return;
+            source.forEach((entry) => {
+                const item = isPlainObject(entry) && forcedTarget
+                    ? {
+                        ...entry,
+                        assetType: entry.assetType || entry.asset_type || entry.kind || entry.target || forcedTarget
+                    }
+                    : entry;
+                let key = '';
+                try {
+                    key = JSON.stringify(item);
+                } catch (_) {
+                    key = String(item);
+                }
+                if (seen.has(key)) return;
+                seen.add(key);
+                collected.push(item);
+            });
+        };
+        [
+            [payloadObj.assets, ''],
+            [payloadObj.items, ''],
+            [payloadObj.images, ''],
+            [payloadObj.prompts, ''],
+            [payloadObj.parts, ''],
+            [payloadObj.assetPrompts, ''],
+            [payloadObj.imagePrompts, ''],
+            [payloadObj.profileAssets, 'additional'],
+            [payloadObj.standingAssets, 'additional'],
+            [payloadObj.additionalAssets, 'additional'],
+            [payloadObj.emotionAssets, 'emotion'],
+            [payloadObj.expressionAssets, 'emotion'],
+            [payloadObj.emotionImages, 'emotion'],
+            [action.assets, ''],
+            [action.items, ''],
+            [action.images, ''],
+            [action.prompts, ''],
+            [action.parts, ''],
+            [action.assetPrompts, ''],
+            [action.imagePrompts, ''],
+            [action.profileAssets, 'additional'],
+            [action.standingAssets, 'additional'],
+            [action.additionalAssets, 'additional'],
+            [action.emotionAssets, 'emotion'],
+            [action.expressionAssets, 'emotion'],
+            [action.emotionImages, 'emotion']
+        ].forEach(([source, forcedTarget]) => pushArray(source, forcedTarget));
+        if (collected.length) return collected;
         const arraySources = [
-            payload,
-            payloadObj.assets,
-            payloadObj.items,
-            payloadObj.images,
-            payloadObj.prompts,
-            payloadObj.parts,
-            action.assets,
-            action.items,
-            action.images,
-            action.prompts,
-            action.parts
+            payload
         ];
         for (const source of arraySources) {
             if (Array.isArray(source) && source.length) return source;
@@ -32538,6 +32588,53 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             });
         });
         return items;
+    }
+
+    function hasExplicitKeroAssetCreatePayload(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const arrayKeys = [
+            'assets', 'items', 'images', 'prompts', 'parts',
+            'assetPrompts', 'imagePrompts', 'profileAssets', 'standingAssets',
+            'emotionAssets', 'expressionAssets', 'additionalAssets', 'emotionImages'
+        ];
+        const scalarKeys = [
+            'prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt',
+            'negative', 'negativePrompt', 'stylePreset', 'style', 'stylePrompt',
+            'identityName', 'identityKey', 'identityPrompt', 'characterPrompt',
+            'visualIdentityPrompt', 'danbooruTags', 'tagPrompt',
+            'wellspringMode', 'wellspringApiMode', 'wellspringPresetId',
+            'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId',
+            'workflowId', 'projectId', 'variantIds', 'variantId'
+        ];
+        return arrayKeys.some((key) => Array.isArray(payloadObj?.[key]) || Array.isArray(action?.[key]))
+            || scalarKeys.some((key) => Object.prototype.hasOwnProperty.call(payloadObj, key) || Object.prototype.hasOwnProperty.call(action || {}, key));
+    }
+
+    function buildKeroAssetCreateActionFromMisroutedCharacterAction(action = {}, options = {}) {
+        if (!isKeroCharacterPatchAction(action) || action._redirectedFromCharacterPatch === true) return null;
+        const request = safeString(action.userRequest || action.request || options.userRequest || options.request || currentKeroMission?.objective || '').trim();
+        if (!isKeroAssetFocusedRequest(request)) return null;
+        if (!hasExplicitKeroAssetCreatePayload(action)) return null;
+        const items = normalizeKeroAssetCreatePayloads(action).filter((item) =>
+            safeString(item.prompt).trim()
+            || safeString(item.wellspringPayloadJson).trim()
+            || safeString(item.danbooruTags).trim()
+            || safeString(item.identityPrompt).trim()
+            || safeString(item.referenceImagePath).trim()
+        );
+        if (!items.length) return null;
+        const payloadObj = getKeroAssetPayloadObject(action);
+        return {
+            ...action,
+            type: 'create',
+            target: 'asset',
+            payload: {
+                ...payloadObj,
+                assets: items
+            },
+            _redirectedFromCharacterPatch: true,
+            reason: 'image_focused_character_update_asset_payload_recovery'
+        };
     }
 
     function inferKeroAssetIdentityNameFromText(text = '') {
@@ -33221,9 +33318,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     }
 
     async function executeKeroAction(action, options = {}) {
-        const target = action?.target;
-        const type = action?.type;
+        const target = normalizeKeroActionTargetName(action?.target);
+        const type = normalizeKeroActionTypeName(action?.type);
         if (!target || !type) return { success: false, detail: 'target/type 누락' };
+        if (isPlainObject(action) && (action.target !== target || action.type !== type)) {
+            action = { ...action, target, type };
+        }
         const normalizedTarget = normalizeKeroActionTargetName(target);
         const retargetCharacterId = safeString(action?._targetCharacterId || action?.targetCharacterId || '').trim();
         if (retargetCharacterId && isKeroCharacterScopedActionTarget(normalizedTarget) && options._mixedCharacterRetargeted !== true) {
@@ -33623,10 +33723,20 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     }
 
     async function handleKeroActionRequest(action, options = {}) {
-        const target = action?.target;
-        const type = action?.type;
+        const target = normalizeKeroActionTargetName(action?.target);
+        const type = normalizeKeroActionTypeName(action?.type);
         if (!target || !type) return { success: false, detail: 'target/type 누락' };
+        if (isPlainObject(action) && (action.target !== target || action.type !== type)) {
+            action = { ...action, target, type };
+        }
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
+
+        const recoveredAssetAction = buildKeroAssetCreateActionFromMisroutedCharacterAction(action, options);
+        if (recoveredAssetAction) {
+            const itemCount = normalizeKeroAssetCreatePayloads(recoveredAssetAction).length;
+            addKeroWorkstreamEvent('이미지 액션 재분류', `이미지 전용 요청의 character update를 asset create로 전환했습니다${itemCount ? ` · ${itemCount}개` : ''}.`, 'action', actionProgressOptions);
+            return await handleKeroActionRequest(recoveredAssetAction, options);
+        }
 
         if (isKeroCharacterPatchAction(action)) {
             addKeroWorkstreamEvent('캐릭터 전체 수정 실행', '이름/설명/첫 메시지/로어북/상태창 등을 한 번에 저장', 'action', actionProgressOptions);
@@ -34078,11 +34188,11 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const runtimeActive = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
         const missionStatus = safeString(currentKeroMission?.status || '');
         const missionOpen = Boolean(currentKeroMission && !['done', 'cancelled'].includes(missionStatus));
-        ['kero-runtime-stop-btn', 'kero-runtime-stop-quick-btn'].forEach((id) => {
+        ['kero-runtime-stop-btn', 'kero-runtime-stop-quick-btn', 'kero-runtime-stop-loading-btn'].forEach((id) => {
             const btn = document.getElementById(id);
             if (btn) btn.disabled = !runtimeActive;
         });
-        ['kero-runtime-cancel-btn', 'kero-runtime-cancel-quick-btn'].forEach((id) => {
+        ['kero-runtime-cancel-btn', 'kero-runtime-cancel-quick-btn', 'kero-runtime-cancel-loading-btn'].forEach((id) => {
             const btn = document.getElementById(id);
             if (btn) btn.disabled = !(runtimeActive || missionOpen);
         });
@@ -34252,6 +34362,43 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         btn.title = keroRequireActionConfirmation
             ? '수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행'
             : '자동 실행 ON: 저장 액션을 바로 실행';
+    }
+
+    async function handleKeroRuntimeStopButtonClick() {
+        const stopped = requestKeroTaskInterruption({
+            cancelMission: false,
+            reason: '사용자가 작업 제어 버튼으로 현재 호출/실행 중지를 요청했습니다.'
+        });
+        if (!stopped) {
+            addKeroWorkstreamEvent('중지할 작업 없음', '현재 중지할 모델 호출/실행 작업이 없습니다.', 'info');
+        }
+        await renderKeroWorkstream();
+    }
+
+    async function handleKeroRuntimeCancelButtonClick() {
+        const cancelled = requestKeroTaskInterruption({
+            cancelMission: true,
+            reason: '사용자가 작업 제어 버튼으로 미션 취소를 요청했습니다.'
+        });
+        if (!cancelled) {
+            addKeroWorkstreamEvent('취소할 작업 없음', '현재 취소할 진행 작업이나 열린 미션이 없습니다.', 'info');
+        }
+        await renderKeroWorkstream();
+    }
+
+    function bindKeroRuntimeControlButton(btn, handler, label) {
+        if (!btn || btn.dataset.svbBound === 'true') return;
+        btn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+                await handler(event);
+            } catch (error) {
+                Logger.error(`Handler error for ${label}:`, error);
+                alert(`오류: ${error.message}`);
+            }
+        });
+        btn.dataset.svbBound = 'true';
     }
 
     function bindKeroToolsEvents() {
@@ -34463,32 +34610,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             await renderKeroWorkstream();
         }, 'kero-runtime-retry-btn');
 
-        const handleKeroRuntimeStopButtonClick = async () => {
-            const stopped = requestKeroTaskInterruption({
-                cancelMission: false,
-                reason: '사용자가 작업 제어 버튼으로 현재 호출/실행 중지를 요청했습니다.'
-            });
-            if (!stopped) {
-                addKeroWorkstreamEvent('중지할 작업 없음', '현재 중지할 모델 호출/실행 작업이 없습니다.', 'info');
-            }
-            await renderKeroWorkstream();
-        };
-
-        const handleKeroRuntimeCancelButtonClick = async () => {
-            const cancelled = requestKeroTaskInterruption({
-                cancelMission: true,
-                reason: '사용자가 작업 제어 버튼으로 미션 취소를 요청했습니다.'
-            });
-            if (!cancelled) {
-                addKeroWorkstreamEvent('취소할 작업 없음', '현재 취소할 진행 작업이나 열린 미션이 없습니다.', 'info');
-            }
-            await renderKeroWorkstream();
-        };
-
-        bindSafeClick(document.getElementById('kero-runtime-stop-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-btn');
-        bindSafeClick(document.getElementById('kero-runtime-stop-quick-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-quick-btn');
-        bindSafeClick(document.getElementById('kero-runtime-cancel-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-btn');
-        bindSafeClick(document.getElementById('kero-runtime-cancel-quick-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-quick-btn');
+        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-stop-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-btn');
+        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-stop-quick-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-quick-btn');
+        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-cancel-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-btn');
+        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-cancel-quick-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-quick-btn');
 
         const scopeResetBtn = document.getElementById('kero-scope-reset-btn');
         bindSafeClick(scopeResetBtn, async () => {
@@ -34763,6 +34888,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (!historyDiv) return;
 
         const loadingMode = normalizeKeroMode(options.mode || currentKeroMode);
+        const executionControls = isKeroExecutionMode(loadingMode)
+            ? [el('div', { class: 'kero-loading-controls' }, [
+                el('button', { class: 'kero-loading-control-btn kero-loading-stop-btn', id: 'kero-runtime-stop-loading-btn', text: '중지', title: '현재 모델 호출/실행만 중단합니다.' }),
+                el('button', { class: 'kero-loading-control-btn kero-loading-cancel-btn', id: 'kero-runtime-cancel-loading-btn', text: '취소', title: '현재 미션과 남은 대기 작업을 취소합니다.' })
+            ])]
+            : [];
         const traceContent = loadingMode === 'daily'
             ? [
                 el('div', { class: 'kero-agent-trace-title', text: '케로 답장 준비 중' }),
@@ -34775,7 +34906,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 ]
             : [
                 el('div', { class: 'kero-agent-trace-title', text: '케로 작업 중' }),
-                el('div', { class: 'chat-loading', text: '작업을 준비하는 중...' })
+                el('div', { class: 'chat-loading', text: '작업을 준비하는 중...' }),
+                ...executionControls
                 ]);
 
         const loadingDiv = el('div', { class: 'chat-message bot', id: 'chat-loading-msg' }, [
@@ -34785,6 +34917,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         ]);
 
         historyDiv.appendChild(loadingDiv);
+        bindKeroRuntimeControlButton(loadingDiv.querySelector('#kero-runtime-stop-loading-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-loading-btn');
+        bindKeroRuntimeControlButton(loadingDiv.querySelector('#kero-runtime-cancel-loading-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-loading-btn');
         historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
@@ -44753,7 +44887,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.80 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.81 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -58229,7 +58363,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.80",
+        name: "SuperVibeBot v1.5.81",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58238,7 +58372,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.80 Settings",
+        "SuperVibeBot v1.5.81 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58281,7 +58415,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.80");
+        Logger.info("SuperVibeBot v1.5.81");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

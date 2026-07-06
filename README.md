@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.80`
+Latest version: `1.5.81`
 
 Update URL:
 
@@ -17,6 +17,13 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.81
+
+- Routes image/asset target aliases through the asset executor instead of raw target comparisons.
+- Recovers image-focused character-update actions that contain asset prompt payloads into asset create actions.
+- Shows stop/cancel controls directly inside the visible Kero work-in-progress bubble.
+- Keeps header, workstream, and in-progress stop/cancel buttons wired to one shared runtime interruption handler.
 
 ## 1.5.80
 
