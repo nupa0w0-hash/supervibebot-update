@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.75
-//@version 1.5.75
+//@display-name 🐸 SuperVibeBot v1.5.76
+//@version 1.5.76
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.75는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.76는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,7 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.75 Release Notes
+ * SuperVibeBot v1.5.76 Release Notes
+ * - v1.5.76: replaces generic main-model wait heartbeats with visible task/activity/status details so long waits show what Kero is doing
+ * - v1.5.76: prevents asset-focused requests such as character standing/emotion image batches from being misrouted into lorebook bulk_create jobs
+ * - v1.5.76: passes cancellation signals into Kero image asset generation and clarifies stop/cancel controls in the workstream panel
  * - v1.5.75: lets Kero use generated image assets as part of status windows, backgroundHTML, profile panels, interfaces, maps, emblems, items, and splash/title views
  * - v1.5.75: teaches integrated visual jobs to create assets first and then reference them from saved HTML/CSS with {{asset::name}} or {{image::name}}
  * - v1.5.75: carries the same visual asset workflow into missing-action and gateway recovery prompts without adding images to pure text/code/planning work
@@ -9205,6 +9208,7 @@ function isKeroFullCharacterBuildRequest(input = '') {
     const text = safeString(input);
     if (!text.trim()) return false;
     if (isKeroExplicitSingleCharacterFieldEditRequest(text)) return false;
+    if (isKeroAssetFocusedRequest(text)) return false;
     const fullBuildWords = /(전체|처음부터|캐릭터\s*패키지|풀\s*빌드|풀빌드|리메이크|만들|제작|생성|worldbuild|full\s*build|make|build)/i;
     const targetWords = /(봇|캐릭터|시뮬|sim|bot|character)/i;
     const contentWords = /(디스크립션|description|desc|첫\s*메시지|first\s*message|로어북|lorebook|상태창|status|css|html|세계관|인물|관계)/i;
@@ -12853,6 +12857,13 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             malformedFieldActionBlocked = /@action|작업 명령/i.test(error?.message || String(error));
         }
         const fullBuildProbe = isKeroGatewayFullCharacterBuildRequest('make this bot fantasy lorebook');
+        const assetOnlyRequest = '각 인물들 흰 배경 상체 기본 스텐딩 에셋 하나씩 만들어주고 각 인물들 감정 에셋도 다양하게 만들어줘';
+        const assetOnlyBulkSpecs = inferKeroBulkCreateSpecsFromText(assetOnlyRequest, { allowSmallCreate: true, fullBuild: false });
+        const assetOnlyPreplan = buildKeroPreplannedLargeRequestResponse(assetOnlyRequest, {
+            keroMode: 'work',
+            workTargetMode: 'character',
+            userRequest: assetOnlyRequest
+        });
         return {
             generated: typeof response === 'string',
             hasAction: /@action/.test(response),
@@ -12882,7 +12893,11 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             workPlanningOnlyRetryCountOne: getKeroModelRetryCountForMode('work', { planningOnly: true }) === 1,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
-            fullBuildProbeType: typeof fullBuildProbe === 'boolean'
+            fullBuildProbeType: typeof fullBuildProbe === 'boolean',
+            assetOnlyFocused: isKeroAssetFocusedRequest(assetOnlyRequest) === true,
+            assetOnlyNotFullBuild: isKeroGatewayFullCharacterBuildRequest(assetOnlyRequest) === false,
+            assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0,
+            assetOnlyNoPreplan: !assetOnlyPreplan
         };
     });
     if (!result.ok) {
@@ -12920,6 +12935,10 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
     if (!value.fullBuildProbeType) problems.push('gateway full-build probe did not return boolean');
+    if (!value.assetOnlyFocused) problems.push('asset-only request was not detected as asset-focused');
+    if (!value.assetOnlyNotFullBuild) problems.push('asset-only request was misdetected as full character build');
+    if (!value.assetOnlyNoBulkSpecs) problems.push('asset-only request inferred bulk_create specs');
+    if (!value.assetOnlyNoPreplan) problems.push('asset-only request triggered large-request preplan');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
@@ -13554,7 +13573,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.75',
+            '//@version 1.5.76',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -15981,6 +16000,47 @@ function resolveKeroHeartbeatHardTimeoutMs(options = {}) {
     return 0;
 }
 
+function inferKeroVisibleActivityDetail(userText = '', options = {}) {
+    const request = safeString(options.userRequest || userText).trim();
+    const workMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+    const modeMeta = typeof getWorkTargetModeMeta === 'function' ? getWorkTargetModeMeta(workMode) : null;
+    const targetLabel = modeMeta?.label || (workMode === 'module' ? '모듈' : (workMode === 'plugin' ? '플러그인' : '캐릭터'));
+    let task = '요청을 실행 가능한 저장 액션으로 구성';
+    if (options.gatewayRecovery === true) {
+        task = '타임아웃 복구용 작은 실행 단위 구성';
+    } else if (isKeroAssetFocusedRequest(request)) {
+        task = '이미지 에셋 프롬프트와 등록 액션 구성';
+    } else if (hasKeroAssetIntent(request) && /(상태창|status|backgroundHTML|html|css|인터페이스|ui|배경|profile|프로필)/i.test(request)) {
+        task = '시각 에셋과 HTML/CSS 저장 액션 구성';
+    } else if (/(로어북|lorebook|세계관|설정집|인물|관계|세력)/i.test(request)) {
+        task = '로어북/세계관 항목 구조화';
+    } else if (/(트리거|trigger|lua|변수|variable|정규식|regex)/i.test(request)) {
+        task = '트리거/변수/정규식 실행 구조 점검';
+    } else if (/(디스크립션|description|desc|첫\s*메시지|first\s*message|글로벌\s*노트|global\s*note)/i.test(request)) {
+        task = '핵심 캐릭터 필드 저장 액션 구성';
+    } else if (isKeroPlanningOnlyRequest(request)) {
+        task = '기획/TODO 답변 구성';
+    }
+    const nextStep = options.fromKero === true
+        ? '응답 수신 뒤 @action 파싱/검증/저장 예정'
+        : '응답 수신 뒤 결과 정리 예정';
+    const requestHint = request ? `요청: ${limitSvbMiddleText(request, 120, 'kero_activity_request')}` : '';
+    return [targetLabel, task, nextStep, requestHint].filter(Boolean).join(' · ');
+}
+
+function buildKeroHeartbeatStatus(label = '', elapsedSec = 0, tick = 0, options = {}) {
+    const activity = safeString(options.activityDetail || inferKeroVisibleActivityDetail(options.userRequest || '', options)).trim();
+    const provider = `${currentApiType || 'provider'}${currentModel ? `/${currentModel}` : ''}`;
+    const phases = [
+        '모델 응답 대기',
+        '응답 수신 후 액션 JSON 검증 예정',
+        '중지/취소 요청 시 현재 호출 중단 가능'
+    ];
+    const phase = phases[Math.max(0, tick - 1) % phases.length];
+    const base = activity || safeString(label || '메인 모델 작업').trim() || '메인 모델 작업';
+    return `${base} · ${provider} · ${phase} · ${Math.max(1, Math.round(Number(elapsedSec) || 1))}초째`;
+}
+
 async function withKeroActivityHeartbeat(promise, label = '모델 응답 대기 중', options = {}) {
     const heartbeatMode = safeString(options.keroMode || currentKeroMode) || currentKeroMode;
     const normalizedProgressOptions = normalizeKeroProgressOptions(options);
@@ -16098,7 +16158,7 @@ async function withKeroActivityHeartbeat(promise, label = '모델 응답 대기 
         }
         if (!shouldRenderHeartbeat) return;
         const elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        const text = `${label} · ${elapsedSec}초째 진행 중`;
+        const text = buildKeroHeartbeatStatus(label, elapsedSec, tick, options);
         if (isHeartbeatJobCurrent()) {
             setKeroLoadingStatus(text);
             updateKeroBackgroundJob(heartbeatJobId, { detail: text, silent: true });
@@ -24466,8 +24526,8 @@ async function createTransUI() {
             el("button", { class: "btn-secondary", id: "kero-runtime-diagnostics-btn", text: "진단 실행" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-recover-btn", text: "대기 복구 확인" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-retry-btn", text: "재시도" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지" }),
-            el("button", { class: "btn-danger", id: "kero-runtime-cancel-btn", text: "취소" })
+            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지", title: "현재 모델 호출/실행만 중단하고 이미 완료된 저장은 유지합니다." }),
+            el("button", { class: "btn-danger", id: "kero-runtime-cancel-btn", text: "취소", title: "현재 미션과 남은 대기 작업을 취소합니다. 이미 완료된 저장은 되돌리지 않습니다." })
         ]),
         el("div", { class: "kero-runtime-diagnostics-list", id: "kero-runtime-diagnostics-list" }, [
             el("div", { class: "kero-empty", text: "작업이 멈추거나 오류가 의심되면 진단을 실행하세요." })
@@ -28050,6 +28110,7 @@ ${currentVars || '{}'}
         const text = safeString(input).toLowerCase();
         if (!text) return false;
         if (isKeroExplicitSingleCharacterFieldEditRequest(text)) return false;
+        if (isKeroAssetFocusedRequest(text)) return false;
         if (typeof hasKeroFullProjectBuildSignal === 'function' && hasKeroFullProjectBuildSignal(text)) return true;
         const targetSignal = /(캐릭터|봇|bot|시뮬봇|sim|캐릭터\s*전체|이\s*봇|this\s*bot)/i.test(text);
         const workSignal = /(만들|제작|생성|변환|바꾸|업그레이드|리메이크|전체|제대로|알아서|최대한|완성|풀\s*빌드|풀\s*세팅|풀세팅|완성본|패키지)/i.test(text);
@@ -32417,6 +32478,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
     async function runKeroAssetCreateAction(action = {}, options = {}) {
         const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const actionSignal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
         const char = await getCharacterData();
         if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
 
@@ -32454,6 +32516,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
         for (const job of jobs) {
             assertKeroActionNotTimedOut(action, '이미지 에셋 생성');
+            throwIfSvbAborted(actionSignal, '이미지 에셋 생성이 사용자 요청으로 중단되었습니다.');
             if (typeof options.abortCheck === 'function' && options.abortCheck()) {
                 throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 생성을 중단했습니다.');
             }
@@ -32513,8 +32576,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     wellspringSampler: item.wellspringSampler,
                     wellspringScheduler: item.wellspringScheduler,
                     wellspringLoras: item.wellspringLoras,
-                    wellspringPayloadJson: item.wellspringPayloadJson
+                    wellspringPayloadJson: item.wellspringPayloadJson,
+                    signal: actionSignal
                 });
+                throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
                 const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
                 if (allowAutoReferenceForProfile && !autoReferencePath) {
                     const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
@@ -44398,7 +44463,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.75 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.76 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -47118,6 +47183,7 @@ function inferKeroBulkCreateSpecsFromText(text, options = {}) {
     const source = safeString(text);
     if (!source.trim()) return [];
     if (isKeroExplicitSingleCharacterFieldEditRequest(source)) return [];
+    if (isKeroAssetFocusedRequest(source)) return [];
     const allowSmallCreate = options.allowSmallCreate === true;
     const isFullCharacterBuild = options.fullBuild === true || isKeroGatewayFullCharacterBuildRequest(source);
     const explicitCountEntries = getKeroExplicitBulkCountEntries(source);
@@ -47200,6 +47266,23 @@ function inferKeroBulkCreateSpecsFromText(text, options = {}) {
 
 function isKeroCreateLikeRequest(text = '') {
     return /(만들어|만들|생성|추가|작성|제작|구성|채워|불러|세팅|완성|create|add|generate|make|build)/i.test(safeString(text));
+}
+
+function hasKeroAssetIntent(text = '') {
+    return /(에셋|이미지|프로필\s*(?:에셋|이미지|portrait)|스탠딩|스텐딩|standing|감정\s*(?:에셋|이미지)|표정\s*(?:에셋|이미지)|상체\s*(?:에셋|이미지|스탠딩|스텐딩)|흰\s*배경|white\s*background|asset|image|portrait|standing|emotion\s*(?:asset|image)|sprite)/i.test(safeString(text));
+}
+
+function hasKeroNonAssetBuildIntent(text = '') {
+    return /(디스크립션|description|desc|첫\s*메시지|first\s*message|글로벌\s*노트|global\s*note|로어북|lorebook|세계관|설정집|역사|관계|세력|트리거|trigger|정규식|regex|변수|variable|상태창|status|backgroundHTML|html|css|시스템\s*프롬프트|지시문)/i.test(safeString(text));
+}
+
+function isKeroAssetFocusedRequest(text = '') {
+    const source = safeString(text);
+    if (!source.trim() || !hasKeroAssetIntent(source)) return false;
+    const explicitAssetFocus = /(에셋|이미지|스탠딩|스텐딩|standing|감정|표정|상체|흰\s*배경|white\s*background|profile|portrait|emotion|sprite)/i.test(source);
+    const hasNonAssetBuild = hasKeroNonAssetBuildIntent(source);
+    if (!hasNonAssetBuild) return true;
+    return explicitAssetFocus && /(에셋|이미지)\s*(?:만|위주|먼저|부터)|(?:프로필|스탠딩|스텐딩|감정|표정|상체|흰\s*배경)[^\n]{0,40}(?:에셋|이미지)/i.test(source);
 }
 
 function isKeroCompressionRequested(text = '') {
@@ -47616,6 +47699,7 @@ function isKeroGatewayFullCharacterBuildRequest(text = '') {
     const source = safeString(text);
     if (!source.trim()) return false;
     if (isKeroExplicitSingleCharacterFieldEditRequest(source)) return false;
+    if (isKeroAssetFocusedRequest(source)) return false;
     if (hasKeroFullProjectBuildSignal(source)) return true;
     const targetSignal = /(캐릭터|봇|bot|시뮬봇|sim|이\s*봇|this\s*bot)/i.test(source);
     const workSignal = /(만들|제작|생성|변환|바꾸|업그레이드|리메이크|전체|제대로|알아서|최대한|완성|풀\s*빌드|풀\s*세팅|풀세팅|완성본|패키지)/i.test(source);
@@ -49822,9 +49906,6 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
         try {
             throwIfSvbAborted(effectiveOptions.signal, '메인 모델 호출이 시작 전에 중단되었습니다.');
             let responseText;
-            const attemptText = attempt > 1
-                ? `메인 모델 호출 재시도 중 (${attempt}/${retries})...`
-                : '메인 모델 응답을 기다리는 중...';
             attemptOptions = { ...effectiveOptions };
             attemptProgressOptions = normalizeKeroProgressOptions(attemptOptions);
             if (!attemptProgressOptions.jobId
@@ -49834,6 +49915,10 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
                 attemptProgressOptions = { detached: true, allowCurrentJobFallback: false };
             }
             attemptOptions.progressOptions = attemptProgressOptions;
+            attemptOptions.activityDetail = inferKeroVisibleActivityDetail(userText, attemptOptions);
+            const attemptText = attempt > 1
+                ? `메인 모델 재시도 ${attempt}/${retries} · ${attemptOptions.activityDetail}`
+                : `메인 모델 작업 중 · ${attemptOptions.activityDetail}`;
             const previousHardTimeout = attemptOptions.onHardTimeout;
             attemptAbortLink = createSvbAbortLink(attemptOptions.signal || null, `메인 모델 호출 ${attempt}`);
             if (attemptAbortLink.signal) attemptOptions.signal = attemptAbortLink.signal;
@@ -57854,7 +57939,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.75",
+        name: "SuperVibeBot v1.5.76",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -57863,7 +57948,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.75 Settings",
+        "SuperVibeBot v1.5.76 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -57906,7 +57991,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.75");
+        Logger.info("SuperVibeBot v1.5.76");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

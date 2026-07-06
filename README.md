@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.75`
+Latest version: `1.5.76`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.76
+
+- Replaces generic main-model wait heartbeats with visible task/activity/status details during long waits.
+- Prevents asset-focused requests such as character standing/emotion image batches from being misrouted into lorebook `bulk_create` jobs.
+- Passes cancellation signals into Kero image asset generation and clarifies stop/cancel controls in the workstream panel.
 
 ## 1.5.75
 
