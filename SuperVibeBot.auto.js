@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.77
-//@version 1.5.77
+//@display-name 🐸 SuperVibeBot v1.5.78
+//@version 1.5.78
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.77는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.78는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,6 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.78 Release Notes
+ * - v1.5.78: shows the real active main LLM endpoint in work-mode heartbeats, so API Hub/NanoGPT no longer appears as the stale Google Gemini default
+ * - v1.5.78: uses API Hub provider/model settings for main-model call events instead of the separate Google model selector state
+ * - v1.5.78: keeps image generation provider labels separate from the LLM prompt-generation model label to reduce routing confusion
+ *
  * SuperVibeBot v1.5.77 Release Notes
  * - v1.5.77: clears approval-required mission steps when proposal actions are approved or rejected so mobile approval cannot leave a stale blocked action
  * - v1.5.77: reconciles orphaned approval-required steps when the proposal panel has no matching pending proposal after mobile/webview reloads
@@ -13576,7 +13581,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.77',
+            '//@version 1.5.78',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -16031,9 +16036,35 @@ function inferKeroVisibleActivityDetail(userText = '', options = {}) {
     return [targetLabel, task, nextStep, requestHint].filter(Boolean).join(' · ');
 }
 
+function getKeroMainModelActivityLabel(options = {}) {
+    const apiType = safeString(options.apiType || currentApiType || '').trim() || 'google-ai';
+    if (apiType === 'api-hub') {
+        const settings = normalizeApiHubSettings(options.apiHubSettings || apiHubSettings || {});
+        const providerLabel = getApiHubProviderLabel(settings.provider);
+        const model = safeString(settings.model).trim() || '모델 미지정';
+        return `${providerLabel}/${model}`;
+    }
+    if (apiType === 'github-copilot') {
+        const model = currentCopilotModel === 'custom'
+            ? safeString(customCopilotModel).trim()
+            : safeString(currentCopilotModel).trim();
+        return `GitHub Copilot/${model || '모델 미지정'}`;
+    }
+    if (apiType === 'vertex-ai-direct') {
+        const model = safeString(vertexSettings?.model || currentModel).trim();
+        return `Vertex AI/${model || '모델 미지정'}`;
+    }
+    if (apiType === 'ollama-direct') {
+        const model = safeString(ollamaSettings?.model || currentModel).trim();
+        return `Ollama/${model || '모델 미지정'}`;
+    }
+    const model = safeString(currentModel).trim();
+    return `Google AI/${model || '모델 미지정'}`;
+}
+
 function buildKeroHeartbeatStatus(label = '', elapsedSec = 0, tick = 0, options = {}) {
     const activity = safeString(options.activityDetail || inferKeroVisibleActivityDetail(options.userRequest || '', options)).trim();
-    const provider = `${currentApiType || 'provider'}${currentModel ? `/${currentModel}` : ''}`;
+    const provider = getKeroMainModelActivityLabel(options);
     const phases = [
         '모델 응답 대기',
         '응답 수신 후 액션 JSON 검증 예정',
@@ -44620,7 +44651,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.77 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.78 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -50087,7 +50118,7 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
                 Logger.warn(`Kero model call aborted after hard timeout: ${detail}`);
             };
             throwIfSvbAborted(attemptOptions.signal, '메인 모델 호출이 중단되었습니다.');
-            const modelActivityLabel = `${currentApiType || 'provider'}${currentModel ? `/${currentModel}` : ''}`;
+            const modelActivityLabel = getKeroMainModelActivityLabel(attemptOptions);
             addKeroWorkstreamEvent(
                 '메인 모델 호출',
                 `${modelActivityLabel} · ${attempt}/${retries} · ${limitSvbMiddleText(userText, 240, 'main_user_request')}`,
@@ -58096,7 +58127,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.77",
+        name: "SuperVibeBot v1.5.78",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58105,7 +58136,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.77 Settings",
+        "SuperVibeBot v1.5.78 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58148,7 +58179,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.77");
+        Logger.info("SuperVibeBot v1.5.78");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();

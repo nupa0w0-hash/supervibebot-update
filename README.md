@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.77`
+Latest version: `1.5.78`
 
 Update URL:
 
@@ -17,6 +17,12 @@ Files:
 - `SuperVibeBot.auto.js`: same build, install alias
 
 This repository is dedicated to SuperVibeBot only. Other plugins should use their own update repositories to avoid release and cache conflicts.
+
+## 1.5.78
+
+- Shows the real active main LLM endpoint in work-mode heartbeats, so API Hub/NanoGPT no longer appears as the stale Google Gemini default.
+- Uses API Hub provider/model settings for main-model call events instead of the separate Google model selector state.
+- Keeps image generation provider labels separate from the LLM prompt-generation model label to reduce routing confusion.
 
 ## 1.5.77
 
