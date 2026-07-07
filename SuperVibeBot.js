@@ -1,19 +1,19 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.88
-//@version 1.5.88
+//@display-name 🐸 SuperVibeBot v1.5.89
+//@version 1.5.89
 //@api 3.0
-//@update-url https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
+//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.88은 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.89은 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
-const SUPER_VIBE_BOT_UPDATE_URL = 'https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js';
+const SUPER_VIBE_BOT_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js';
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
 const PERSONA_APPLY_DISABLED = true;
@@ -164,6 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.89 Release Notes
+ * - v1.5.89: restores the RisuAI auto-update URL to the pre-v1.5.85 raw.githubusercontent.com main SuperVibeBot.js channel
+ * - v1.5.89: updates channel verification back to the raw main URL so Risu update checks avoid GitHub release redirects
+ *
  * SuperVibeBot v1.5.88 Release Notes
  * - v1.5.88: restores Kero's default work loop to direct Risu task execution instead of automatic sub-agent management
  * - v1.5.88: uses helper/sub-model review only when the user explicitly asks for sub-agents, GLM, KIMI, or assistant agents
@@ -13634,7 +13638,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.88',
+            '//@version 1.5.89',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -45382,7 +45386,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.88 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.89 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -59022,7 +59026,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.88",
+        name: "SuperVibeBot v1.5.89",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -59031,7 +59035,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.88 Settings",
+        "SuperVibeBot v1.5.89 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -59074,7 +59078,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.88");
+        Logger.info("SuperVibeBot v1.5.89");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
