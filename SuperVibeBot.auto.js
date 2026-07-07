@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.85
-//@version 1.5.85
+//@display-name 🐸 SuperVibeBot v1.5.86
+//@version 1.5.86
 //@api 3.0
 //@update-url https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.85는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.86은 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,6 +164,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.86 Release Notes
+ * - v1.5.86: removes the runtime stop/cancel quick controls from the chat header
+ * - v1.5.86: leaves only one visible "중지" control in the Kero work-in-progress bubble and workstream controls
+ *
  * SuperVibeBot v1.5.85 Release Notes
  * - v1.5.85: moves the auto-update channel to the GitHub releases latest asset after the raw refs/heads/main URL served stale 1.5.83 content
  * - v1.5.85: verifies the release/latest download URL with Range requests so RisuAI update checks can read fresh metadata
@@ -13610,7 +13614,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.85',
+            '//@version 1.5.86',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -16128,12 +16132,12 @@ function buildKeroHeartbeatStatus(label = '', elapsedSec = 0, tick = 0, options 
         ? [
             '메인 모델이 이미지 프롬프트 세트를 작성 중',
             '아직 이미지 API 호출 전',
-            '중지/취소 버튼 사용 가능'
+            '중지 버튼 사용 가능'
         ]
         : [
             '메인 모델 응답 대기',
             '응답 수신 뒤 실행 단계 정리 예정',
-            '중지/취소 버튼 사용 가능'
+            '중지 버튼 사용 가능'
         ];
     const phase = phases[Math.max(0, tick - 1) % phases.length];
     const base = activity || safeString(label || '메인 모델 작업').trim() || '메인 모델 작업';
@@ -19556,8 +19560,6 @@ function buildMainCSS() {
         #${CONTAINER_ID} .chat-subtitle { font-size: 12px; color: #6b7280; }
         #${CONTAINER_ID} .kero-tools-iconbar { display: flex; gap: 6px; margin-left: auto; }
         #${CONTAINER_ID} .kero-icon-btn { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--rt-border); background: var(--rt-bg-primary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; }
-        #${CONTAINER_ID} .kero-runtime-quick-control { width: auto; min-width: 42px; padding: 0 8px; font-size: 11px; font-weight: 700; border-color: #f59e0b; color: var(--rt-text-primary); }
-        #${CONTAINER_ID} #kero-runtime-cancel-quick-btn { border-color: #ef4444; color: #b91c1c; }
         #${CONTAINER_ID} .kero-mode-btn { width: auto; min-width: 46px; padding: 0 8px; font-size: 12px; font-weight: 700; color: var(--rt-text-primary); }
         #${CONTAINER_ID} .kero-icon-btn.active { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
         #${CONTAINER_ID} .kero-tools-drawer { position: absolute; left: 0; right: 0; bottom: 0; max-height: 70%; display: flex; flex-direction: column; background: var(--rt-bg-primary); border-top: 1px solid var(--rt-border); box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.18); border-radius: 16px 16px 0 0; padding: 10px; z-index: 5; }
@@ -19636,7 +19638,6 @@ function buildMainCSS() {
         #${CONTAINER_ID} .kero-loading-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
         #${CONTAINER_ID} .kero-loading-control-btn { min-height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--rt-border); background: var(--rt-bg-primary); color: var(--rt-text-primary); font-size: 12px; font-weight: 700; cursor: pointer; }
         #${CONTAINER_ID} .kero-loading-stop-btn { border-color: #f59e0b; }
-        #${CONTAINER_ID} .kero-loading-cancel-btn { border-color: #ef4444; color: #b91c1c; }
         #${CONTAINER_ID} .kero-agent-trace-step { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #4b5563; }
         #${CONTAINER_ID} .kero-agent-trace-step::before { content: ''; width: 7px; height: 7px; border-radius: 999px; background: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
         #${CONTAINER_ID} .kero-message-artifacts { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -20434,7 +20435,6 @@ function buildMainCSS() {
             #${CONTAINER_ID} .kero-tools-iconbar{gap:4px;margin-left:4px;max-width:52vw;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scrollbar-width:none}
             #${CONTAINER_ID} .kero-tools-iconbar::-webkit-scrollbar{display:none}
             #${CONTAINER_ID} .kero-icon-btn{width:28px;height:28px;border-radius:9px;font-size:13px;flex:0 0 28px}
-            #${CONTAINER_ID} .kero-runtime-quick-control{width:auto;min-width:40px;padding:0 7px;font-size:11px;flex:0 0 auto}
             #${CONTAINER_ID} .kero-mode-btn{min-width:40px;padding:0 6px;font-size:11px;flex-basis:auto}
             #${CONTAINER_ID} .chat-history{min-height:0;padding:8px;gap:8px}
             #${CONTAINER_ID} .chat-bubble{max-width:92%;padding:8px 10px;font-size:12px;line-height:1.45}
@@ -24850,8 +24850,7 @@ async function createTransUI() {
             el("button", { class: "btn-secondary", id: "kero-runtime-diagnostics-btn", text: "진단 실행" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-recover-btn", text: "대기 복구 확인" }),
             el("button", { class: "btn-secondary", id: "kero-runtime-retry-btn", text: "재시도" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지", title: "현재 모델 호출/실행만 중단하고 이미 완료된 저장은 유지합니다." }),
-            el("button", { class: "btn-danger", id: "kero-runtime-cancel-btn", text: "취소", title: "현재 미션과 남은 대기 작업을 취소합니다. 이미 완료된 저장은 되돌리지 않습니다." })
+            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지", title: "현재 모델 호출/실행을 중단하고 이미 완료된 저장은 유지합니다." })
         ]),
         el("div", { class: "kero-runtime-diagnostics-list", id: "kero-runtime-diagnostics-list" }, [
             el("div", { class: "kero-empty", text: "작업이 멈추거나 오류가 의심되면 진단을 실행하세요." })
@@ -24869,8 +24868,6 @@ async function createTransUI() {
         el("button", { class: normalizeKeroMode(currentKeroMode) === "daily" ? "kero-icon-btn kero-mode-btn" : "kero-icon-btn kero-mode-btn active", id: "kero-work-mode-toggle", title: getKeroModeMeta(currentKeroMode).title, "data-kero-mode": normalizeKeroMode(currentKeroMode), text: getKeroModeMeta(currentKeroMode).label }),
         el("button", { class: keroRequireActionConfirmation ? "kero-icon-btn kero-mode-btn active" : "kero-icon-btn kero-mode-btn", id: "kero-action-confirm-toggle", title: keroRequireActionConfirmation ? "수정 전 확인 ON: 저장 액션을 제안함에 넣고 승인 후 실행" : "자동 실행 ON: 저장 액션을 바로 실행", text: keroRequireActionConfirmation ? "확인" : "자동" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-workstream", title: "🧭 작업 흐름", text: "🧭" }),
-        el("button", { class: "kero-icon-btn kero-runtime-quick-control", id: "kero-runtime-stop-quick-btn", title: "현재 모델 호출/실행 중지", text: "중지", disabled: true }),
-        el("button", { class: "kero-icon-btn kero-runtime-quick-control", id: "kero-runtime-cancel-quick-btn", title: "현재 미션과 남은 작업 취소", text: "취소", disabled: true }),
         el("button", { class: "kero-icon-btn", id: "kero-open-proposals", title: "제안 작업", text: "✓" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-scope", title: "🎯 범위 설정", text: "🎯" }),
         el("button", { class: "kero-icon-btn", id: "kero-open-memory", title: "🧠 메모리", text: "🧠" }),
@@ -34657,15 +34654,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         }
         const runtimeActive = keroChatTaskRunning || keroProcessingQueuedInput || !!currentKeroRequestJobId;
-        const missionStatus = safeString(currentKeroMission?.status || '');
-        const missionOpen = Boolean(currentKeroMission && !['done', 'cancelled'].includes(missionStatus));
-        ['kero-runtime-stop-btn', 'kero-runtime-stop-quick-btn', 'kero-runtime-stop-loading-btn'].forEach((id) => {
+        ['kero-runtime-stop-btn', 'kero-runtime-stop-loading-btn'].forEach((id) => {
             const btn = document.getElementById(id);
             if (btn) btn.disabled = !runtimeActive;
-        });
-        ['kero-runtime-cancel-btn', 'kero-runtime-cancel-quick-btn', 'kero-runtime-cancel-loading-btn'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (btn) btn.disabled = !(runtimeActive || missionOpen);
         });
         renderKeroQueuePanel(currentKeroMission?.id || '');
         if (!list) return true;
@@ -34805,7 +34796,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             }
         });
 
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle):not(.kero-runtime-quick-control)').forEach(btn => {
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => {
             btn.classList.toggle('active', btn.id === `kero-open-${which}`);
         });
 
@@ -34822,7 +34813,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     function closeKeroToolsDrawer() {
         const drawer = document.getElementById('kero-tools-drawer');
         if (drawer) drawer.style.display = 'none';
-        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle):not(.kero-runtime-quick-control)').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.kero-tools-iconbar .kero-icon-btn:not(#kero-work-mode-toggle):not(#kero-action-confirm-toggle)').forEach(btn => btn.classList.remove('active'));
     }
 
     function updateKeroActionConfirmToggle() {
@@ -35082,9 +35073,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         }, 'kero-runtime-retry-btn');
 
         bindKeroRuntimeControlButton(document.getElementById('kero-runtime-stop-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-btn');
-        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-stop-quick-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-quick-btn');
-        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-cancel-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-btn');
-        bindKeroRuntimeControlButton(document.getElementById('kero-runtime-cancel-quick-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-quick-btn');
 
         const scopeResetBtn = document.getElementById('kero-scope-reset-btn');
         bindSafeClick(scopeResetBtn, async () => {
@@ -35361,8 +35349,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const loadingMode = normalizeKeroMode(options.mode || currentKeroMode);
         const executionControls = isKeroExecutionMode(loadingMode)
             ? [el('div', { class: 'kero-loading-controls' }, [
-                el('button', { class: 'kero-loading-control-btn kero-loading-stop-btn', id: 'kero-runtime-stop-loading-btn', text: '중지', title: '현재 모델 호출/실행만 중단합니다.' }),
-                el('button', { class: 'kero-loading-control-btn kero-loading-cancel-btn', id: 'kero-runtime-cancel-loading-btn', text: '취소', title: '현재 미션과 남은 대기 작업을 취소합니다.' })
+                el('button', { class: 'kero-loading-control-btn kero-loading-stop-btn', id: 'kero-runtime-stop-loading-btn', text: '중지', title: '현재 모델 호출/실행을 중단합니다.' })
             ])]
             : [];
         const traceContent = loadingMode === 'daily'
@@ -35389,7 +35376,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
 
         historyDiv.appendChild(loadingDiv);
         bindKeroRuntimeControlButton(loadingDiv.querySelector('#kero-runtime-stop-loading-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-loading-btn');
-        bindKeroRuntimeControlButton(loadingDiv.querySelector('#kero-runtime-cancel-loading-btn'), handleKeroRuntimeCancelButtonClick, 'kero-runtime-cancel-loading-btn');
         historyDiv.scrollTop = historyDiv.scrollHeight;
     }
 
@@ -45362,7 +45348,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.85 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.86 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -59002,7 +58988,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.85",
+        name: "SuperVibeBot v1.5.86",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -59011,7 +58997,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.85 Settings",
+        "SuperVibeBot v1.5.86 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -59054,7 +59040,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.85");
+        Logger.info("SuperVibeBot v1.5.86");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
