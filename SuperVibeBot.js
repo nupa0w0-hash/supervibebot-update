@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.86
-//@version 1.5.86
+//@display-name 🐸 SuperVibeBot v1.5.87
+//@version 1.5.87
 //@api 3.0
 //@update-url https://github.com/nupa0w0-hash/supervibebot-update/releases/latest/download/SuperVibeBot.update.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.86은 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.87은 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -164,6 +164,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.87 Release Notes
+ * - v1.5.87: stops promoting generic NAI sampler/scheduler fields into Wellspring native/workflow payloads
+ * - v1.5.87: retries Wellspring generation once without sampler/scheduler when the selected model rejects the sampler
+ * - v1.5.87: restores Kero work execution to model-first mode by default and disables local action fabrication/coverage unless explicitly invoked for recovery
+ *
  * SuperVibeBot v1.5.86 Release Notes
  * - v1.5.86: removes the runtime stop/cancel quick controls from the chat header
  * - v1.5.86: leaves only one visible "중지" control in the Kero work-in-progress bubble and workstream controls
@@ -3472,6 +3477,7 @@ const SVB_STUDIO_APPLY_REGEX_PREFIX = '[SuperVibeStudio Regex]';
 const SVB_STUDIO_APPLY_LUA_TRIGGER_COMMENT = '[SuperVibeStudio Lua Trigger]';
 const KERO_MODE_KEY = "Super_Vibe_Bot_kero_mode";
 const KERO_REQUIRE_ACTION_CONFIRMATION_KEY = "Super_Vibe_Bot_kero_require_action_confirmation_v1";
+const KERO_MODEL_FIRST_EXECUTION_DEFAULT = true;
 const WORK_TARGET_MODE_KEY = "Super_Vibe_Bot_work_target_mode_v1";
 const WORK_TARGET_MODULE_ID_KEY = "Super_Vibe_Bot_work_target_module_id_v1";
 const WORK_TARGET_PLUGIN_KEY = "Super_Vibe_Bot_work_target_plugin_key_v1";
@@ -3479,6 +3485,13 @@ const WORK_TARGET_MIXED_ENABLED_KEY = "Super_Vibe_Bot_work_target_mixed_enabled_
 const WORK_TARGET_BACKUP_KEY = "Super_Vibe_Bot_work_target_backups_v1";
 const WORK_TARGET_FAILURE_ARTIFACT_KEY = "Super_Vibe_Bot_work_target_failure_artifacts_v1";
 const WORK_TARGET_BACKUP_LIMIT = 20;
+function shouldAllowKeroLocalActionFallback(options = {}) {
+    if (options.gatewayRecovery === true) return true;
+    if (options.allowKeroLocalActionFallback === true || options.allowKeroLocalFallback === true) return true;
+    if (options.modelFirstExecution === false) return true;
+    return !KERO_MODEL_FIRST_EXECUTION_DEFAULT;
+}
+
 const WORK_TARGET_MODES = Object.freeze({
     character: { key: "character", icon: "👤", label: "캐릭터", emptyLabel: "자동 감지 캐릭터" },
     module: { key: "module", icon: "🧩", label: "모듈", emptyLabel: "새 모듈" },
@@ -13614,7 +13627,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.86',
+            '//@version 1.5.87',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -22180,8 +22193,8 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
     merged.wellspringCharacterId = safeString(merged.wellspringCharacterId || merged.characterId || merged.projectId || merged.remoteCharacterId || defaults.wellspringCharacterId || defaults.characterId || defaults.projectId || defaults.remoteCharacterId).trim();
     merged.wellspringMode = svbNormalizeWellspringMode(merged.wellspringMode || merged.wellspringApiMode || merged.apiMode || defaults.wellspringMode || defaults.wellspringApiMode || "auto");
     merged.wellspringQualityPrompt = safeString(merged.wellspringQualityPrompt || merged.qualityPrompt || defaults.wellspringQualityPrompt || defaults.qualityPrompt).trim();
-    merged.wellspringSampler = safeString(merged.wellspringSampler || merged.samplerName || defaults.wellspringSampler || defaults.samplerName).trim();
-    merged.wellspringScheduler = safeString(merged.wellspringScheduler || merged.scheduler || defaults.wellspringScheduler || defaults.scheduler).trim();
+    merged.wellspringSampler = safeString(merged.wellspringSampler || defaults.wellspringSampler).trim();
+    merged.wellspringScheduler = safeString(merged.wellspringScheduler || defaults.wellspringScheduler).trim();
     merged.wellspringCfg = svbOptionalNumberAtLeast(merged.wellspringCfg ?? merged.cfg ?? defaults.wellspringCfg ?? defaults.cfg, 1, "");
     merged.wellspringVariantIds = svbNormalizeWellspringIdList(merged.wellspringVariantIds || merged.variantIds || merged.variant_ids || defaults.wellspringVariantIds || defaults.variantIds || defaults.variant_ids);
     merged.wellspringPerVariantBatch = Math.max(1, Math.min(20, Number(merged.wellspringPerVariantBatch || merged.perVariantBatch || merged.per_variant_batch || defaults.wellspringPerVariantBatch || defaults.perVariantBatch || defaults.per_variant_batch) || 1));
@@ -22383,8 +22396,10 @@ function buildImageProfileForGenerationPreset(profile, preset) {
         method: normalizedPreset.method,
         path: normalizedPreset.path,
         headersTemplate: normalizedPreset.headersTemplate,
-        sampler: (isWellspringRoute ? normalizedPreset.wellspringSampler : "") || normalizedPreset.sampler,
-        scheduler: (isWellspringRoute ? normalizedPreset.wellspringScheduler : "") || normalizedPreset.scheduler,
+        sampler: isWellspringRoute ? "" : normalizedPreset.sampler,
+        scheduler: isWellspringRoute ? "" : normalizedPreset.scheduler,
+        wellspringSampler: isWellspringRoute ? normalizedPreset.wellspringSampler : "",
+        wellspringScheduler: isWellspringRoute ? normalizedPreset.wellspringScheduler : "",
         scale: isWellspringRoute && wellspringCfg !== undefined ? wellspringCfg : normalizedPreset.scale,
         cfgRescale: normalizedPreset.cfgRescale,
         ucPreset: normalizedPreset.ucPreset,
@@ -22627,7 +22642,16 @@ async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", t
         throw new Error(`${label} JSON 응답 파싱 실패: ${text.slice(0, 400)}`);
     }
     if (!raw.ok) {
-        throw new Error(`${label} 오류 (${raw.status}): ${data?.error?.message || data?.error || data?.message || text}`);
+        const detail = data?.error?.message || data?.error || data?.message || text;
+        if (options?.body?.sampler && svbIsWellspringSamplerRejectedError(detail)) {
+            const retryOptions = {
+                ...options,
+                body: svbStripWellspringSamplerPayload(options.body)
+            };
+            Logger.warn("Wellspring sampler rejected; retrying without sampler/scheduler:", detail);
+            return await svbWellspringFetchJson(url, retryOptions, `${label} sampler 제외 재시도`, timeoutMs);
+        }
+        throw new Error(`${label} 오류 (${raw.status}): ${detail}`);
     }
     return data;
 }
@@ -23023,8 +23047,8 @@ function svbHasWellspringNativeGenerationHints(options = {}) {
         || safeString(options.wellspringModelId || options.model_id || options.modelId).trim()
         || safeString(options.wellspringPayloadJson || options.remotePayloadJson).trim()
         || safeString(options.wellspringQualityPrompt || options.qualityPrompt).trim()
-        || safeString(options.wellspringSampler || options.sampler).trim()
-        || safeString(options.wellspringScheduler || options.scheduler).trim()
+        || safeString(options.wellspringSampler).trim()
+        || safeString(options.wellspringScheduler).trim()
         || svbNormalizeWellspringLoras(options.wellspringLoras || options.loras).length
     );
 }
@@ -23073,8 +23097,8 @@ function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps
         model_id: svbPickFirstString(options.wellspringModelId, options.model_id, profile.model),
         negative_prompt: negative || undefined,
         quality_prompt: svbPickFirstString(options.wellspringQualityPrompt, options.qualityPrompt),
-        sampler: svbPickFirstString(options.wellspringSampler, options.sampler, profile.sampler),
-        scheduler: svbPickFirstString(options.wellspringScheduler, options.scheduler, profile.scheduler),
+        sampler: svbPickFirstString(options.wellspringSampler, profile.wellspringSampler),
+        scheduler: svbPickFirstString(options.wellspringScheduler, profile.wellspringScheduler),
         steps,
         cfg: svbOptionalNumberAtLeast(options.wellspringCfg ?? options.cfg ?? profile.scale, 1, undefined, 30),
         width: ratio.width,
@@ -23098,6 +23122,19 @@ function svbBuildWellspringNativePayload(profile, prompt, negative, ratio, steps
     svbMergeImagePayloadExtra(payload, svbParseImagePayloadExtraJson(options.wellspringPayloadJson, "Wellspring 추가 payload"));
     svbSanitizeWellspringNativeNumericPayload(payload, { width: ratio.width, height: ratio.height, steps });
     return payload;
+}
+
+function svbIsWellspringSamplerRejectedError(error) {
+    const text = safeString(error?.message || error);
+    return /sampler[\s\S]{0,160}(not allowed|unsupported|invalid|forbidden|허용|지원|금지)/i.test(text)
+        || /(not allowed|unsupported|invalid|forbidden)[\s\S]{0,160}sampler/i.test(text);
+}
+
+function svbStripWellspringSamplerPayload(payload = {}) {
+    const next = { ...(payload || {}) };
+    delete next.sampler;
+    delete next.scheduler;
+    return next;
 }
 
 function svbGetWellspringApiHeaders(profile, accept = "application/json") {
@@ -23656,8 +23693,8 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
         wellspringPerVariantBatch: options.wellspringPerVariantBatch || options.perVariantBatch || options.per_variant_batch,
         wellspringQualityPrompt: safeString(options.wellspringQualityPrompt || options.qualityPrompt).trim(),
         wellspringCfg: options.wellspringCfg ?? options.cfg,
-        wellspringSampler: safeString(options.wellspringSampler || options.sampler).trim(),
-        wellspringScheduler: safeString(options.wellspringScheduler || options.scheduler).trim(),
+        wellspringSampler: safeString(options.wellspringSampler).trim(),
+        wellspringScheduler: safeString(options.wellspringScheduler).trim(),
         wellspringLoras: svbNormalizeWellspringLoras(options.wellspringLoras || options.loras),
         wellspringPayloadJson: safeString(options.wellspringPayloadJson)
     };
@@ -32771,8 +32808,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 wellspringPerVariantBatch: svbOptionalNumber(source.wellspringPerVariantBatch ?? source.perVariantBatch ?? source.per_variant_batch ?? payloadObj.wellspringPerVariantBatch ?? payloadObj.perVariantBatch ?? payloadObj.per_variant_batch ?? action.wellspringPerVariantBatch ?? action.perVariantBatch ?? action.per_variant_batch, undefined),
                 wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt || payloadObj.wellspringQualityPrompt || payloadObj.qualityPrompt || payloadObj.quality_prompt || action.wellspringQualityPrompt || action.qualityPrompt || action.quality_prompt).trim(),
                 wellspringCfg: svbOptionalNumberAtLeast(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, 1, undefined, 30),
-                wellspringSampler: safeString(source.wellspringSampler || source.sampler || payloadObj.wellspringSampler || payloadObj.sampler || action.wellspringSampler || action.sampler).trim(),
-                wellspringScheduler: safeString(source.wellspringScheduler || source.scheduler || payloadObj.wellspringScheduler || payloadObj.scheduler || action.wellspringScheduler || action.scheduler).trim(),
+                wellspringSampler: safeString(source.wellspringSampler || payloadObj.wellspringSampler || action.wellspringSampler).trim(),
+                wellspringScheduler: safeString(source.wellspringScheduler || payloadObj.wellspringScheduler || action.wellspringScheduler).trim(),
                 wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || payloadObj.wellspringLoras || payloadObj.loras || action.wellspringLoras || action.loras),
                 wellspringPayloadJson: stringifyPayloadJson(payloadJsonValue)
             });
@@ -36388,6 +36425,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             Logger.warn('Kero queue UI update failed after lock:', error?.message || error);
         }
         const isWorkMode = taskAllowsMutation;
+        const allowLocalActionFallback = shouldAllowKeroLocalActionFallback(options);
         let backgroundJobId = null;
         try {
             backgroundJobId = isWorkMode ? createKeroBackgroundJob('케로 요청 처리', visibleUserInput.slice(0, 120)) : null;
@@ -36953,7 +36991,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const underfilledFullBuildActions = delegatedCharacterExecution
                 && parsed.actions?.length > 0
                 && hasKeroUnderfilledFullBuildActions(parsed.actions, taskRequestText);
-            if (isWorkMode && shouldRunMutationFromRequest && (noExecutableActions || modelAskedInsteadOfActing || underfilledFullBuildActions)) {
+            if (allowLocalActionFallback && isWorkMode && shouldRunMutationFromRequest && (noExecutableActions || modelAskedInsteadOfActing || underfilledFullBuildActions)) {
                 const fallbackOptions = {
                     userRequest: taskRequestText,
                     workTargetMode: taskWorkTargetMode,
@@ -36989,7 +37027,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     }
                 }
             }
-            const coverage = isWorkMode
+            const coverage = isWorkMode && allowLocalActionFallback
                 ? augmentKeroActionsForCoverage(modelUserInput, parsed.actions, taskWorkTargetMode, parsed.text)
                 : { actions: parsed.actions || [], added: [] };
             parsed.actions = coverage.actions;
@@ -37001,7 +37039,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     taskProgressOptions
                 );
             }
-            if (isWorkMode && isWorkTargetActionMode && parsed.actions?.length && shouldRunMutationFromRequest && !allowMixedWorkTargets) {
+            if (allowLocalActionFallback && isWorkMode && isWorkTargetActionMode && parsed.actions?.length && shouldRunMutationFromRequest && !allowMixedWorkTargets) {
                 const filterPreview = getKeroWorkTargetActionFilterResult(parsed.actions, taskWorkTargetMode, { allowMixedWorkTargets });
                 if (!filterPreview.kept.length && filterPreview.blocked.length) {
                     const blockedActionDigest = JSON.stringify(filterPreview.blocked.slice(0, 8), null, 2);
@@ -45348,7 +45386,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.86 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.87 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -58988,7 +59026,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.86",
+        name: "SuperVibeBot v1.5.87",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58997,7 +59035,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.86 Settings",
+        "SuperVibeBot v1.5.87 Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -59040,7 +59078,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.86");
+        Logger.info("SuperVibeBot v1.5.87");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
