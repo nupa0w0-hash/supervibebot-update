@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.91
-//@version 1.5.91
+//@display-name 🐸 SuperVibeBot v1.5.92
+//@version 1.5.92
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.91은 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.92는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.92 Release Notes
+ * - v1.5.92: parses Wellspring text/event-stream job status responses instead of treating SSE as invalid JSON
+ * - v1.5.92: keeps Wellspring /v1/images/nai/generate-image in the NAI-compatible active-preset route unless native/workflow mode is explicit
+ * - v1.5.92: lets Wellspring job/gallery image_url style fields be detected and registered as RisuAI assets
+ *
  * SuperVibeBot v1.5.91 Release Notes
  * - v1.5.91: absorbs the external RisuAI scripting skill into Kero's technical guide for CBS, Lua triggers, regex, modules, plugins, and schemas
  * - v1.5.91: corrects Kero's RisuAI execution pipeline knowledge, including input/start/output/display/request timing and persistent variable rules
@@ -13648,7 +13653,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.91',
+            '//@version 1.5.92',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13758,6 +13763,63 @@ function addSvbRuntimeRisuaiGuideSelfTest(checks) {
         problems.length === 0,
         'RisuAI scripting guide self test',
         problems.length ? `Problems: ${problems.join(' / ')}` : 'RisuAI skill rules are present in Kero guide and edit prompts',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
+function addSvbRuntimeWellspringImageSelfTest(checks) {
+    const result = readSvbRuntimeValue('Wellspring image route/SSE self test', () => {
+        const sampleSse = [
+            'event: update',
+            'data: {"id":"img-diagnostic","status":"generating","progress_step":12,"progress_total":26}',
+            '',
+            'event: complete',
+            'data: {"id":"img-diagnostic","status":"completed","image_url":"/images/diagnostic.png"}',
+            ''
+        ].join('\n');
+        const parsed = svbParseJsonOrEventStream(sampleSse, 'Wellspring diagnostic job 상태');
+        const jobs = svbExtractWellspringJobs(parsed);
+        const completed = jobs.find(job => /completed|succeeded|success|done/i.test(safeString(job.status)) && (job.image_url || job.imageUrl));
+        const profile = {
+            provider: 'wellspring-nai',
+            endpoint: WELLSPRING_IMAGE_API_ENDPOINT,
+            timeoutMs: 180000
+        };
+        return {
+            parsedSseEvent: parsed.__svbSseEvent === 'complete',
+            extractedCompletedJob: !!completed,
+            relativeImageCandidate: svbCollectImageCandidates(parsed).includes('/images/diagnostic.png'),
+            naiEndpointStaysNai: svbShouldUseWellspringNativeGeneration(profile, {
+                wellspringMode: 'auto',
+                wellspringPresetId: 'sdxl',
+                wellspringModelId: 'wai-ilxl-v140'
+            }) === false,
+            workflowIdsUseWorkflow: svbShouldUseWellspringNativeGeneration(profile, {
+                wellspringMode: 'auto',
+                wellspringWorkflowId: 'workflow-diagnostic',
+                wellspringCharacterId: 'character-diagnostic'
+            }) === true,
+            nativeModeUsesNative: svbShouldUseWellspringNativeGeneration(profile, {
+                wellspringMode: 'native'
+            }) === true
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, 'Wellspring image route/SSE self test', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.parsedSseEvent) problems.push('SSE complete event was not parsed');
+    if (!value.extractedCompletedJob) problems.push('completed job was not extracted from SSE events');
+    if (!value.relativeImageCandidate) problems.push('relative image_url candidate was not collected');
+    if (!value.naiEndpointStaysNai) problems.push('/nai/generate-image auto route was forced into native');
+    if (!value.workflowIdsUseWorkflow) problems.push('workflow/project ids did not select workflow generation');
+    if (!value.nativeModeUsesNative) problems.push('explicit native mode did not select native generation');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        'Wellspring image route/SSE self test',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'Wellspring active-preset NAI route, workflow routing, and SSE job parsing are coherent',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -15233,6 +15295,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeWorkTargetRecoverySelfTest(checks);
     addSvbRuntimePluginMetadataSelfTest(checks);
     addSvbRuntimeRisuaiGuideSelfTest(checks);
+    addSvbRuntimeWellspringImageSelfTest(checks);
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
@@ -22682,13 +22745,101 @@ async function svbImageFetchRaw(url, options = {}, label = "이미지 API", time
     }
 }
 
+function svbLooksLikeEventStreamText(text = "") {
+    return /(?:^|\n)\s*(?:event|data):/i.test(safeString(text));
+}
+
+function svbParseEventStreamJsonEvents(text = "") {
+    const source = safeString(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (!svbLooksLikeEventStreamText(source)) return [];
+    const events = [];
+    let eventName = "";
+    let dataLines = [];
+
+    const flush = () => {
+        if (!dataLines.length) {
+            eventName = "";
+            return;
+        }
+        const dataText = dataLines.join("\n").trim();
+        const currentEvent = eventName || "message";
+        eventName = "";
+        dataLines = [];
+        if (!dataText || dataText === "[DONE]") return;
+        let data;
+        try {
+            data = JSON.parse(dataText);
+        } catch (error) {
+            throw new Error(`SSE data JSON 파싱 실패: ${dataText.slice(0, 400)}`);
+        }
+        events.push({ event: currentEvent, data });
+    };
+
+    for (const rawLine of source.split("\n")) {
+        const line = rawLine.replace(/\s+$/, "");
+        if (!line.trim()) {
+            flush();
+            continue;
+        }
+        if (line.startsWith(":")) continue;
+        const eventMatch = line.match(/^event:\s*(.*)$/i);
+        if (eventMatch) {
+            if (dataLines.length) flush();
+            eventName = eventMatch[1].trim();
+            continue;
+        }
+        const dataMatch = line.match(/^data:\s?(.*)$/i);
+        if (dataMatch) {
+            dataLines.push(dataMatch[1]);
+        }
+    }
+    flush();
+    return events;
+}
+
+function svbParseJsonOrEventStream(text = "", label = "JSON 응답") {
+    const clean = safeString(text).trim();
+    if (!clean) return {};
+    try {
+        return JSON.parse(clean);
+    } catch (jsonError) {
+        if (!svbLooksLikeEventStreamText(clean)) {
+            throw new Error(`${label} JSON 응답 파싱 실패: ${clean.slice(0, 400)}`);
+        }
+        let events;
+        try {
+            events = svbParseEventStreamJsonEvents(clean);
+        } catch (sseError) {
+            throw new Error(`${label} SSE 응답 파싱 실패: ${sseError?.message || sseError}`);
+        }
+        const payloadEvents = events.filter(event => event && event.data !== undefined);
+        if (!payloadEvents.length) {
+            throw new Error(`${label} SSE 응답에 data JSON이 없습니다: ${clean.slice(0, 400)}`);
+        }
+        const last = payloadEvents[payloadEvents.length - 1];
+        const sseMeta = payloadEvents.map(event => ({
+            event: safeString(event.event || "message").trim() || "message",
+            data: event.data
+        }));
+        if (last.data && typeof last.data === "object" && !Array.isArray(last.data)) {
+            return {
+                ...last.data,
+                __svbSseEvent: last.event,
+                __svbSseEvents: sseMeta
+            };
+        }
+        return {
+            data: last.data,
+            __svbSseEvent: last.event,
+            __svbSseEvents: sseMeta
+        };
+    }
+}
+
 async function svbImageFetchJson(url, options = {}, label = "이미지 API", timeoutMs = 120000) {
     const raw = await svbImageFetchRaw(url, options, label, timeoutMs);
     const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
-    let data = null;
-    try { data = text ? JSON.parse(text) : {}; } catch (error) {
-        throw new Error(`${label} JSON 응답 파싱 실패: ${text.slice(0, 400)}`);
-    }
+    const data = svbParseJsonOrEventStream(text, label);
     if (!raw.ok) {
         throw new Error(`${label} 오류 (${raw.status}): ${data?.error?.message || data?.error || data?.message || text}`);
     }
@@ -22719,10 +22870,7 @@ async function svbWellspringFetchRaw(url, options = {}, label = "Wellspring", ti
 async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
     const raw = await svbWellspringFetchRaw(url, options, label, timeoutMs);
     const text = new TextDecoder().decode(raw.bytes || new Uint8Array());
-    let data = null;
-    try { data = text ? JSON.parse(text) : {}; } catch (error) {
-        throw new Error(`${label} JSON 응답 파싱 실패: ${text.slice(0, 400)}`);
-    }
+    const data = svbParseJsonOrEventStream(text, label);
     if (!raw.ok) {
         const detail = data?.error?.message || data?.error || data?.message || text;
         if (options?.body?.sampler && svbIsWellspringSamplerRejectedError(detail)) {
@@ -22957,9 +23105,17 @@ function svbCollectImageCandidates(data, out = [], depth = 0) {
         return out;
     }
     if (typeof data !== "object") return out;
-    const priority = ["image", "img", "src", "url", "data", "base64", "b64", "output", "result", "images", "artifacts"];
+    const priority = [
+        "image", "image_url", "imageUrl", "img", "src", "url",
+        "output_url", "outputUrl", "asset_url", "assetUrl", "file_url", "fileUrl",
+        "data", "base64", "b64", "output", "result", "images", "artifacts"
+    ];
+    const imageUrlKeys = new Set(["image", "image_url", "imageUrl", "img", "src", "url", "output_url", "outputUrl", "asset_url", "assetUrl", "file_url", "fileUrl"]);
     for (const key of priority) {
-        if (Object.prototype.hasOwnProperty.call(data, key)) svbCollectImageCandidates(data[key], out, depth + 1);
+        if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+        const value = data[key];
+        if (imageUrlKeys.has(key) && typeof value === "string" && value.trim()) out.push(value.trim());
+        else svbCollectImageCandidates(value, out, depth + 1);
     }
     for (const [key, value] of Object.entries(data)) {
         if (!priority.includes(key)) svbCollectImageCandidates(value, out, depth + 1);
@@ -22974,6 +23130,15 @@ async function svbImageValueToResult(value, profile) {
     if (/^https?:\/\//i.test(text)) {
         const raw = await svbImageFetchRaw(text, { method: "GET" }, `${profile.name} image-url`, profile.timeoutMs);
         if (!raw.ok) throw new Error(`이미지 URL 가져오기 실패 (${raw.status})`);
+        return svbBytesToImageResult(raw.bytes);
+    }
+    if (isWellspringImageProvider(profile?.provider) && (/^\//.test(text) || /^(?:images?|v1\/images)\//i.test(text))) {
+        const imageUrl = svbResolveWellspringImageUrl(profile, text);
+        const raw = await svbImageFetchRaw(imageUrl, {
+            method: "GET",
+            headers: svbGetWellspringApiHeaders(profile, "image/*, application/octet-stream, application/json")
+        }, `${profile.name} image-url`, profile.timeoutMs);
+        if (!raw.ok) throw new Error(`Wellspring 이미지 URL 가져오기 실패 (${raw.status})`);
         return svbBytesToImageResult(raw.bytes);
     }
     if (svbLooksLikeBase64Image(text)) {
@@ -23004,9 +23169,9 @@ async function svbParseImageApiResponse(profile, raw) {
     }
 
     let data = null;
-    if (/^[\[{]/.test(text)) {
-        try { data = JSON.parse(text); } catch (error) {
-            if (parser !== "auto") throw new Error(`${profile.name} JSON 응답 파싱 실패: ${text.slice(0, 400)}`);
+    if (/^[\[{]/.test(text) || svbLooksLikeEventStreamText(text)) {
+        try { data = svbParseJsonOrEventStream(text, profile.name); } catch (error) {
+            if (parser !== "auto") throw error;
         }
     }
     if (data) {
@@ -23141,11 +23306,12 @@ function svbShouldUseWellspringNativeGeneration(profile, options = {}) {
     if (mode === "nai") return false;
     if (mode === "native" || mode === "workflow") return true;
     const endpoint = safeString(profile?.endpoint).toLowerCase();
+    if (svbShouldUseWellspringWorkflowGeneration(profile, options)) return true;
+    if (endpoint.includes("/v1/images/nai/generate-image")) return false;
     return endpoint.includes("/v1/images/generations")
         || endpoint.includes("/v1/images/workflows/")
         || svbHasWellspringNativeGenerationHints(options)
-        || endpoint.includes("wellspring.encrypt.gay")
-        || svbShouldUseWellspringWorkflowGeneration(profile, options);
+        || (endpoint.includes("wellspring.encrypt.gay") && !svbIsWellspringNaiCompatibleEndpoint(profile));
 }
 
 function svbGetWellspringGenerationRouteLabel(profile, options = {}) {
@@ -23229,6 +23395,10 @@ function svbGetWellspringApiHeaders(profile, accept = "application/json") {
 function svbExtractWellspringJobs(data) {
     if (!data) return [];
     if (Array.isArray(data)) return data.filter(Boolean);
+    const sseJobs = ensureArray(data.__svbSseEvents)
+        .map(event => event?.data)
+        .filter(item => item && typeof item === "object");
+    if (sseJobs.length) return sseJobs;
     if (Array.isArray(data.jobs)) return data.jobs.filter(Boolean);
     if (Array.isArray(data.items)) return data.items.filter(Boolean);
     if (Array.isArray(data.data)) return data.data.filter(Boolean);
@@ -23311,8 +23481,8 @@ async function svbWaitForWellspringJobImage(profile, initialData, options = {}) 
         if (options.signal?.aborted) throw createSvbAbortError(`${profile.name} 이미지 생성이 중단되었습니다.`);
         await new Promise(resolve => setTimeout(resolve, 2500));
         const data = runId
-            ? await svbImageFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}?run=${encodeURIComponent(runId)}&limit=100`), { method: "GET", headers }, `${profile.name} run 상태`, 30000)
-            : await svbImageFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}/${encodeURIComponent(jobId)}`), { method: "GET", headers }, `${profile.name} job 상태`, 30000);
+            ? await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}?run=${encodeURIComponent(runId)}&limit=100`), { method: "GET", headers }, `${profile.name} run 상태`, 30000)
+            : await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}/${encodeURIComponent(jobId)}`), { method: "GET", headers }, `${profile.name} job 상태`, 30000);
         const ready = pickReadyJob(data);
         if (ready) return await svbFetchWellspringJobImage(profile, ready);
     }
@@ -45457,7 +45627,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.91 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.92 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
