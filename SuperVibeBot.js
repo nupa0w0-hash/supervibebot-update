@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.90
-//@version 1.5.90
+//@display-name 🐸 SuperVibeBot v1.5.91
+//@version 1.5.91
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.90은 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.91은 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.91 Release Notes
+ * - v1.5.91: absorbs the external RisuAI scripting skill into Kero's technical guide for CBS, Lua triggers, regex, modules, plugins, and schemas
+ * - v1.5.91: corrects Kero's RisuAI execution pipeline knowledge, including input/start/output/display/request timing and persistent variable rules
+ * - v1.5.91: updates regex and trigger improvement prompts so Kero uses editprocess/editdisplay and triggerlua/LLA rules correctly
+ *
  * SuperVibeBot v1.5.90 Release Notes
  * - v1.5.90: locks the official RisuAI auto-update channel to raw.githubusercontent.com refs/heads/main SuperVibeBot.js only
  * - v1.5.90: removes alternate-channel wording from current update guidance so future releases do not switch channels again
@@ -13643,7 +13648,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.90',
+            '//@version 1.5.91',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13703,6 +13708,56 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         problems.length === 0,
         '플러그인 자동 업데이트 메타데이터 자체 테스트',
         `version byte ${value.versionByteIndex ?? -1} · 기본 ${value.defaultVersion || '없음'} · 저장 ${value.normalizedVersion || '없음'} · 슈바봇 URL ${value.superVibeUpdateUrl || '없음'}${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
+function addSvbRuntimeRisuaiGuideSelfTest(checks) {
+    const result = readSvbRuntimeValue('RisuAI scripting guide self test', () => {
+        const overview = safeString(RISUAI_GUIDE.overview);
+        const trigger = safeString(RISUAI_GUIDE.trigger);
+        const regex = safeString(RISUAI_GUIDE.regex);
+        const pluginApi = safeString(RISUAI_GUIDE.plugin_api);
+        const lorebook = safeString(RISUAI_GUIDE.lorebook);
+        const bulkRegex = safeString(BULK_EDIT_PROMPTS.regex);
+        const bulkTrigger = safeString(BULK_EDIT_PROMPTS.trigger);
+        return {
+            noOldTriggerOrder: !/onStart`\s*->\s*`onInput`\s*->\s*`onOutput/i.test(overview),
+            inputBeforeStart: overview.indexOf('input` trigger') >= 0 && overview.indexOf('`start` trigger') > overview.indexOf('input` trigger'),
+            hasRunVarOrder: /response\s+`?\{\{setvar\}\}`?\s+processing/i.test(overview),
+            noRegexEditRequestType: !/`editRequest`:\s*Prompt modification/i.test(regex + '\n' + bulkRegex),
+            hasEditProcessType: /editprocess/.test(regex) && /editprocess/.test(bulkRegex),
+            hasEditDisplayUiOnly: /editdisplay[\s\S]{0,120}UI rendering only/i.test(regex),
+            hasTriggerLuaGuidance: /triggerlua/.test(trigger + '\n' + bulkTrigger),
+            hasListenEditLlaWarning: /listenEdit[\s\S]{0,120}without low level access/i.test(trigger + '\n' + bulkTrigger),
+            hasOnStartEverySend: /onStart[\s\S]{0,120}every send/i.test(trigger + '\n' + bulkTrigger),
+            hasStateGuidance: /setState\/getState/.test(overview + '\n' + trigger + '\n' + bulkTrigger),
+            hasAssetIoGuidance: /saveAsset\(data\)[\s\S]{0,80}readImage\(path\)/.test(pluginApi),
+            hasModuleSchemaGuidance: /Module Schema Notes/.test(lorebook) && /customModuleToggle/.test(lorebook)
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, 'RisuAI scripting guide self test', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.noOldTriggerOrder) problems.push('old trigger order remains');
+    if (!value.inputBeforeStart) problems.push('pipeline does not show input before start');
+    if (!value.hasRunVarOrder) problems.push('response setvar/runVar order missing');
+    if (!value.noRegexEditRequestType) problems.push('regex guide still presents editRequest as regex type');
+    if (!value.hasEditProcessType) problems.push('editprocess guidance missing');
+    if (!value.hasEditDisplayUiOnly) problems.push('editdisplay UI-only guidance missing');
+    if (!value.hasTriggerLuaGuidance) problems.push('triggerlua guidance missing');
+    if (!value.hasListenEditLlaWarning) problems.push('listenEdit LLA warning missing');
+    if (!value.hasOnStartEverySend) problems.push('onStart every-send warning missing');
+    if (!value.hasStateGuidance) problems.push('setState/getState state guidance missing');
+    if (!value.hasAssetIoGuidance) problems.push('asset IO guidance missing');
+    if (!value.hasModuleSchemaGuidance) problems.push('module schema guidance missing');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        'RisuAI scripting guide self test',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'RisuAI skill rules are present in Kero guide and edit prompts',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -15177,6 +15232,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeWarningReplaySelfTest(checks);
     addSvbRuntimeWorkTargetRecoverySelfTest(checks);
     addSvbRuntimePluginMetadataSelfTest(checks);
+    addSvbRuntimeRisuaiGuideSelfTest(checks);
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
@@ -45401,7 +45457,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.89 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.91 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -45411,18 +45467,25 @@ RisuAI operates in 4 layers:
 3. Regex Script: Text Substitution & UI Generation.
 4. Lorebook: Dynamic Context Injection.
 
-## Pipeline
-1. CBS Parsing: \`{{getvar}}\` tags resolved.
-2. Trigger Execution: \`onStart\` -> \`onInput\` -> \`onOutput\`.
-3. CBS Reparsing: Trigger outputs processed.
-4. Regex Execution: \`editInput\` -> \`editOutput\` -> \`editDisplay\` (runs last).
-5. Lorebook Activation: Keyword matching inserts context.
+## Chat Pipeline
+1. User presses send.
+2. \`input\` trigger / Lua \`onInput\` runs before the new user message is added. It cannot cancel the send and cannot read this new input through \`getUserLastMessage\`.
+3. Input text hooks run: Lua \`listenEdit('editInput')\`, plugin scriptHandler('input'), CBS parsing, then regex \`editinput\`.
+4. Processed user message is stored. The runVar pass executes message \`{{setvar}}\` tags.
+5. Lorebook activation and prompt template CBS parsing happen.
+6. \`start\` trigger / Lua \`onStart\` runs during prompt build on every send. This is the only trigger point that can cancel with \`return false\` or \`stopChat(id)\`.
+7. Regex \`editprocess\`, Lua \`listenEdit('editRequest')\`, request trigger V2 request-state blocks, plugin replacer('beforeRequest'), and body interceptors run before the HTTP request.
+8. After model response: plugin replacer('afterRequest'), Lua \`listenEdit('editOutput')\`, plugin scriptHandler('output'), regex \`editoutput\`, runVar for response \`{{setvar}}\`, then \`output\` trigger / Lua \`onOutput\`.
+9. Display rendering for each message: Lua \`listenEdit('editDisplay')\`, display trigger V2 display-state blocks, plugin scriptHandler('display'), CBS display parsing, regex \`editdisplay\`, markdown, DOM sanitization.
 
 ## Key Rules
 - CBS cannot be used inside Lua logic (e.g., \`if {{hp}} > 0\` fails). Use \`getChatVar()\`.
-- Lua can output CBS strings which are resolved in the next pass.
-- Regex scripts run top-to-bottom. \`editDisplay\` is final UI layer.
-- \`stopChat\` / \`setDescription\` are known to be unreliable. Avoid using them.
+- Chat variables are a shared string store: CBS \`{{getvar::x}}\`, Lua \`getChatVar(id,'x')\`, and trigger var blocks read the same chat \`scriptstate\`. Missing values read as the string \`'null'\`.
+- Use Lua \`setState/getState\` for structured JSON state. Lua engine globals are separated by mode; \`onInput\` globals are not shared with \`onOutput\` or display.
+- Display/editDisplay code changes rendered text only. It must not be used for persistent state writes.
+- Lua can output CBS strings which are resolved in later pipeline stages, but do not depend on display-only CBS to mutate persistent state.
+- Regex scripts run by order/flag at their pipeline point. \`editdisplay\` is the final UI-only layer.
+- Use modules for reusable lorebook + regex + trigger + assets + backgroundEmbedding bundles. Module \`lowLevelAccess\` is separate from character LLA.
     `,
     plugin_api: `
 ## Plugin API v3
@@ -45445,6 +45508,10 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - Use \`registerButton\` and \`registerSetting\` for visible entry points.
 - Use \`nativeFetch\` or \`risuFetch\` with timeout/AbortController for remote calls.
 - Guard optional APIs such as \`addProvider\` and \`registerMCP\` before use.
+- Permission-gated APIs include \`getDatabase/setDatabase\`, \`getRootDocument\`, \`addRisuReplacer/registerBodyIntercepter\`, \`getFetchLogs\`, \`addProvider\`, and \`sendChat\`. Ask for the needed permission path instead of pretending it is available.
+- \`addRisuScriptHandler(mode, fn)\` participates in the same pipeline points as regex scripts. Modes are \`display\`, \`output\`, \`input\`, and \`process\`.
+- \`addRisuReplacer('beforeRequest'|'afterRequest')\` changes model messages/responses. \`registerBodyIntercepter\` changes the HTTP body after sensitive fields are stripped.
+- \`saveAsset(data)\` and \`readImage(path)\` are the RisuAI asset IO APIs. Character assets are stored as \`emotionImages: [name, assetId]\` and \`additionalAssets: [name, assetId, ext]\`.
 
 ### Persistence
 - Prefer \`setDatabaseLite\` for narrow DB patches, especially \`plugins\`.
@@ -45491,9 +45558,13 @@ Event-based logic.
 
 ### Event Hooks
 \`\`\`lua
-function onInput(id) end -- User sends message
-function onStart(id) end -- Prompt generation
-function onOutput(id) end -- AI response generated
+function onInput(id) end -- after send click, before the new user message is added; cannot cancel
+function onStart(id) end -- every send during prompt build; can cancel with return false / stopChat
+function onOutput(id) end -- after AI response is stored and response {{setvar}} has run
+listenEdit('editInput', function(id, value, meta) return value end)
+listenEdit('editOutput', function(id, value, meta) return value end)
+listenEdit('editDisplay', function(id, value, meta) return value end)
+listenEdit('editRequest', function(id, messages, meta) return messages end)
 \`\`\`
 
 ### Core API
@@ -45508,17 +45579,19 @@ function onOutput(id) end -- AI response generated
   - \`getChat(id, idx)\` (0-based index)
   - \`setChat(id, idx, content)\`, \`addChat(id, role, msg)\`
 - Advanced:
-  - \`simpleLLM(id, prompt):await()\`
+  - \`LLM(id, messages)\`, \`axLLM(id, messages)\`, \`simpleLLM(id, prompt)\` require low level access and async callback context.
   - \`upsertLocalLoreBook(id, name, content, {key={k}})\`
   - \`reloadDisplay(id)\`
-- Listeners: \`listenEdit('editOutput', func)\`
 
 ### Notes
 1. First arg is always \`triggerId\`.
 2. Lua patterns use \`%\` for escape (e.g., \`100%%\`).
-3. \`getChat\` is 0-indexed, \`getChatLength\` is 1-based.
-4. Async functions require \`:await()\`.
-5. \`stopChat\`, \`setDescription\` are not reliable in RisuAI.
+3. \`getChat\` is 0-indexed, \`getChatLength\` returns a 1-based count.
+4. Async callbacks with model/image/network calls must be assigned as \`onOutput = async(function(id) ... end)\`; use \`:await()\` only inside coroutine/async contexts.
+5. \`listenEdit\` callbacks always run without low level access, even when the character/module has LLA. Do not call \`LLM\`, \`request\`, or image generation there.
+6. \`stopChat\` / \`return false\` only cancel from \`onStart\`. \`onInput\` stop attempts are ignored.
+7. \`onStart\` runs on every send, not once at chat start. Use an init guard such as \`if getChatVar(id,'init') == 'null' then ... end\`.
+8. In group chats, character trigger scripts do not run; module triggers do.
     `,
     regex: `
 ## Regex Script
@@ -45528,19 +45601,24 @@ Modify text or generate UI.
 - IN: Regex Pattern
 - OUT: Replacement (supports CBS)
 - Type:
-  - \`editInput\`: Pre-send correction.
-  - \`editOutput\`: Post-gen formatting.
-  - \`editRequest\`: Prompt modification.
-  - \`editDisplay\`: UI rendering (Display only).
-- Flags: \`g\` (global), \`i\` (ignore case), \`m\` (multiline), \`s\` (dotAll)
+  - \`editinput\`: pre-send user input correction.
+  - \`editoutput\`: post-generation output formatting before storage/display.
+  - \`editprocess\`: prompt message processing immediately before request.
+  - \`editdisplay\`: UI rendering only; does not change stored message text.
+- Flags: JS regex flags such as \`g\`, \`i\`, \`m\`, \`s\`, plus RisuAI meta options in angle brackets.
 
 ### Special Flags
-- IN/OUT CBS Parsing: Enable CBS in patterns/output.
-- Move Top/Bottom: Output placement.
-- Order: Execution priority.
+- \`<order N>\`: execution priority; lower runs first.
+- \`<cbs>\`: parse CBS in the regex input pattern first.
+- \`<move_top>\` / \`<move_bottom>\`: remove match and move replacement to top/bottom.
+- \`<inject>\`: keep original message and remove only from display.
+- \`<repeat_back>\`: reuse a previous same-role match when the current message has none.
+- \`<no_end_nl>\`: avoid automatic trailing newline in some replacement cases.
+- Replacement supports \`$1\`, \`$&\`, etc. Use \`{{asset::name}}\`, \`{{image::name}}\`, or emotion \`@@emo name\` only when the target surface supports it.
 
 ### Preserve Fields
 - Keep existing \`type\`, \`flag\`, \`customFlag\`, \`ableFlag\` values unless explicitly asked.
+- Do not invent a type named \`editRequest\`; request modification is \`editprocess\` for regex scripts or Lua \`listenEdit('editRequest')\`.
     `,
     lorebook: `
 ## Lorebook
@@ -45553,10 +45631,10 @@ Dynamic context injection.
 - \`mode\`: \`normal\`, \`constant\`, \`child\`, or \`folder\`.
 - \`insertorder\`: insertion priority/order number.
 - \`alwaysActive\`: constant activation flag.
-- \`selective\`: require matching keys.
+- \`selective\`: require the secondary AND key only when the user explicitly wants that behavior.
 - \`useRegex\`: treat keys as regex.
 - \`folder\`: parent folder key/id.
-- Optional: \`activationPercent\`, \`loreCache\`, \`bookVersion\`, \`id\`, \`extentions\`.
+- Optional: \`activationPercent\`, \`id\`, \`bookVersion\`, \`extentions.risu_case_sensitive\`.
 
 ### Legacy/Advanced Fields
 - \`secondkey\` and \`mode:"multiple"\` are compatibility/advanced AND-key features, not normal RisuAI production defaults.
@@ -45567,6 +45645,13 @@ Dynamic context injection.
 - Preserve unknown fields. Never drop fields just because SuperVibeBot does not use them.
 - Folder entries use \`mode: "folder"\`; do not replace folders with normal lore entries.
 - Do not create legacy fields such as \`position\`, \`disable\`, \`insertonce\`, \`constant\`, or \`order\`; map intent to current fields instead.
+
+## Module Schema Notes
+- RisuAI module fields: \`id\`, \`name\`, \`description\`, \`namespace\`, \`lorebook\`, \`regex\`, \`trigger\`, \`assets\`, \`lowLevelAccess\`, \`backgroundEmbedding\`, \`customModuleToggle\`, \`hideIcon\`, \`mcp\`, \`icon\`.
+- Module lorebook/regex/trigger entries merge with active character entries when the module is enabled.
+- Module assets are referenced the same way as character assets with \`{{asset::name}}\`; avoid name collisions.
+- \`customModuleToggle\` stores toggle state in global variables named \`toggle_<name>\`.
+- Applying a module copies/merges content into the character; enabling a module is a separate runtime state.
     `,
     html_css: `
 ## HTML/CSS
@@ -47290,6 +47375,10 @@ REGEX SCRIPT ROLE:
 - Regex scripts modify AI output display using patterns
 - Used for custom UI, text formatting, and visual effects
 - Do NOT include lorebook content or character descriptions here
+- Valid RisuAI customscript types are exactly: editinput, editoutput, editprocess, editdisplay.
+- Use editprocess for prompt-message processing before request; do not invent editRequest as a regex type.
+- Use editdisplay only for final UI rendering; it must not be treated as stored message mutation.
+- Flags are JS regex flags plus RisuAI angle options such as <order N>, <cbs>, <move_top>, <move_bottom>, <inject>, <repeat_back>, <no_end_nl>.
 
 WRITING RULES:
 1. Keep existing comments/labels language unless the user requests translation.
@@ -47309,6 +47398,10 @@ TRIGGER SCRIPT ROLE:
 - Written in Lua 5.4 with async support
 - Used for inventory systems, route systems, stat tracking
 - Do NOT include lorebook content or character descriptions here
+- Trigger timing matters: input/onInput runs before the new user message is added and cannot cancel; start/onStart runs on every send during prompt build and can cancel; output/onOutput runs after AI response storage and response {{setvar}} processing.
+- Lua trigger effects should use effect[0] = { "type": "triggerlua", "code": "..." } for new code. Avoid legacy triggercode JS unless explicitly requested.
+- Lua engine globals are separated by mode. Persist cross-mode state with setChatVar/getChatVar or setState/getState, not Lua globals.
+- listenEdit callbacks always run without low level access. Do not call LLM/request/image APIs inside listenEdit.
 
 WRITING RULES:
 1. Keep existing comments/variable naming style unless the user requests translation or normalization.
@@ -47419,6 +47512,9 @@ STRICT JSON OUTPUT FORMAT (JSON Array):
 
 RULES:
 - Return ONLY the JSON Array.
+- Valid types: editinput, editoutput, editprocess, editdisplay. Do not use editRequest.
+- editdisplay is display-only; editprocess is the request/prompt processing regex stage.
+- Preserve ableFlag/flag/customFlag and RisuAI flag options such as <order N>, <cbs>, <inject>, <repeat_back> unless the user explicitly asks to change them.
 - Preserve regex logic exactly.
 - NO markdown formatting.
 - NO explanations.`,
@@ -47433,18 +47529,22 @@ STRICT JSON OUTPUT FORMAT (JSON Array):
 [
   {
     "comment": "Trigger Name",
-    "type": "start|input|output",
+    "type": "start|input|output|manual|display|request",
     "conditions": [
       { "type": "value|var", "var": "varName", "operator": "=", "value": "checkVal" }
     ],
     "effect": [
-      { "type": "setvar|systemprompt|...", "var": "varName", "operator": "=", "value": "newVal" }
+      { "type": "triggerlua", "code": "function onStart(triggerId) ... end" }
     ]
   }
 ]
 
 RULES:
 - Return ONLY the JSON Array.
+- Prefer triggerlua for new code; keep legacy V1/V2 effects only when they already exist or the user requests GUI-style blocks.
+- input/onInput cannot cancel and cannot read the new user input as last message; start/onStart runs every send and is the only cancellation point.
+- Use setChatVar/getChatVar or setState/getState for persistent state. Do not rely on Lua globals across modes.
+- listenEdit callbacks have no low level access; do not call LLM/request/image APIs there.
 - Preserve Lua logic.
 - NO markdown formatting.
 - NO explanations.`,
