@@ -2,7 +2,7 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.93`
+Latest version: `1.5.94`
 
 ## Official Update URL
 

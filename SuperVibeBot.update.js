@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.93
-//@version 1.5.93
+//@display-name 🐸 SuperVibeBot v1.5.94
+//@version 1.5.94
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.93는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.94는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,11 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
- * SuperVibeBot v1.5.93 Release Notes
- * - v1.5.93: integrates optional Danbooru MCP REST tag search/validation into Kero image asset prompt execution
- * - v1.5.93: splits asset prompts into short visual search units and validates final prompt tags before image API calls
- * - v1.5.93: uses the provided danbooru-tags CSV as a local MCP data source instead of embedding the 22MB tag database in the plugin
- * - v1.5.93: falls back to the existing 2D anime prompt path when Danbooru MCP is offline or not configured
+ * SuperVibeBot v1.5.94 Release Notes
+ * - v1.5.94: removes the overbuilt Danbooru MCP HTTP/server dependency from Kero asset generation
+ * - v1.5.94: keeps Danbooru tag material as prompt-writing guidance only; Kero writes stable 2D anime/Danbooru-style tags directly
+ * - v1.5.94: adds runtime diagnostics for the Wellspring LoRA identity pipeline used to keep character assets consistent
  *
  * SuperVibeBot v1.5.92 Release Notes
  * - v1.5.92: parses Wellspring text/event-stream job status responses instead of treating SSE as invalid JSON
@@ -3470,13 +3469,6 @@ const KERO_CREATE_MIN_CHUNK_CHAR_LIMIT = 1800;
 const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 600000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
-const KERO_DANBOORU_MCP_DEFAULT_ENDPOINT = 'http://127.0.0.1:8000';
-const KERO_DANBOORU_MCP_ENABLED_KEY = 'Super_Vibe_Bot_danbooru_mcp_enabled_v1';
-const KERO_DANBOORU_MCP_ENDPOINT_KEY = 'Super_Vibe_Bot_danbooru_mcp_endpoint_v1';
-const KERO_DANBOORU_MCP_SEARCH_TIMEOUT_MS = 20000;
-const KERO_DANBOORU_MCP_VALIDATE_TIMEOUT_MS = 12000;
-const KERO_DANBOORU_MCP_MAX_SEARCH_UNITS = 32;
-const KERO_DANBOORU_MCP_MAX_PROMPT_TAGS = 32;
 const KERO_ASSET_STYLE_PRESETS = Object.freeze({
     'clean-anime': 'clean anime key visual, crisp lineart, balanced character proportions, clear readable silhouette, bright controlled colors, soft cel shading',
     'soft-pastel': 'soft pastel anime illustration, gentle color palette, airy background, delicate lineart, warm ambient light, calm emotional expression',
@@ -10191,7 +10183,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'danbooruMcp', 'danbooruMcpEnabled', 'danbooruMcpEndpoint', 'danbooruMcpVariant', 'danbooruMcpTopK', 'danbooruMcpThreshold', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13666,7 +13658,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.93',
+            '//@version 1.5.94',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13837,45 +13829,81 @@ function addSvbRuntimeWellspringImageSelfTest(checks) {
     ));
 }
 
-function addSvbRuntimeDanbooruMcpSelfTest(checks, localFunctions = {}) {
-    const result = readSvbRuntimeValue('Danbooru MCP prompt pipeline self test', () => {
-        const collectUnits = resolveSvbRuntimeLocalFunction(localFunctions, 'collectKeroDanbooruMcpSearchUnits');
-        const normalizeTags = resolveSvbRuntimeLocalFunction(localFunctions, 'normalizeKeroDanbooruPromptTags');
-        const buildToolUrl = resolveSvbRuntimeLocalFunction(localFunctions, 'buildKeroDanbooruMcpToolUrl');
-        if (typeof collectUnits !== 'function' || typeof normalizeTags !== 'function' || typeof buildToolUrl !== 'function') {
+function addSvbRuntimeWellspringLoraIdentitySelfTest(checks, localFunctions = {}) {
+    const result = readSvbRuntimeValue('Wellspring LoRA identity pipeline self test', () => {
+        const localResolveTraining = resolveSvbRuntimeLocalFunction(localFunctions, 'resolveKeroAssetLoraTrainingOptions');
+        if (typeof localResolveTraining !== 'function') {
             return { skipped: true };
         }
-        const units = collectUnits('1girl, silver hair, red eyes, white background, photorealistic photo, upper body, looking at viewer');
-        const tags = normalizeTags(['grey hair', 'red_eyes', 'grey hair', 'photorealistic']);
-        const url = buildToolUrl('search_tags_batch', 'http://127.0.0.1:8000/');
+        const createdAssets = [
+            {
+                name: 'moon_ajin_profile',
+                path: '/assets/moon_ajin_profile.png',
+                ext: 'png',
+                identityName: '문아진',
+                wellspringJobId: 'img-diagnostic-1'
+            },
+            {
+                name: 'moon_ajin_smile',
+                path: '/assets/moon_ajin_smile.png',
+                ext: 'png',
+                identityName: '문아진',
+                wellspringJobId: 'img-diagnostic-2'
+            }
+        ];
+        const options = localResolveTraining({
+            trainLora: true,
+            identityName: '문아진',
+            loraName: 'moon_ajin_identity',
+            trainingSteps: 600,
+            loraStrength: 0.8,
+            waitForTraining: false
+        }, [{ identityName: '문아진' }], createdAssets, { name: '문아진' });
+        const meta = svbSetAssetIdentityWellspringLoras({}, '문아진', [{ id: 'lora-diagnostic', strength: 0.8 }], {
+            loraName: 'moon_ajin_identity',
+            trainingId: 'train-diagnostic'
+        });
+        const identity = meta?.identities?.['문아진'] || {};
         return {
             skipped: false,
-            hasSilverHairUnit: units.includes('silver hair'),
-            hasRedEyesUnit: units.includes('red eyes'),
-            blocksRealismUnit: !units.some(unit => /photo|realistic/i.test(unit)),
-            normalizesTags: tags.includes('grey_hair') && tags.includes('red_eyes') && tags.length === 2,
-            buildsRestUrl: url === 'http://127.0.0.1:8000/tools/search_tags_batch'
+            startFunctionReady: typeof svbStartWellspringLoraTraining === 'function',
+            waitFunctionReady: typeof svbWaitForWellspringLoraTraining === 'function',
+            trainingEnabled: options.enabled === true,
+            identityName: options.identityName,
+            loraName: options.loraName,
+            strength: options.loraStrength,
+            galleryJobs: ensureArray(options.galleryJobIds).length,
+            trainingAssets: ensureArray(options.trainingAssets).length,
+            identityLinked: ensureArray(identity.wellspringLoras).some(item => item.id === 'lora-diagnostic' && Number(item.strength) === 0.8),
+            loraNameStored: identity.wellspringLoraName === 'moon_ajin_identity',
+            trainingIdStored: identity.wellspringTrainingId === 'train-diagnostic'
         };
     });
     if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, 'Danbooru MCP prompt pipeline self test', result.error, 'error'));
+        checks.push(makeSvbRuntimeCheck(false, 'Wellspring LoRA identity pipeline self test', result.error, 'error'));
         return;
     }
     const value = result.value || {};
     if (value.skipped) {
-        checks.push(makeSvbRuntimeCheck(true, 'Danbooru MCP prompt pipeline self test', 'Kero local Danbooru MCP helpers are not mounted in this diagnostic context', 'ok'));
+        checks.push(makeSvbRuntimeCheck(true, 'Wellspring LoRA identity pipeline self test', 'Kero local LoRA training resolver is not mounted in this diagnostic context', 'ok'));
         return;
     }
     const problems = [];
-    if (!value.hasSilverHairUnit) problems.push('silver hair visual unit missing');
-    if (!value.hasRedEyesUnit) problems.push('red eyes visual unit missing');
-    if (!value.blocksRealismUnit) problems.push('realism/photo unit was not blocked');
-    if (!value.normalizesTags) problems.push('prompt tags were not deduped/normalized');
-    if (!value.buildsRestUrl) problems.push('REST tool URL was not built correctly');
+    if (!value.startFunctionReady) problems.push('LoRA training start function missing');
+    if (!value.waitFunctionReady) problems.push('LoRA training wait function missing');
+    if (!value.trainingEnabled) problems.push('trainLora did not enable training');
+    if (value.identityName !== '문아진') problems.push('identityName not preserved');
+    if (value.loraName !== 'moon_ajin_identity') problems.push('loraName not preserved');
+    if (Number(value.strength) !== 0.8) problems.push('loraStrength not preserved');
+    if (Number(value.galleryJobs || 0) < 2) problems.push('generated Wellspring gallery job ids not reused');
+    if (Number(value.trainingAssets || 0) < 2) problems.push('saved local assets not available for training upload');
+    if (!value.identityLinked) problems.push('completed LoRA not linked to identity');
+    if (!value.loraNameStored) problems.push('identity LoRA name not stored');
+    if (!value.trainingIdStored) problems.push('identity training id not stored');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
-        'Danbooru MCP prompt pipeline self test',
-        problems.length ? `Problems: ${problems.join(' / ')}` : 'Danbooru MCP prompt units, prompt tags, and REST tool routing are coherent',
+        'Wellspring LoRA identity pipeline self test',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'generated assets can seed Wellspring LoRA training and completed LoRAs attach back to the Asset Studio identity',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -15352,7 +15380,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimePluginMetadataSelfTest(checks);
     addSvbRuntimeRisuaiGuideSelfTest(checks);
     addSvbRuntimeWellspringImageSelfTest(checks);
-    addSvbRuntimeDanbooruMcpSelfTest(checks, localFunctions);
+    addSvbRuntimeWellspringLoraIdentitySelfTest(checks, localFunctions);
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
@@ -28324,7 +28352,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'danbooruMcp', 'danbooruMcpEnabled', 'danbooruMcpEndpoint', 'danbooruMcpVariant', 'danbooruMcpTopK', 'danbooruMcpThreshold', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -33043,7 +33071,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return [payload];
         }
         const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'danbooruMcp', 'danbooruMcpEnabled', 'danbooruMcpEndpoint', 'danbooruMcpVariant', 'danbooruMcpTopK', 'danbooruMcpThreshold', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => {
+        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => {
             if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
         });
         return Object.keys(direct).length ? [direct] : [];
@@ -33075,18 +33103,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const identityPrompt = safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.characterConsistencyPrompt || payloadObj.identityPrompt || payloadObj.characterPrompt || payloadObj.visualIdentityPrompt || payloadObj.characterConsistencyPrompt || action.identityPrompt || action.characterPrompt || action.visualIdentityPrompt || action.characterConsistencyPrompt).trim();
             const identityNegative = safeString(source.identityNegative || source.characterNegative || payloadObj.identityNegative || payloadObj.characterNegative || action.identityNegative || action.characterNegative).trim();
             const danbooruTags = safeString(source.danbooruTags || source.tagPrompt || source.tags || payloadObj.danbooruTags || payloadObj.tagPrompt || payloadObj.tags || action.danbooruTags || action.tagPrompt || action.tags).trim();
-            const danbooruMcpConfig = isPlainObject(source.danbooruMcp) ? source.danbooruMcp
-                : isPlainObject(payloadObj.danbooruMcp) ? payloadObj.danbooruMcp
-                    : isPlainObject(action.danbooruMcp) ? action.danbooruMcp
-                        : {};
-            const danbooruMcpEnabledValue = source.danbooruMcpEnabled ?? danbooruMcpConfig.enabled ?? payloadObj.danbooruMcpEnabled ?? action.danbooruMcpEnabled ?? source.danbooruMcp ?? payloadObj.danbooruMcp ?? action.danbooruMcp;
-            const danbooruMcpEnabled = typeof danbooruMcpEnabledValue === 'undefined' || isPlainObject(danbooruMcpEnabledValue)
-                ? undefined
-                : svbToBoolean(danbooruMcpEnabledValue, true);
-            const danbooruMcpEndpoint = safeString(source.danbooruMcpEndpoint || source.danbooruMcpUrl || source.danbooruEndpoint || danbooruMcpConfig.endpoint || danbooruMcpConfig.url || payloadObj.danbooruMcpEndpoint || payloadObj.danbooruMcpUrl || payloadObj.danbooruEndpoint || action.danbooruMcpEndpoint || action.danbooruMcpUrl || action.danbooruEndpoint).trim();
-            const danbooruMcpVariant = safeString(source.danbooruMcpVariant || source.danbooruVariant || danbooruMcpConfig.variant || payloadObj.danbooruMcpVariant || payloadObj.danbooruVariant || action.danbooruMcpVariant || action.danbooruVariant).trim();
-            const danbooruMcpTopK = svbOptionalNumberAtLeast(source.danbooruMcpTopK ?? source.danbooruTopK ?? danbooruMcpConfig.topK ?? payloadObj.danbooruMcpTopK ?? payloadObj.danbooruTopK ?? action.danbooruMcpTopK ?? action.danbooruTopK, 1, undefined, 32);
-            const danbooruMcpThreshold = svbOptionalNumberAtLeast(source.danbooruMcpThreshold ?? source.danbooruThreshold ?? danbooruMcpConfig.threshold ?? payloadObj.danbooruMcpThreshold ?? payloadObj.danbooruThreshold ?? action.danbooruMcpThreshold ?? action.danbooruThreshold, 0, undefined, 1);
             const rawCount = Number(source.count || source.batchSize || source.batch || source.n || source.samples || payloadObj.count || action.count || 1);
             const count = Math.max(1, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1);
             const ratioId = safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim();
@@ -33116,11 +33132,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 identityPrompt,
                 identityNegative,
                 danbooruTags,
-                danbooruMcpEnabled,
-                danbooruMcpEndpoint,
-                danbooruMcpVariant,
-                danbooruMcpTopK,
-                danbooruMcpThreshold,
                 referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
                 referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
                 referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
@@ -33155,8 +33166,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             'negative', 'negativePrompt', 'stylePreset', 'style', 'stylePrompt',
             'identityName', 'identityKey', 'identityPrompt', 'characterPrompt',
             'visualIdentityPrompt', 'danbooruTags', 'tagPrompt',
-            'danbooruMcp', 'danbooruMcpEnabled', 'danbooruMcpEndpoint',
-            'danbooruMcpVariant', 'danbooruMcpTopK', 'danbooruMcpThreshold',
             'wellspringMode', 'wellspringApiMode', 'wellspringPresetId',
             'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId',
             'workflowId', 'projectId', 'variantIds', 'variantId'
@@ -33393,232 +33402,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         );
     }
 
-    function normalizeKeroDanbooruMcpEndpoint(endpoint = '') {
-        const raw = safeString(endpoint).trim();
-        const base = raw || KERO_DANBOORU_MCP_DEFAULT_ENDPOINT;
-        const withProtocol = /^https?:\/\//i.test(base) ? base : `http://${base}`;
-        return withProtocol.replace(/\/+$/, '');
-    }
-
-    function normalizeKeroDanbooruMcpVariant(value = '') {
-        const variant = safeString(value || 'b').trim().toLowerCase();
-        return ['a', 'b', 'c'].includes(variant) ? variant : 'b';
-    }
-
-    function buildKeroDanbooruMcpToolUrl(toolName, endpoint = '') {
-        const name = safeString(toolName).trim().replace(/^\/+/, '');
-        if (!name) throw new Error('Danbooru MCP tool name is required.');
-        return `${normalizeKeroDanbooruMcpEndpoint(endpoint)}/tools/${encodeURIComponent(name)}`;
-    }
-
-    async function isKeroDanbooruMcpEnabledForItem(item = {}) {
-        if (item?.danbooruMcpEnabled === false) return false;
-        if (item?.danbooruMcpEnabled === true) return true;
-        try {
-            const stored = await Storage.get(KERO_DANBOORU_MCP_ENABLED_KEY);
-            if (stored === false) return false;
-        } catch (error) {
-            Logger.warn('Danbooru MCP enabled flag read failed:', error?.message || error);
-        }
-        return true;
-    }
-
-    async function resolveKeroDanbooruMcpEndpoint(item = {}) {
-        if (safeString(item?.danbooruMcpEndpoint).trim()) {
-            return normalizeKeroDanbooruMcpEndpoint(item.danbooruMcpEndpoint);
-        }
-        try {
-            const stored = await Storage.get(KERO_DANBOORU_MCP_ENDPOINT_KEY);
-            if (safeString(stored).trim()) return normalizeKeroDanbooruMcpEndpoint(stored);
-        } catch (error) {
-            Logger.warn('Danbooru MCP endpoint read failed:', error?.message || error);
-        }
-        return normalizeKeroDanbooruMcpEndpoint(KERO_DANBOORU_MCP_DEFAULT_ENDPOINT);
-    }
-
-    function normalizeKeroDanbooruSearchUnit(fragment = '') {
-        const text = safeString(fragment)
-            .replace(/\{\{[^}]+\}\}/g, ' ')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/[_]+/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        if (!text) return '';
-        return text.length > 96 ? text.slice(0, 96).trim() : text;
-    }
-
-    function isKeroDanbooruSearchUnitNoise(unit = '') {
-        const key = safeString(unit).trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
-        if (!key || key.length < 2) return true;
-        if (isKeroAssetRealismRiskFragment(key)) return true;
-        if (/[{}<>]/.test(key)) return true;
-        if (/^(?:2d|anime|anime style|illustration|2d anime illustration|cel shaded character art|clean lineart|flat color shading|clean anime key visual|crisp lineart|balanced character proportions|clear readable silhouette|bright controlled colors|soft cel shading|best quality|high quality|masterpiece|absurdres|quality prompt|style prompt|negative prompt|character asset|solo character asset)$/.test(key)) return true;
-        return false;
-    }
-
-    function collectKeroDanbooruMcpSearchUnits(...values) {
-        const seen = new Set();
-        const units = [];
-        const push = (candidate) => {
-            const clean = normalizeKeroDanbooruSearchUnit(candidate);
-            if (isKeroDanbooruSearchUnitNoise(clean)) return;
-            const key = clean.toLowerCase();
-            if (seen.has(key)) return;
-            seen.add(key);
-            units.push(clean);
-        };
-        values.forEach((value) => {
-            safeString(value).split(/[,;\n]+/).forEach((chunk) => {
-                const clean = normalizeKeroDanbooruSearchUnit(chunk);
-                if (!clean) return;
-                if (clean.length > 72) {
-                    clean.split(/\b(?:with|wearing|holding|against|beside|near|and)\b|[.。]/i).forEach(push);
-                } else {
-                    push(clean);
-                }
-            });
-        });
-        return units.slice(0, KERO_DANBOORU_MCP_MAX_SEARCH_UNITS);
-    }
-
-    function svbDanbooruTagToPromptTag(tag = '') {
-        return safeString(tag)
-            .trim()
-            .replace(/^#+/, '')
-            .replace(/^[(\[]+|[)\]]+$/g, '')
-            .replace(/:[0-9.]+$/g, '')
-            .replace(/\s+/g, '_')
-            .replace(/^_+|_+$/g, '');
-    }
-
-    function normalizeKeroDanbooruPromptTags(value, maxTags = KERO_DANBOORU_MCP_MAX_PROMPT_TAGS) {
-        const rawItems = Array.isArray(value)
-            ? value
-            : safeString(value).split(/[,;\n]+/);
-        const seen = new Set();
-        const tags = [];
-        rawItems.forEach((entry) => {
-            const source = isPlainObject(entry) ? (entry.tag || entry.name || entry.normalized || '') : entry;
-            const tag = svbDanbooruTagToPromptTag(source);
-            if (!tag) return;
-            if (isKeroAssetRealismRiskFragment(tag.replace(/_/g, ' '))) return;
-            const key = tag.toLowerCase();
-            if (seen.has(key)) return;
-            seen.add(key);
-            tags.push(tag);
-        });
-        return tags.slice(0, Math.max(1, Math.floor(Number(maxTags) || KERO_DANBOORU_MCP_MAX_PROMPT_TAGS)));
-    }
-
-    function pickKeroDanbooruCandidateTags(searchPayload = {}, maxTags = KERO_DANBOORU_MCP_MAX_PROMPT_TAGS) {
-        const tags = [];
-        ensureArray(searchPayload?.items).forEach((item) => {
-            const hit = ensureArray(item?.results).find((result) => {
-                const tag = safeString(result?.tag).trim();
-                return tag && !isKeroAssetRealismRiskFragment(tag.replace(/[_\s]+/g, ' '));
-            });
-            if (hit?.tag) tags.push(hit.tag);
-        });
-        return normalizeKeroDanbooruPromptTags(tags, maxTags);
-    }
-
-    function pickKeroDanbooruSuggestionTags(validatePayload = {}, maxTags = KERO_DANBOORU_MCP_MAX_PROMPT_TAGS) {
-        const tags = [];
-        const suggestions = validatePayload?.suggestions && typeof validatePayload.suggestions === 'object'
-            ? validatePayload.suggestions
-            : {};
-        Object.values(suggestions).forEach((items) => {
-            const hit = ensureArray(items).find((result) => {
-                const tag = safeString(result?.tag).trim();
-                return tag && !isKeroAssetRealismRiskFragment(tag.replace(/[_\s]+/g, ' '));
-            });
-            if (hit?.tag) tags.push(hit.tag);
-        });
-        return normalizeKeroDanbooruPromptTags(tags, maxTags);
-    }
-
-    async function callKeroDanbooruMcpTool(toolName, payload = {}, options = {}) {
-        const endpoint = normalizeKeroDanbooruMcpEndpoint(options.endpoint || KERO_DANBOORU_MCP_DEFAULT_ENDPOINT);
-        const url = buildKeroDanbooruMcpToolUrl(toolName, endpoint);
-        return await pluginFetchJson(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload || {}),
-            signal: options.signal || null
-        }, `Danbooru MCP ${toolName}`, options.timeoutMs || KERO_DANBOORU_MCP_SEARCH_TIMEOUT_MS);
-    }
-
-    async function enhanceKeroAssetPromptWithDanbooruMcp(rawPrompt = '', item = {}, options = {}) {
-        const basePrompt = joinKeroAssetPromptFragments(rawPrompt);
-        const fallback = { prompt: basePrompt, tags: [], used: false, units: [], warning: '' };
-        if (!basePrompt) return fallback;
-        if (!(await isKeroDanbooruMcpEnabledForItem(item))) return { ...fallback, warning: 'disabled' };
-
-        const units = collectKeroDanbooruMcpSearchUnits(basePrompt);
-        if (!units.length) return fallback;
-
-        const endpoint = await resolveKeroDanbooruMcpEndpoint(item);
-        const variant = normalizeKeroDanbooruMcpVariant(item.danbooruMcpVariant);
-        const topK = Math.max(1, Math.min(32, Math.floor(Number(item.danbooruMcpTopK) || 8)));
-        const threshold = Number.isFinite(Number(item.danbooruMcpThreshold)) ? Number(item.danbooruMcpThreshold) : 0;
-        const cacheKey = JSON.stringify({ endpoint, variant, topK, threshold, basePrompt });
-        if (options.cache && options.cache.has(cacheKey)) return options.cache.get(cacheKey);
-
-        try {
-            throwIfSvbAborted(options.signal, 'Danbooru MCP prompt enrichment stopped before search.');
-            const searchPayload = await callKeroDanbooruMcpTool('search_tags_batch', {
-                queries: units,
-                top_k: topK,
-                threshold,
-                categories: ['general'],
-                variant
-            }, {
-                endpoint,
-                signal: options.signal,
-                timeoutMs: KERO_DANBOORU_MCP_SEARCH_TIMEOUT_MS
-            });
-            const candidateTags = pickKeroDanbooruCandidateTags(searchPayload, KERO_DANBOORU_MCP_MAX_PROMPT_TAGS);
-            const explicitTags = normalizeKeroDanbooruPromptTags(item.danbooruTags || item.tagPrompt || '', KERO_DANBOORU_MCP_MAX_PROMPT_TAGS);
-            const preValidateTags = normalizeKeroDanbooruPromptTags([...explicitTags, ...candidateTags], KERO_DANBOORU_MCP_MAX_PROMPT_TAGS * 2);
-            if (!preValidateTags.length) return fallback;
-
-            throwIfSvbAborted(options.signal, 'Danbooru MCP prompt enrichment stopped before validation.');
-            const validatePayload = await callKeroDanbooruMcpTool('validate_tags', {
-                tags: preValidateTags,
-                include_suggestions: true,
-                suggestion_top_k: 3,
-                variant
-            }, {
-                endpoint,
-                signal: options.signal,
-                timeoutMs: KERO_DANBOORU_MCP_VALIDATE_TIMEOUT_MS
-            });
-            const validTags = normalizeKeroDanbooruPromptTags(validatePayload?.valid || [], KERO_DANBOORU_MCP_MAX_PROMPT_TAGS);
-            const suggestionTags = pickKeroDanbooruSuggestionTags(validatePayload, KERO_DANBOORU_MCP_MAX_PROMPT_TAGS);
-            const promptTags = normalizeKeroDanbooruPromptTags([...validTags, ...suggestionTags], KERO_DANBOORU_MCP_MAX_PROMPT_TAGS);
-            const result = promptTags.length
-                ? {
-                    prompt: joinKeroAssetPromptFragments(promptTags.join(', '), basePrompt),
-                    tags: promptTags,
-                    used: true,
-                    units,
-                    endpoint,
-                    variant,
-                    warning: ''
-                }
-                : fallback;
-            if (options.cache) options.cache.set(cacheKey, result);
-            return result;
-        } catch (error) {
-            if (isSvbAbortError(error)) throw error;
-            const warning = error?.message || String(error);
-            Logger.warn('Danbooru MCP prompt enrichment skipped:', warning);
-            const result = { ...fallback, units, endpoint, variant, warning };
-            if (options.cache) options.cache.set(cacheKey, result);
-            return result;
-        }
-    }
-
     function getKeroAssetOutputName(item, index = 0, total = 1) {
         const base = safeString(item?.name).trim() || (item?.target === 'emotion' ? 'emotion' : 'asset');
         if (total <= 1) return item?.target === 'emotion' ? base : svbNormalizeAssetName(base, 'asset');
@@ -33766,9 +33549,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const failedAssets = [];
         let autoReferencePath = '';
         let autoReferenceName = '';
-        let danbooruMcpSuccessNotified = false;
-        let danbooruMcpWarningNotified = false;
-        const danbooruMcpPromptCache = new Map();
         const shouldAutoReferenceBatch = requested > 1 && !items.some(item => safeString(item.referenceImagePath).trim());
         addKeroWorkstreamEvent('이미지 에셋 생성', `이미지 API로 ${requested}장 생성 후 캐릭터 에셋에 등록합니다.`, 'action', actionProgressOptions);
 
@@ -33793,26 +33573,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const renderedIdentityPrompt = svbRenderImagePromptTemplate(item.identityPrompt, vars).trim();
             const renderedDanbooruTags = svbRenderImagePromptTemplate(item.danbooruTags, vars).trim();
             const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
-            const renderedStylePrompt = svbRenderImagePromptTemplate(item.stylePrompt, vars).trim();
-            const rawVisualPrompt = joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt);
-            const danbooruPrompt = await enhanceKeroAssetPromptWithDanbooruMcp(rawVisualPrompt, {
-                ...item,
-                danbooruTags: renderedDanbooruTags || item.danbooruTags
-            }, {
-                signal: actionSignal,
-                cache: danbooruMcpPromptCache
-            });
-            if (danbooruPrompt.used && !danbooruMcpSuccessNotified) {
-                addKeroWorkstreamEvent('Danbooru MCP prompt tags', `${danbooruPrompt.tags.length} validated tags injected from ${danbooruPrompt.units.length} visual units`, 'info', actionProgressOptions);
-                danbooruMcpSuccessNotified = true;
-            } else if (danbooruPrompt.warning && danbooruPrompt.warning !== 'disabled' && !danbooruMcpWarningNotified) {
-                addKeroWorkstreamEvent('Danbooru MCP fallback', `tag enrichment skipped: ${danbooruPrompt.warning}`, 'warning', actionProgressOptions);
-                danbooruMcpWarningNotified = true;
-            }
             const prompt = normalizeKeroAsset2dPositivePrompt(
-                danbooruPrompt.prompt || rawVisualPrompt,
+                joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt),
                 item.stylePreset,
-                renderedStylePrompt
+                svbRenderImagePromptTemplate(item.stylePrompt, vars).trim()
             );
             const negative = normalizeKeroAsset2dNegativePrompt(
                 joinKeroAssetPromptFragments(
@@ -33872,8 +33636,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     identityName: item.identityName || '',
                     prompt: imageResult.prompt || prompt,
                     negative: imageResult.negative || negative,
-                    danbooruTags: danbooruPrompt.tags || [],
-                    danbooruMcpUsed: danbooruPrompt.used === true,
                     stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
                     ratioId,
                     steps,
@@ -35599,9 +35361,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             normalizeKeroActionTargetName,
             getKeroWorkTargetActionFilterResult,
             isKeroMixedWorkTargetsEnabledForRequest,
-            collectKeroDanbooruMcpSearchUnits,
-            normalizeKeroDanbooruPromptTags,
-            buildKeroDanbooruMcpToolUrl
+            resolveKeroAssetLoraTrainingOptions
         });
 
         bindSafeClick(document.getElementById('kero-runtime-diagnostics-btn'), async () => {
@@ -38544,8 +38304,7 @@ ${metaBlock}
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, framing 순서로 명료하게 쓴다. profile image는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
-- Danbooru MCP 같은 태그 검색 도구가 활성화되어 있으면 긴 문장을 그대로 검색하지 말고 "짧은 시각 단위" 배열로 나눠 search_tags_batch를 호출하고, 최종 후보는 validate_tags로 확인한 뒤 danbooruTags 또는 identityPrompt에 반영한다. 도구가 없으면 케로가 직접 안정적인 anime tag를 작성한다.
-- 이미지 에셋 create 액션은 런타임이 Danbooru MCP HTTP 서버(http://127.0.0.1:8000)를 자동 감지해 search_tags_batch/validate_tags로 태그를 보강한다. Kero는 짧고 구체적인 시각 프롬프트를 assets 배열에 넣고, 태그 검색을 끄라는 요청이 있을 때만 danbooruMcp:false를 쓴다.
+- Danbooru 태그 자료는 서버 호출 전제가 아니라 프롬프트 작성 기준으로 사용한다. 긴 문장을 그대로 쓰지 말고 "짧은 시각 단위"를 anime/Danbooru-style tag로 정리해 danbooruTags 또는 identityPrompt에 반영한다. 별도 도구가 없어도 케로가 직접 안정적인 2D anime tag를 작성한다.
 - Danbooru 태그는 인물 일관성 유지용 identityPrompt와 장면/표정용 assets[].prompt를 분리한다. 같은 인물 묶음 안에서는 identityName을 통일하고, identityPrompt는 매 에셋마다 다시 쓰지 않아도 런타임이 자동 합성한다.
 - LoRA/trigger word는 사용자가 알려준 경우에만 정확히 넣는다. 모르는 LoRA trigger를 지어내지 않는다. "LoRA가 연결된 프로필을 사용" 같은 말로 prompt를 비워두면 안 된다.
 - 프로필 에셋은 additional, 감정 슬롯은 emotion을 쓴다. 감정 슬롯은 같은 캐릭터 디자인을 유지하고 expression/action만 바꾼다.
@@ -45954,7 +45713,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.93 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.94 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
