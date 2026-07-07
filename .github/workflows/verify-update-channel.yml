@@ -7,6 +7,7 @@ on:
       - "SuperVibeBot.update.js"
       - "SuperVibeBot.js"
       - "SuperVibeBot.auto.js"
+      - "README.md"
       - ".github/workflows/verify-update-channel.yml"
   workflow_dispatch:
   schedule:
@@ -35,6 +36,11 @@ jobs:
             grep -q '^//@api 3\.0$' "$file"
             grep -q '^//@version [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' "$file"
             grep -q "^//@update-url ${expected_url}$" "$file"
+            grep -q "SUPER_VIBE_BOT_CANONICAL_UPDATE_URL = '${expected_url}'" "$file"
+            grep -q "SUPER_VIBE_BOT_UPDATE_URL = SUPER_VIBE_BOT_CANONICAL_UPDATE_URL" "$file"
+
+            header="$(sed -n '1,20p' "$file")"
+            ! grep -E 'releases/latest/download|cdn\.jsdelivr\.net|github\.com/.*/raw/|raw\.githubusercontent\.com/[^/]+/[^/]+/main/SuperVibeBot\.js|SuperVibeBot\.(update|auto)\.js' <<< "$header"
           done
 
           cmp -s SuperVibeBot.update.js SuperVibeBot.js

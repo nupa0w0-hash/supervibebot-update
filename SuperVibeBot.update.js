@@ -1,19 +1,20 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.89
-//@version 1.5.89
+//@display-name 🐸 SuperVibeBot v1.5.90
+//@version 1.5.90
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.89은 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.90은 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
-const SUPER_VIBE_BOT_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js';
+const SUPER_VIBE_BOT_CANONICAL_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js';
+const SUPER_VIBE_BOT_UPDATE_URL = SUPER_VIBE_BOT_CANONICAL_UPDATE_URL;
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
 const PERSONA_APPLY_DISABLED = true;
@@ -164,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.90 Release Notes
+ * - v1.5.90: locks the official RisuAI auto-update channel to raw.githubusercontent.com refs/heads/main SuperVibeBot.js only
+ * - v1.5.90: removes alternate-channel wording from current update guidance so future releases do not switch channels again
+ * - v1.5.90: keeps compatibility copies for recovery only, never as the canonical update-url
+ *
  * SuperVibeBot v1.5.89 Release Notes
  * - v1.5.89: restores the RisuAI auto-update URL to the pre-v1.5.85 raw.githubusercontent.com main SuperVibeBot.js channel
  * - v1.5.89: updates channel verification back to the raw main URL so Risu update checks avoid GitHub release redirects
@@ -183,8 +189,7 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.86: leaves only one visible "중지" control in the Kero work-in-progress bubble and workstream controls
  *
  * SuperVibeBot v1.5.85 Release Notes
- * - v1.5.85: moves the auto-update channel to the GitHub releases latest asset after the raw refs/heads/main URL served stale 1.5.83 content
- * - v1.5.85: verifies the release/latest download URL with Range requests so RisuAI update checks can read fresh metadata
+ * - v1.5.85: historical update-channel experiment; superseded by the fixed v1.5.90 policy
  *
  * SuperVibeBot v1.5.84 Release Notes
  * - v1.5.84: adds Wellspring LoRA training support from generated gallery jobs, uploaded local assets, and selected Asset Studio images
@@ -193,8 +198,8 @@ async function safeCopyText(text, options = {}) {
  *
  * SuperVibeBot v1.5.83 Release Notes
  * - v1.5.83: updates CI and runtime diagnostics to validate the refs/heads/main update channel
- * - v1.5.82: switches the plugin update URL to raw refs/heads/main to avoid stale /main raw cache during rapid releases
- * - v1.5.82: switches the plugin update URL to raw refs/heads/main to avoid stale /main raw cache during rapid releases
+ * - v1.5.82: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
+ * - v1.5.82: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
  * - v1.5.81: routes image/asset target aliases through the asset executor instead of raw target comparisons
  * - v1.5.81: routes image/asset target aliases through the asset executor instead of raw target comparisons
  * - v1.5.81: recovers image-focused character-update actions that contain asset prompt payloads into asset create actions
@@ -232,9 +237,9 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.72: routes planning/TODO conversations through a lightweight non-mutating planning chat path instead of the full work/action prompt
  * - v1.5.72: skips sub-agent consultation when CONTEXT_PAYLOAD is empty so `{}` packets cannot stall parallel review
  * - v1.5.72: uses a model-wait zombie threshold for chat locks instead of the 95-minute action-execution threshold
- * - v1.5.71: moves the update URL to raw /main/SuperVibeBot.js because that file's raw endpoint updates while SuperVibeBot.update.js remains stale
+ * - v1.5.71: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
  * - v1.5.71: updates CI/runtime diagnostics to verify the active SuperVibeBot.js update channel
- * - v1.5.70: moves the update URL back to raw /main/ after the refs/heads/main raw cache kept returning v1.5.68
+ * - v1.5.70: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
  * - v1.5.70: updates runtime diagnostics and plugin guidance to verify the currently fresh raw main update channel
  * - v1.5.69: raises API Hub/NanoGPT default call timeout from the old 60 seconds to 10 minutes and migrates legacy NanoGPT 60-second settings
  * - v1.5.69: adds an API Hub timeout field so users can set a larger timeout or 0 for no plugin-side request timeout
@@ -255,12 +260,12 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.63: adds Kero planning and goal modes so TODO/planning requests cannot execute save actions until the user approves goal-mode execution
  * - v1.5.63: routes approved planning drafts into goal-mode missions and restores Kero's older playful speech/personality across daily, planning, work, and goal prompts
  * - v1.5.62: normalizes lorebook folder entries, resolves natural-language folder references, and preserves folder fields in character patch lorebook writes
- * - v1.5.61: points auto-update at raw SuperVibeBot.update.js, the compatibility file that currently returns fresh non-empty Range metadata
- * - v1.5.60: restores the auto-update URL to raw.githubusercontent.com because jsDelivr Range fetch can return an empty 206 body in Risu-style checks
+ * - v1.5.61: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
+ * - v1.5.60: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
  * - v1.5.59: adds Kero-managed sub-agent division of labor with Kero direct-work ownership and per-agent assigned scopes
- * - v1.5.58: moves auto-update to jsDelivr @main SuperVibeBot.js to avoid GitHub raw branch/file cache lag
- * - v1.5.57: points auto-update at the fresh SuperVibeBot.js raw branch file instead of the file-specific stale SuperVibeBot.update.js cache
- * - v1.5.56: switches the auto-update URL to raw refs/heads/main so fresh releases are not hidden by the stale /main/ raw cache
+ * - v1.5.58: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
+ * - v1.5.57: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
+ * - v1.5.56: historical update-channel adjustment; superseded by the fixed v1.5.90 policy
  * - v1.5.55: removes bulk_create character-budget chunk shrinking so rich jobs start with multi-item chunks
  * - v1.5.55: uses enabled sub-agents by default in work-mode bulk, recovery, and chunk generation paths
  * - v1.5.55: carries existing and job-local lorebook identities into chunk prompts to avoid repeating the same title with slightly changed text
@@ -13638,12 +13643,16 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.89',
+            '//@version 1.5.90',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
-        const superVibeUsesVerifiedRawMain = /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main\/SuperVibeBot\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesVerifiedRawMain = SUPER_VIBE_BOT_UPDATE_URL === SUPER_VIBE_BOT_CANONICAL_UPDATE_URL
+            && /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main\/SuperVibeBot\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         const superVibeUsesGithubRawCompatibility = /github\.com\/nupa0w0-hash\/supervibebot-update\/raw/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesReleaseLatest = /github\.com\/nupa0w0-hash\/supervibebot-update\/releases\/latest\/download/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesAliasFile = /SuperVibeBot\.(?:update|auto)\.js(?:$|[?#])/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesShortRawMain = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/main\/SuperVibeBot\.js/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         return {
             autoUpdateReady: metadata.autoUpdateReady === true,
             versionByteIndex: metadata.versionByteIndex,
@@ -13660,7 +13669,10 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             superVibeUpdateUrl: SUPER_VIBE_BOT_UPDATE_URL,
             superVibeMetadataReady: superVibeMetadata.autoUpdateReady === true,
             superVibeUsesVerifiedRawMain,
-            superVibeUsesGithubRawCompatibility
+            superVibeUsesGithubRawCompatibility,
+            superVibeUsesReleaseLatest,
+            superVibeUsesAliasFile,
+            superVibeUsesShortRawMain
         };
     });
     if (!result.ok) {
@@ -13681,9 +13693,12 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
     if (!value.storedInvalidRejected) problems.push('저장 updateURL http 허용');
     if (!value.storedMismatchRejected) problems.push('script/store updateURL 불일치 허용');
     if (!value.stringMetadataIgnored) problems.push('스크립트 문자열 내부 메타데이터 오인');
-    if (!value.superVibeMetadataReady) problems.push('슈바봇 release update-url 자동 업데이트 판정 실패');
+    if (!value.superVibeMetadataReady) problems.push('슈바봇 official update-url 자동 업데이트 판정 실패');
     if (!value.superVibeUsesVerifiedRawMain) problems.push('슈바봇 update-url이 검증된 raw.githubusercontent.com refs/heads/main SuperVibeBot.js 경로가 아님');
     if (value.superVibeUsesGithubRawCompatibility) problems.push('슈바봇 update-url이 github.com/raw 호환 경로임');
+    if (value.superVibeUsesReleaseLatest) problems.push('SuperVibeBot update-url uses GitHub releases/latest');
+    if (value.superVibeUsesAliasFile) problems.push('SuperVibeBot update-url uses SuperVibeBot.update.js/SuperVibeBot.auto.js alias');
+    if (value.superVibeUsesShortRawMain) problems.push('SuperVibeBot update-url uses short /main/ raw path');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '플러그인 자동 업데이트 메타데이터 자체 테스트',
@@ -37955,7 +37970,7 @@ ${metaBlock}
 - assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
 - //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch에서 본문이 실제로 반환되어야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com URL을 쓰되, 현재 Range 응답이 최신 버전을 반환하는 경로를 직접 검증해 사용한다.
-- jsDelivr GitHub 경로는 일부 Range fetch에서 206 응답만 오고 본문이 비는 경우가 있으므로 자동 업데이트 기본값으로 추천하지 않는다. github.com/raw 호환 경로는 302를 거치므로 raw.githubusercontent.com 직접 경로가 검증되는 경우 그쪽을 우선한다.
+- SuperVibeBot ??? update-url? ??? ?? URL? ????. ?? GitHub/CDN/?? update-url? ???? ???.
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 에셋 prompt는 영어 중심으로 쓴다. 이름/고유명은 그대로 두되, 외형/의상/구도/표정/조명/배경/스타일을 구체적으로 작성한다.
@@ -45420,7 +45435,7 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - \`//@name\` is the stable plugin identity. Do not rename it during updates; use displayName/\`//@display-name\` for visible labels.
 - \`//@version\` is required for RisuAI update checks and should be within the first 512 bytes.
 - \`//@update-url\` must be an HTTPS JavaScript file URL that returns a non-empty body for browser fetches with \`Range: bytes=0-512\`. For GitHub-hosted plugins, use a verified \`raw.githubusercontent.com\` URL and re-check that the exact URL returns the newest version before release.
-- Avoid jsDelivr GitHub URLs for RisuAI auto-update defaults because some Range fetches return a 206 response with an empty body. Avoid \`github.com/.../raw\` compatibility URLs when the direct \`raw.githubusercontent.com\` path works.
+- For SuperVibeBot itself, never suggest a different update-url; keep the fixed official raw main SuperVibeBot.js channel.
 - When updating an existing plugin, keep \`//@name\` unchanged, bump \`//@version\`, and preserve \`//@update-url\` unless the user provides a new release URL.
 
 ### Runtime Rules
