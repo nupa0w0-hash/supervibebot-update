@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.94
-//@version 1.5.94
+//@display-name 🐸 SuperVibeBot v1.5.95
+//@version 1.5.95
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.94는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.95는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.95 Release Notes
+ * - v1.5.95: retries Wellspring image requests across risuFetch/nativeFetch and JSON body modes when the host reports Host execution error or Failed to fetch
+ * - v1.5.95: treats Wellspring 400 bodies that contain fetch transport failures as retryable transport failures instead of final API rejections
+ * - v1.5.95: keeps AbortController cancellation but strips AbortSignal on fallback transports that can fail host-side cloning
+ *
  * SuperVibeBot v1.5.94 Release Notes
  * - v1.5.94: removes the overbuilt Danbooru MCP HTTP/server dependency from Kero asset generation
  * - v1.5.94: keeps Danbooru tag material as prompt-writing guidance only; Kero writes stable 2D anime/Danbooru-style tags directly
@@ -13658,7 +13663,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.94',
+            '//@version 1.5.95',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13825,6 +13830,62 @@ function addSvbRuntimeWellspringImageSelfTest(checks) {
         problems.length === 0,
         'Wellspring image route/SSE self test',
         problems.length ? `Problems: ${problems.join(' / ')}` : 'Wellspring active-preset NAI route, workflow routing, and SSE job parsing are coherent',
+        problems.length ? 'error' : 'ok'
+    ));
+}
+
+function addSvbRuntimeWellspringFetchRetrySelfTest(checks) {
+    const result = readSvbRuntimeValue('Wellspring fetch retry classifier self test', () => {
+        const failedFetchRaw = {
+            ok: false,
+            status: 400,
+            bytes: new TextEncoder().encode('TypeError: Failed to fetch')
+        };
+        const jsonRaw = {
+            ok: false,
+            status: 500,
+            bytes: new TextEncoder().encode('Unexpected token "\\\"", "\\"{\\\\\\"input\\\\\\"" is not valid JSON')
+        };
+        const actualBadRequestRaw = {
+            ok: false,
+            status: 400,
+            bytes: new TextEncoder().encode('Sampler k_euler_ancestral not allowed for this model')
+        };
+        const prepared = svbPrepareFetchOptions({
+            method: 'POST',
+            body: { input: 'diagnostic' },
+            signal: { diagnostic: true },
+            svbDisableFetchSignal: true,
+            svbPreferRisuFetch: true,
+            svbStringifyJsonBody: true
+        }, true, { stringifyJsonBody: true });
+        return {
+            retriesFailedFetchBody: svbShouldRetryWellspringRaw(failedFetchRaw),
+            retriesJsonEncodingBody: svbShouldRetryWellspringRaw(jsonRaw),
+            doesNotRetryActualApiRejection: !svbShouldRetryWellspringRaw(actualBadRequestRaw),
+            stripsInternalFlags: !Object.prototype.hasOwnProperty.call(prepared, 'svbPreferRisuFetch')
+                && !Object.prototype.hasOwnProperty.call(prepared, 'svbStringifyJsonBody')
+                && !Object.prototype.hasOwnProperty.call(prepared, 'svbDisableFetchSignal'),
+            stringifiesJsonBody: typeof prepared.body === 'string',
+            keepsContentType: /application\/json/i.test(safeString(prepared.headers?.['Content-Type']))
+        };
+    });
+    if (!result.ok) {
+        checks.push(makeSvbRuntimeCheck(false, 'Wellspring fetch retry classifier self test', result.error, 'error'));
+        return;
+    }
+    const value = result.value || {};
+    const problems = [];
+    if (!value.retriesFailedFetchBody) problems.push('Failed to fetch body is not retryable');
+    if (!value.retriesJsonEncodingBody) problems.push('JSON body encoding error is not retryable');
+    if (!value.doesNotRetryActualApiRejection) problems.push('actual API rejection is retried as transport failure');
+    if (!value.stripsInternalFlags) problems.push('internal fetch flags leak into host fetch options');
+    if (!value.stringifiesJsonBody) problems.push('fallback JSON body was not stringified');
+    if (!value.keepsContentType) problems.push('fallback JSON content-type missing');
+    checks.push(makeSvbRuntimeCheck(
+        problems.length === 0,
+        'Wellspring fetch retry classifier self test',
+        problems.length ? `Problems: ${problems.join(' / ')}` : 'Wellspring Host execution/Failed to fetch and JSON body errors are routed to transport fallback retries',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -15380,6 +15441,7 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimePluginMetadataSelfTest(checks);
     addSvbRuntimeRisuaiGuideSelfTest(checks);
     addSvbRuntimeWellspringImageSelfTest(checks);
+    addSvbRuntimeWellspringFetchRetrySelfTest(checks);
     addSvbRuntimeWellspringLoraIdentitySelfTest(checks, localFunctions);
     addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
@@ -22736,6 +22798,7 @@ function svbPrepareFetchOptions(options = {}, rawResponse = false, settings = {}
     const {
         svbPreferRisuFetch: _svbPreferRisuFetch,
         svbStringifyJsonBody: _svbStringifyJsonBody,
+        svbDisableFetchSignal: _svbDisableFetchSignal,
         ...fetchOptions
     } = options || {};
     const prepared = { ...fetchOptions, headers: { ...(fetchOptions.headers || {}) } };
@@ -22778,8 +22841,8 @@ async function svbImageFetchRaw(url, options = {}, label = "이미지 API", time
         ? options.svbStringifyJsonBody
         : !usingRisuFetch;
     const requestOptions = svbPrepareFetchOptions(options, true, { stringifyJsonBody });
-    if (effectiveSignal && canAbort) requestOptions.signal = effectiveSignal;
-    else if (!canAbort) delete requestOptions.signal;
+    if (effectiveSignal && canAbort && options?.svbDisableFetchSignal !== true) requestOptions.signal = effectiveSignal;
+    else delete requestOptions.signal;
     let timer = null;
     let timedOut = false;
     try {
@@ -22938,18 +23001,85 @@ function svbShouldRetryWellspringBodyEncoding(raw) {
     return /json|unexpected token|valid json|body|payload|잘못된 요청|구문|파싱/i.test(text);
 }
 
-async function svbWellspringFetchRaw(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
-    const primaryOptions = { ...options, svbPreferRisuFetch: true };
-    const primary = await svbImageFetchRaw(url, primaryOptions, label, timeoutMs);
-    if (!svbShouldRetryWellspringBodyEncoding(primary) || !getNativeFetch()) return primary;
+function svbWellspringRawText(raw) {
     try {
-        const retryOptions = { ...options, svbPreferRisuFetch: false, svbStringifyJsonBody: true };
-        const retry = await svbImageFetchRaw(url, retryOptions, `${label} native 재시도`, timeoutMs);
-        return retry.ok ? retry : primary;
-    } catch (error) {
-        Logger.warn('Wellspring native fetch retry failed:', error?.message || error);
-        return primary;
+        return new TextDecoder().decode(raw?.bytes || new Uint8Array()).slice(0, 1000);
+    } catch (_) {
+        return '';
     }
+}
+
+function svbIsWellspringTransportFailureText(value = '') {
+    return /host execution error|failed to fetch|network\s*error|networkerror|load failed|fetch failed|connection(?:\s+was)?\s*(?:reset|closed|refused)|econnreset|econnrefused|etimedout|timeout|socket|cors/i.test(safeString(value));
+}
+
+function svbShouldRetryWellspringTransportRaw(raw) {
+    if (!raw || raw.ok) return false;
+    return svbIsWellspringTransportFailureText(svbWellspringRawText(raw));
+}
+
+function svbShouldRetryWellspringRaw(raw) {
+    return svbShouldRetryWellspringBodyEncoding(raw) || svbShouldRetryWellspringTransportRaw(raw);
+}
+
+async function svbWellspringFetchRaw(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
+    const attempts = [];
+    const runAttempt = async (attemptOptions, attemptLabel) => {
+        try {
+            throwIfSvbAborted(options?.signal || null, `${label} retry stopped before ${attemptLabel}`);
+            const raw = await svbImageFetchRaw(url, attemptOptions, attemptLabel, timeoutMs);
+            attempts.push({ label: attemptLabel, raw });
+            return { raw };
+        } catch (error) {
+            if (isSvbAbortError(error)) throw error;
+            attempts.push({ label: attemptLabel, error });
+            Logger.warn(`${attemptLabel} failed:`, error?.message || error);
+            return { error };
+        }
+    };
+
+    const primary = await runAttempt({ ...options, svbPreferRisuFetch: true }, label);
+    if (primary.raw?.ok) return primary.raw;
+    if (primary.raw && !svbShouldRetryWellspringRaw(primary.raw)) return primary.raw;
+    if (primary.error && !svbIsWellspringTransportFailureText(primary.error?.message || primary.error)) throw primary.error;
+
+    const retryPlans = [];
+    if (getNativeFetch()) {
+        retryPlans.push({
+            label: `${label} native JSON retry`,
+            options: { ...options, svbPreferRisuFetch: false, svbStringifyJsonBody: true, svbDisableFetchSignal: true }
+        });
+    }
+    retryPlans.push({
+        label: `${label} risuFetch JSON retry`,
+        options: { ...options, svbPreferRisuFetch: true, svbStringifyJsonBody: true, svbDisableFetchSignal: true }
+    });
+    if (getNativeFetch()) {
+        retryPlans.push({
+            label: `${label} native object retry`,
+            options: { ...options, svbPreferRisuFetch: false, svbStringifyJsonBody: false, svbDisableFetchSignal: true }
+        });
+    }
+
+    let lastRaw = primary.raw || null;
+    let lastError = primary.error || null;
+    for (const plan of retryPlans) {
+        const result = await runAttempt(plan.options, plan.label);
+        if (result.raw?.ok) return result.raw;
+        if (result.raw) {
+            lastRaw = result.raw;
+            if (!svbShouldRetryWellspringRaw(result.raw)) return result.raw;
+        }
+        if (result.error) lastError = result.error;
+    }
+
+    if (lastRaw) return lastRaw;
+    const summary = attempts.map((attempt) => {
+        if (attempt.raw) return `${attempt.label}: HTTP ${attempt.raw.status} ${svbWellspringRawText(attempt.raw).slice(0, 160)}`;
+        return `${attempt.label}: ${attempt.error?.message || attempt.error}`;
+    }).join(' / ');
+    if (lastError) throw new Error(`${label} transport failed after retries: ${summary}`);
+    throw new Error(`${label} transport failed after retries.`);
 }
 
 async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", timeoutMs = 180000) {
@@ -45713,7 +45843,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.94 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.95 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
