@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.95
-//@version 1.5.95
+//@display-name 🐸 SuperVibeBot v1.5.96
+//@version 1.5.96
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.95는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.96는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,12 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.96 Release Notes
+ * - v1.5.96: removes pluginStorage-backed Kero mission/action/bulk/input/workstream runtime recovery and keeps those states in memory only
+ * - v1.5.96: disables bulk_create job execution/recovery and requires multi-item work to use direct create payload arrays
+ * - v1.5.96: reduces Kero work/goal model calls to one attempt and removes local gateway/output-limit recovery loops that created extra jobs
+ * - v1.5.96: derives image asset identityPrompt/identityNegative from the current character when the model omits identity data, preserving male/female/unknown gender signals instead of defaulting toward 1girl
+ *
  * SuperVibeBot v1.5.95 Release Notes
  * - v1.5.95: retries Wellspring image requests across risuFetch/nativeFetch and JSON body modes when the host reports Host execution error or Failed to fetch
  * - v1.5.95: treats Wellspring 400 bodies that contain fetch transport failures as retryable transport failures instead of final API rejections
@@ -1532,7 +1538,7 @@ function hasKeroActionDirectiveText(text) {
 
 function assertNoKeroActionDirectiveInFieldText(text, label = '필드') {
     if (!hasKeroActionDirectiveText(text)) return;
-    throw new Error(`${label} AI 결과에 작업 명령(@action)이 포함되어 저장을 중단했습니다. 큰 작업은 캐릭터 update 또는 bulk_create 액션으로 분리해 다시 실행해야 합니다.`);
+    throw new Error(`${label} AI 결과에 작업 명령(@action)이 포함되어 저장을 중단했습니다. 저장 가능한 작은 update/create 액션으로 다시 요청해야 합니다.`);
 }
 
 function isLikelyKeroInternalCodeError(error) {
@@ -4038,9 +4044,43 @@ async function clearKeroChat(char) {
     await risuai.pluginStorage.removeItem(KERO_KEYS.CHAT_GLOBAL());
 }
 
+const keroRuntimeMissionStore = new Map();
+const keroRuntimeActionJobStore = new Map();
+const keroRuntimeInputQueueStore = new Map();
+const keroRuntimeWorkstreamStore = new Map();
+const keroRuntimeBulkCreateJobStore = new Map();
+const keroRuntimeBulkEditStateStore = new Map();
+const keroLegacyRuntimeStateCleared = new Set();
+
+function cloneKeroRuntimeState(value, fallback) {
+    const cloned = makeCloneableData(value);
+    return cloned === undefined || cloned === null ? fallback : cloned;
+}
+
+async function clearKeroPersistentRuntimeState(id) {
+    const storageId = safeString(id).trim();
+    if (!storageId || keroLegacyRuntimeStateCleared.has(storageId)) return;
+    keroLegacyRuntimeStateCleared.add(storageId);
+    await Promise.all([
+        risuai.pluginStorage.removeItem(KERO_KEYS.MISSION(storageId)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.ACTION_JOBS(storageId)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.INPUT_QUEUE(storageId)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.WORKSTREAM(storageId)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.BULK_CREATE_JOBS(storageId)),
+        risuai.pluginStorage.removeItem(KERO_KEYS.BULK_EDIT_STATE(storageId))
+    ]);
+}
+
 async function clearKeroRecoveryState(char) {
     const id = await getKeroCharId(char);
     if (!id) return;
+    keroRuntimeMissionStore.delete(id);
+    keroRuntimeActionJobStore.delete(id);
+    keroRuntimeInputQueueStore.delete(id);
+    keroRuntimeWorkstreamStore.delete(id);
+    keroRuntimeBulkCreateJobStore.delete(id);
+    keroRuntimeBulkEditStateStore.delete(id);
+    keroLegacyRuntimeStateCleared.delete(id);
     await Promise.all([
         risuai.pluginStorage.removeItem(KERO_KEYS.MISSION(id)),
         risuai.pluginStorage.removeItem(KERO_KEYS.ACTION_JOBS(id)),
@@ -4073,10 +4113,10 @@ async function saveKeroMemory(char, list) {
 async function loadKeroMission(char) {
     const id = await getKeroCharId(char);
     if (!id) return null;
-    const stored = await safePluginGetItem(KERO_KEYS.MISSION(id), `kero mission load:${id}`);
-    const parsed = safeParseJSON(stored, null);
-    if (!parsed || typeof parsed !== 'object') return null;
-    return { ...parsed, storageId: parsed.storageId || id };
+    await clearKeroPersistentRuntimeState(id);
+    const stored = keroRuntimeMissionStore.get(id);
+    if (!stored || typeof stored !== 'object') return null;
+    return { ...cloneKeroRuntimeState(stored, {}), storageId: stored.storageId || id };
 }
 
 function cloneKeroMissionSnapshot(mission, storageId = '') {
@@ -4104,29 +4144,15 @@ async function saveKeroMission(charOrId, mission) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id || !mission) return false;
     const snapshot = cloneKeroMissionSnapshot(mission, id);
-    let lastError = null;
-    for (let attempt = 0; attempt < KERO_MISSION_PERSIST_RETRY_DELAYS.length; attempt += 1) {
-        const delayMs = Number(KERO_MISSION_PERSIST_RETRY_DELAYS[attempt] || 0);
-        if (delayMs > 0) {
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-        }
-        try {
-            const ok = await safePluginSetItem(KERO_KEYS.MISSION(id), JSON.stringify(snapshot), `kero mission save:${id}:attempt${attempt + 1}`);
-            if (ok) return true;
-            lastError = new Error(`pluginStorage.setItem returned false (${id})`);
-        } catch (error) {
-            lastError = error;
-        }
-    }
-    throw lastError || new Error(`미션 상태 저장 실패: ${id}`);
+    keroRuntimeMissionStore.set(id, snapshot);
+    return true;
 }
 
 async function loadKeroActionJobs(charOrId) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return {};
-    const stored = await safePluginGetItem(KERO_KEYS.ACTION_JOBS(id), `kero action jobs load:${id}`);
-    const parsed = safeParseJSON(stored, {});
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    await clearKeroPersistentRuntimeState(id);
+    return cloneKeroRuntimeState(keroRuntimeActionJobStore.get(id), {});
 }
 
 function getKeroJobTimestampMs(job = {}) {
@@ -4202,8 +4228,7 @@ function pruneKeroActionJobsForStorage(jobs = {}) {
 async function saveKeroActionJobs(charOrId, jobs) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return;
-    const ok = await safePluginSetItem(KERO_KEYS.ACTION_JOBS(id), JSON.stringify(pruneKeroActionJobsForStorage(jobs || {})), `kero action jobs save:${id}`);
-    if (!ok) throw new Error(`액션 job 상태 저장 실패: ${id}`);
+    keroRuntimeActionJobStore.set(id, pruneKeroActionJobsForStorage(jobs || {}));
 }
 
 function normalizeKeroInputQueue(queue = []) {
@@ -4246,58 +4271,24 @@ function capKeroInputQueue(queue = [], limit = KERO_INPUT_QUEUE_STORAGE_LIMIT) {
     return [...inactive, ...active, ...attention].slice(-safeLimit);
 }
 
-function recoverStaleKeroInputQueue(queue = [], options = {}) {
-    const now = Number(options.now || Date.now());
-    let recovered = 0;
-    const normalized = normalizeKeroInputQueue(queue).map((item) => {
-        if (safeString(item.status) !== 'processing') return item;
-        const processingAt = Number(item.processingAt || 0);
-        const heartbeatAt = Number(item.heartbeatAt || 0);
-        const queuedAt = Number(item.queuedAt || 0);
-        const lastActiveAt = heartbeatAt || processingAt || queuedAt;
-        const owner = safeString(item.runtimeSessionId || '');
-        const isForeignOwner = Boolean(owner && owner !== keroRuntimeSessionId);
-        const staleMs = isForeignOwner ? KERO_INPUT_QUEUE_FOREIGN_PROCESSING_STALE_MS : KERO_INPUT_QUEUE_PROCESSING_STALE_MS;
-        const isStale = !lastActiveAt || now - lastActiveAt > staleMs;
-        if (!isStale) return item;
-        recovered += 1;
-        const nextRetryCount = Math.max(0, Number(item.retryCount || 0)) + 1;
-        const failedPermanently = nextRetryCount >= 3;
-        return {
-            ...item,
-            status: failedPermanently ? 'failed' : 'queued',
-            processingAt: 0,
-            heartbeatAt: 0,
-            runtimeSessionId: '',
-            retryCount: nextRetryCount,
-            recoveredAt: now,
-            lastTaskStatus: 'stale_processing',
-            lastError: item.lastError || (failedPermanently
-                ? '처리 중 중단 복구가 3회 반복되어 자동 재시도를 멈췄습니다. 재시도하려면 "재시도"라고 말해주세요.'
-                : '이전 처리 중 창/탭 중단으로 대기열에 복구됨')
-        };
-    });
-    return { queue: normalized, recovered };
-}
-
 async function loadKeroInputQueue(charOrId) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return [];
-    const stored = await safePluginGetItem(KERO_KEYS.INPUT_QUEUE(id), `kero input queue load:${id}`);
-    return normalizeKeroInputQueue(safeParseJSON(stored, []));
+    await clearKeroPersistentRuntimeState(id);
+    return normalizeKeroInputQueue(cloneKeroRuntimeState(keroRuntimeInputQueueStore.get(id), []));
 }
 
 async function saveKeroInputQueue(charOrId, queue) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return;
-    await safePluginSetItem(KERO_KEYS.INPUT_QUEUE(id), JSON.stringify(capKeroInputQueue(queue)), `kero input queue save:${id}`);
+    keroRuntimeInputQueueStore.set(id, capKeroInputQueue(queue));
 }
 
 async function loadKeroWorkstreamEvents(charOrId) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return [];
-    const stored = await safePluginGetItem(KERO_KEYS.WORKSTREAM(id), `kero workstream load:${id}`);
-    return ensureArray(safeParseJSON(stored, [])).slice(0, KERO_MISSION_EVENT_LIMIT);
+    await clearKeroPersistentRuntimeState(id);
+    return ensureArray(cloneKeroRuntimeState(keroRuntimeWorkstreamStore.get(id), [])).slice(0, KERO_MISSION_EVENT_LIMIT);
 }
 
 async function saveKeroWorkstreamEvents(charOrId, events) {
@@ -4311,15 +4302,14 @@ async function saveKeroWorkstreamEvents(charOrId, events) {
             delete clone.ephemeral;
             return clone;
         });
-    await safePluginSetItem(KERO_KEYS.WORKSTREAM(id), JSON.stringify(persistentEvents), `kero workstream save:${id}`);
+    keroRuntimeWorkstreamStore.set(id, persistentEvents);
 }
 
 async function loadKeroBulkCreateJobs(charOrId) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return {};
-    const stored = await safePluginGetItem(KERO_KEYS.BULK_CREATE_JOBS(id), `kero bulk create jobs load:${id}`);
-    const parsed = safeParseJSON(stored, {});
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    await clearKeroPersistentRuntimeState(id);
+    return cloneKeroRuntimeState(keroRuntimeBulkCreateJobStore.get(id), {});
 }
 
 function sanitizeKeroBulkRangeForStorage(range = {}) {
@@ -4366,8 +4356,7 @@ function pruneKeroBulkCreateJobsForStorage(jobs = {}) {
 async function saveKeroBulkCreateJobs(charOrId, jobs) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return;
-    const ok = await safePluginSetItem(KERO_KEYS.BULK_CREATE_JOBS(id), JSON.stringify(pruneKeroBulkCreateJobsForStorage(jobs || {})), `kero bulk create jobs save:${id}`);
-    if (!ok) throw new Error(`대량 생성 job 상태 저장 실패: ${id}`);
+    keroRuntimeBulkCreateJobStore.set(id, pruneKeroBulkCreateJobsForStorage(jobs || {}));
 }
 
 function isPersistableKeroBulkEditTarget(target) {
@@ -4417,14 +4406,14 @@ function normalizeKeroBulkEditStateMap(map = {}) {
 async function loadKeroBulkEditState(charOrId) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return {};
-    const stored = await safePluginGetItem(KERO_KEYS.BULK_EDIT_STATE(id), `kero bulk edit state load:${id}`);
-    return normalizeKeroBulkEditStateMap(safeParseJSON(stored, {}));
+    await clearKeroPersistentRuntimeState(id);
+    return normalizeKeroBulkEditStateMap(cloneKeroRuntimeState(keroRuntimeBulkEditStateStore.get(id), {}));
 }
 
 async function saveKeroBulkEditState(charOrId, state = bulkEditState) {
     const id = typeof charOrId === 'string' ? charOrId : await getKeroCharId(charOrId);
     if (!id) return;
-    await safePluginSetItem(KERO_KEYS.BULK_EDIT_STATE(id), JSON.stringify(normalizeKeroBulkEditStateMap(state)), `kero bulk edit state save:${id}`);
+    keroRuntimeBulkEditStateStore.set(id, normalizeKeroBulkEditStateMap(state));
 }
 
 function persistKeroBulkEditState() {
@@ -4446,7 +4435,7 @@ function inferKeroMissionSteps(userInput = '', mode = currentWorkTargetMode) {
         '결과 검증 및 다음 단계 정리'
     ];
     if (/로어북|lorebook|50|100|1000|대량|여러/.test(lower)) {
-        steps.splice(3, 0, '로어북/정규식/트리거 대량 항목을 bulk_create 청크로 처리');
+        steps.splice(3, 0, '로어북/정규식/트리거 항목은 응답에 담기는 만큼 직접 create 배열로 처리');
     }
     if (/서브|agent|에이전트|glm|kimi|검토/.test(lower)) {
         steps.splice(2, 0, '서브에이전트 검토와 충돌 의견 정리');
@@ -9045,15 +9034,12 @@ let currentKeroTaskAbortLink = null;
 let currentKeroTaskAbortReason = '';
 let currentKeroTaskCancelRequested = false;
 const keroRuntimeLocalOps = {
-    drainQueuedInputs: null,
     renderWorkstream: null,
     updateQueuedInputUi: null,
     addBotMessage: null,
     handleKeroActionRequest: null,
     openKeroToolsPanel: null,
-    bindKeroToolsEvents: null,
-    runKeroBulkCreate: null,
-    autoResumeKeroBulkJobsUntilSettled: null
+    bindKeroToolsEvents: null
 };
 const keroReleasedZombieJobIds = new Set();
 const keroReleasedZombieJobMeta = new Map();
@@ -9074,8 +9060,6 @@ let keroQueuedUserInputs = [];
 let keroProcessingQueuedInput = false;
 let keroQueueDrainAgainRequested = false;
 let keroSuppressNextQueueDrainReason = '';
-let keroBulkAutoResumeRunning = false;
-let keroBulkAutoResumeRounds = {};
 let keroAssistantStateRefreshPending = false;
 let keroRecoveryNoticeKey = '';
 let keroPendingWorkTargetMode = "";
@@ -9615,29 +9599,7 @@ async function restoreKeroMission(char) {
         return null;
     }
     currentKeroPersistentStorageId = mission.storageId || await getKeroCharId(char);
-    const updatedAtMs = Date.parse(mission.updatedAt || mission.createdAt || '');
-    const isStaleRunning = mission.status === 'running'
-        && Number.isFinite(updatedAtMs)
-        && Date.now() - updatedAtMs > KERO_MISSION_STALE_MS;
-    if (isStaleRunning) {
-        mission.status = 'interrupted';
-        mission.lastError = '이전 실행이 창/탭 종료 또는 장시간 응답 대기로 중단된 것으로 감지되었습니다.';
-        mission.updatedAt = new Date().toISOString();
-        ensureArray(mission.events).unshift({
-            title: '미션 중단 감지',
-            detail: mission.lastError,
-            status: 'interrupted',
-            timestamp: mission.updatedAt
-        });
-        mission.events = ensureArray(mission.events).slice(0, KERO_MISSION_EVENT_LIMIT);
-        await flushKeroMissionPersistNow('restore_interrupted_mission', {
-            snapshot: mission,
-            storageId: currentKeroPersistentStorageId,
-            allowStale: true
-        });
-    }
     currentKeroMission = mission;
-    addKeroWorkstreamEvent('이전 미션 복원', `${mission.status || 'running'} · ${safeString(mission.objective).slice(0, 160)}`, 'context');
     return mission;
 }
 
@@ -9653,7 +9615,7 @@ async function finishKeroMission(status = 'done', detail = '') {
         lastError: nextStatus === 'error' || nextStatus === 'blocked' || hasWarning ? safeString(detail) : ''
     }, {
         title: nextStatus === 'done' ? '미션 완료' : (hasWarning ? '미션 검증 경고' : '미션 상태 변경'),
-        detail: hasWarning && hasAttention ? `${detail || '검증 경고가 남아 있습니다.'} 일반 계속 진행은 경고 작업을 보류하고, 경고 작업 재실행은 "재시도"로 요청할 수 있습니다.` : detail,
+        detail: hasWarning && hasAttention ? `${detail || '검증 경고가 남아 있습니다.'} 자동 재시도/복원은 실행하지 않습니다. 필요한 수정 내용을 새 요청으로 입력해주세요.` : detail,
         status: nextStatus
     });
     return await flushKeroMissionPersistNow('mission_finish', {
@@ -9822,13 +9784,7 @@ ${clean}`;
 }
 
 function shouldQueueKeroFollowupDuringTask(text, options = {}) {
-    const clean = safeString(text).trim();
-    if (!clean) return false;
-    if (options.steeringOnly === true) return false;
-    if (options.queueAfterTask === true || options.followupAction === true || options.forceQueue === true) return true;
-    if (!currentKeroMission) return true;
-    if (isKeroMissionResumeRequest(clean) || isKeroExplicitRetryRequest(clean)) return true;
-    return /(?:작업|미션|요청|처리)?\s*(?:끝나면|끝난\s*뒤|끝나고|완료\s*(?:후|되면|하면)|마치면|끝마치면)|(?:다음|후속|별도|새)\s*(?:작업|요청|처리|진행)|(?:대기열|큐)\s*(?:에|로)?\s*(?:넣|남겨|추가)|(?:나중에|그\s*다음|그리고\s*(?:나서|다음)|이어서)\s*(?:해|처리|진행|만들|수정)|(?:따로|별도로)\s*(?:해|처리|진행|작업)/i.test(clean);
+    return false;
 }
 
 function renderKeroMissionPromptBlock() {
@@ -9856,9 +9812,9 @@ ${events || '(아직 이벤트 없음)'}
 ${steeringBlock || '### 진행 중 사용자 스티어링\n(아직 추가 스티어링 없음)'}
 
 미션 규칙:
-- 이 미션은 끝까지 이어가는 작업 단위다. "계속", "다음 작업", "이어가" 같은 요청은 이 미션의 미완료 단계를 이어가는 뜻으로 해석한다.
-- 큰 작업은 한 번에 끝내려 하지 말고 저장 가능한 첫 단위부터 적용하고, bulk_create/작업 큐/후속 액션으로 계속 진행한다.
-- 실패 이벤트가 있으면 같은 큰 요청을 반복하지 말고 더 작은 실행 단위나 대체 프로바이더 기준으로 복구한다.`;
+- 이 미션은 현재 요청을 실제 저장 가능한 단위로 처리하기 위한 작업 단위다.
+- 큰 작업은 품질을 낮추지 말고 현재 응답에서 완성 가능한 첫 저장 단위를 적용한다.
+- 실패 이벤트가 있으면 같은 큰 요청을 자동 반복하지 말고 현재 상태와 실패 원인을 짧게 보고한다.`;
 }
 
 function buildKeroTaskPlanStepsFromActions(actions = []) {
@@ -9949,8 +9905,6 @@ function normalizeKeroActionTypeName(type) {
         createimage: 'create',
         assetgeneration: 'create',
         imagegeneration: 'create',
-        bulkcreate: 'bulk_create',
-        bulkadd: 'bulk_create',
         delete: 'delete',
         remove: 'delete'
     };
@@ -10060,7 +10014,6 @@ function getKeroActionLabel(type) {
         apply: '적용',
         create: '생성',
         asset_manage: '에셋 관리',
-        bulk_create: '대량 생성',
         delete: '삭제'
     };
     return labels[key] || safeString(type || '작업');
@@ -10133,7 +10086,7 @@ function inferKeroActionTypeTargetFromAlias(value = '') {
     const raw = safeString(value).trim();
     if (!raw) return { type: '', target: '' };
     const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
-    const validTypes = new Set(['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+    const validTypes = new Set(['apply', 'asset_manage', 'create', 'delete', 'improve', 'patch', 'update']);
     const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
     for (let index = 0; index < parts.length; index += 1) {
         const first = parts[index];
@@ -10223,7 +10176,7 @@ function isKeroActionShapedObject(entry) {
     const type = normalizeKeroActionTypeName(entry.type);
     const target = normalizeKeroActionTargetName(entry.target);
     if (!type || !target) return false;
-    return ['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update'].includes(type);
+    return ['apply', 'asset_manage', 'create', 'delete', 'improve', 'patch', 'update'].includes(type);
 }
 
 function getKeroGlobalSingleFieldPatchKeys(target) {
@@ -10327,9 +10280,9 @@ function normalizeKeroParsedActionForExecution(action) {
     }
     if (['lorebook', 'regex', 'trigger'].includes(target)) {
         if (type === 'create' && !normalized.payload && Number(normalized.count || normalized.total || normalized.requestedCount || 0) > 1) {
-            return { ...normalized, type: 'bulk_create' };
+            return null;
         }
-        if (['improve', 'apply', 'create', 'bulk_create', 'delete'].includes(type)) return normalized;
+        if (['improve', 'apply', 'create', 'delete'].includes(type)) return normalized;
         return null;
     }
     if (target === 'asset') {
@@ -10383,30 +10336,7 @@ function getKeroDeclaredCreateCount(req = {}, payloadCount = 0) {
 }
 
 function buildKeroCreateCountCoverageActions(userInput, actions = [], options = {}) {
-    if (!hasKeroExplicitMutationIntent(userInput) || isKeroQuestionOnlyRequest(userInput)) return [];
-    const added = [];
-    ensureArray(actions).forEach((action, index) => {
-        if (!action || typeof action !== 'object') return;
-        const type = normalizeKeroActionTypeName(action.type);
-        const target = normalizeKeroActionTargetName(action.target);
-        if (type !== 'create' || !['lorebook', 'regex', 'trigger'].includes(target)) return;
-        const payloads = normalizeKeroCreatePayloads(action.payload);
-        const declared = getKeroDeclaredCreateCount(action, payloads.length);
-        const remaining = declared - payloads.length;
-        if (remaining <= 0) return;
-        added.push({
-            type: 'bulk_create',
-            target,
-            count: remaining,
-            requestedCount: remaining,
-            chunkSize: resolveKeroBulkCreateFallbackChunkSize(remaining, 8),
-            userRequest: safeString(action.userRequest || action.request || userInput).trim(),
-            reason: action.reason || 'create_count_coverage',
-            dependsOn: [safeString(action.stepId || action.actionJobId || `coverage-source-${index + 1}`)].filter(Boolean),
-            fullBuild: options.fullBuild === true || action.fullBuild === true
-        });
-    });
-    return added;
+    return [];
 }
 
 function parseBareKeroActionJson(text) {
@@ -10514,9 +10444,9 @@ function recoverKeroActionDirectivesFromFieldText(value, label = '필드', colle
     if (options.silentRecoveryEvent !== true && options.suppressWorkstreamEvent !== true) {
         try {
             addKeroWorkstreamEvent(
-                '필드 내 액션 분리',
-                `${label} 본문에 섞인 @action ${extractedActions.length}개를 분리해 후속 작업으로 이어 실행합니다.`,
-                'action',
+                '필드 내 액션 제거',
+                `${label} 본문에 섞인 @action ${extractedActions.length}개를 저장 텍스트에서 분리했습니다. 자동 후속 실행은 만들지 않습니다.`,
+                'warning',
                 typeof resolveKeroActionProgressOptions === 'function' ? resolveKeroActionProgressOptions(options) : options
             );
         } catch (error) {
@@ -10702,7 +10632,7 @@ function attachKeroActionPlanToMission(actions = []) {
     const incomingIds = new Set(actionSteps.map((step) => safeString(step.id)).filter(Boolean));
     const missionId = safeString(currentKeroMission.id);
     const isRecoveryPlan = ensureArray(actions).some((action) =>
-        /gateway_timeout|coverage_guard|resume_bulk_create/i.test(safeString(action?.reason))
+        /gateway_timeout|coverage_guard/i.test(safeString(action?.reason))
         || action?.allowWarningDependency === true
         || action?.softDependsOn === true
     );
@@ -10865,10 +10795,6 @@ function mergeKeroQueuedActionJob(previous = {}, job = {}) {
 }
 
 function getKeroActionJobId(action, fallback = '') {
-    const type = safeString(action?.type);
-    if (type === 'bulk_create') {
-        return safeString(action?.bulkJobId || action?.jobId || action?.actionJobId || action?.stepId || action?.planId || fallback);
-    }
     return safeString(action?.actionJobId || action?.jobId || action?.stepId || action?.planId || action?.bulkJobId || fallback);
 }
 
@@ -10934,7 +10860,7 @@ async function persistKeroActionJobSafely(label, operation, progressOptions = {}
             Logger.warn(`${title} persist attempt ${attempt + 1} failed:`, error?.message || error);
         }
     }
-    const detail = `${title} 저장을 재시도했지만 실패했습니다: ${lastError?.message || lastError || 'unknown error'} · 실제 작업은 계속 진행하지만, "계속 진행" 복구 기록이 약할 수 있습니다.`;
+    const detail = `${title} 저장에 실패했습니다: ${lastError?.message || lastError || 'unknown error'} · 이미 적용된 작업은 유지하고 자동 복구 큐는 만들지 않습니다.`;
     addKeroWorkstreamEvent('액션 기록 저장 지연', detail, 'warning', progressOptions);
     return false;
 }
@@ -10951,10 +10877,7 @@ function getKeroActionDependencyBlockReason(action) {
     const reason = safeString(action?.reason);
     const allowWarningDependency = action?.allowWarningDependency === true
         || action?.softDependsOn === true
-        || /resume_bulk_create/i.test(reason)
-        || (type === 'bulk_create' && /gateway_timeout|coverage_guard|missing_action|llm[_-]?chunk[_-]?queue|character[_-]?full[_-]?build|large[_-]?request/i.test(reason))
-        || (type === 'bulk_create' && (action?.fullBuild === true || action?.coverageFullBuild === true))
-        || (type !== 'bulk_create' && /gateway_timeout|coverage_guard/i.test(reason));
+        || /gateway_timeout|coverage_guard/i.test(reason);
     const successfulStatuses = new Set(allowWarningDependency
         ? ['done', 'verified', 'warning']
         : ['done', 'verified']);
@@ -11376,7 +11299,6 @@ function shouldForceKeroActionJobReplay(action = {}) {
         || action.forceRetry === true
         || action.retry === true
         || action.rerun === true
-        || action.autoBulkResume === true
         || safeString(action.reason).includes('manual_retry');
 }
 
@@ -11454,7 +11376,7 @@ function summarizeKeroActionVerification(action, beforeSnapshot, afterSnapshot, 
     const countKey = getKeroActionCountKey(target);
     if (countKey) {
         const delta = Number(afterSnapshot[countKey] || 0) - Number(beforeSnapshot[countKey] || 0);
-        if (type === 'create' || type === 'bulk_create') {
+        if (type === 'create') {
             const requested = Number(result.requested || action?.requested || action?.count || action?.total || 0);
             const created = Number(result.created || Math.max(0, Number(result.success || 0) - result.skipped));
             const processed = created + Number(result.skipped || 0);
@@ -11581,7 +11503,7 @@ function shouldVerifyKeroActionEffect(action) {
     const type = safeString(action?.type);
     const target = safeString(action?.target);
     const shouldVerifyImprove = type === 'improve' && action?.autoApply !== false;
-    if (!['create', 'asset_manage', 'bulk_create', 'delete', 'apply', 'update', 'patch'].includes(type) && !shouldVerifyImprove) return false;
+    if (!['create', 'asset_manage', 'delete', 'apply', 'update', 'patch'].includes(type) && !shouldVerifyImprove) return false;
     return ['desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'asset'].includes(target)
         || isKeroCharacterPatchAction(action)
         || isTextFieldStudioTarget(target);
@@ -11631,24 +11553,15 @@ async function verifyKeroActionEffect(action, beforeSnapshot, executionResult = 
 }
 
 function isKeroMissionResumeRequest(input) {
-    const text = safeString(input).trim().toLowerCase();
-    if (!text) return false;
-    return /^(계속|이어|이어가|재개|다음|다음 작업|남은 작업|계속 진행|진행해|resume|continue)\b/.test(text)
-        || /계속\s*(진행|해줘|하자)|이어\s*(진행|해줘|하자)|남은\s*작업|다음\s*작업|재개|재시도|retry|rerun/.test(text);
+    return false;
 }
 
 function isKeroExplicitRetryRequest(input) {
-    const text = safeString(input).trim().toLowerCase();
-    if (!text) return false;
-    return /재시도|재실행|재적용|재작업|retry|rerun|try\s*again|실패\s*(작업|액션)?\s*다시|액션\s*다시|저장\s*재시도|다시\s*(해봐|해줘|해|시도|실행|적용|저장|처리|진행|작업)/.test(text);
+    return false;
 }
 
 function isKeroControlOnlyResumeRequest(input) {
-    const text = safeString(input).trim().toLowerCase();
-    if (!text || text.length > 40) return false;
-    if (!isKeroMissionResumeRequest(text) && !isKeroExplicitRetryRequest(text)) return false;
-    const compact = text.replace(/[\s.!?？。…~`'"“”‘’()\[\]{}<>:：,，\/\\_-]+/g, '');
-    return /^(계속|계속진행|계속해|계속해줘|계속하자|이어|이어가|이어가줘|이어줘|이어해줘|재개|다음|다음작업|다음작업진행|남은작업|진행해|진행해줘|재시도|재실행|재적용|재작업|다시|다시해|다시해봐|다시해줘|다시진행|다시진행해줘|retry|rerun|resume|continue|tryagain)$/.test(compact);
+    return false;
 }
 
 function getKeroMissionObjectiveText(mission = currentKeroMission) {
@@ -11657,47 +11570,13 @@ function getKeroMissionObjectiveText(mission = currentKeroMission) {
 
 function resolveKeroControlOnlyResumeRouting(input, mission = currentKeroMission, options = {}) {
     const text = safeString(input).trim();
-    const resumeRequest = options.resumeRequest === true
-        || isKeroMissionResumeRequest(text)
-        || isKeroExplicitRetryRequest(text)
-        || options.resumeOnly === true
-        || options.retryOnly === true;
-    const controlOnly = resumeRequest && (
-        isKeroControlOnlyResumeRequest(text)
-        || options.resumeOnly === true
-        || options.retryOnly === true
-    );
-    const objective = getKeroMissionObjectiveText(mission);
-    if (!controlOnly) {
-        return {
-            controlOnly: false,
-            blocked: false,
-            input: text,
-            modelUserInput: text,
-            visibleUserInput: text,
-            objective
-        };
-    }
-    if (mission && objective) {
-        return {
-            controlOnly: true,
-            blocked: false,
-            input: text,
-            modelUserInput: objective,
-            visibleUserInput: objective,
-            objective
-        };
-    }
     return {
-        controlOnly: true,
-        blocked: true,
+        controlOnly: false,
+        blocked: false,
         input: text,
-        modelUserInput: '',
-        visibleUserInput: '',
-        objective,
-        detail: mission
-            ? '이전 미션 목표를 찾지 못해 재시도할 수 없습니다. 새 작업 내용을 다시 입력해주세요.'
-            : '이어갈 미션을 찾지 못했습니다. 새 작업 내용을 다시 입력해주세요.'
+        modelUserInput: text,
+        visibleUserInput: text,
+        objective: getKeroMissionObjectiveText(mission)
     };
 }
 
@@ -11760,7 +11639,6 @@ function isKeroWarningActionJobSafeReplay(job = {}) {
     const action = job.action && typeof job.action === 'object' ? job.action : {};
     const type = safeString(action.type || '').toLowerCase();
     if (action.safeReplayable === true || action.allowWarningReplay === true) return true;
-    if (action.autoBulkResume === true || type === 'bulk_create') return true;
     return false;
 }
 
@@ -11913,175 +11791,22 @@ function isResumableKeroBulkCreateJob(job) {
 }
 
 async function getResumableKeroBulkCreateJobs(storageId, missionId = '') {
-    if (!storageId) return [];
-    const jobs = await loadKeroBulkCreateJobs(storageId);
-    return Object.entries(jobs || {})
-        .map(([id, job]) => ({ ...(job || {}), id: safeString(job?.id || id) }))
-        .filter((job) => isKeroRecordInMission(job.missionId, missionId))
-        .filter(isResumableKeroBulkCreateJob)
-        .sort((a, b) => safeString(a.updatedAt || a.startedAt).localeCompare(safeString(b.updatedAt || b.startedAt)));
+    return [];
 }
 
 async function summarizeResumableKeroBulkCreateJobs(storageId, missionId = '') {
-    const jobs = await getResumableKeroBulkCreateJobs(storageId, missionId);
-    return jobs.reduce((acc, job) => {
-        const summary = getKeroBulkCreateJobSummary(job);
-        const remaining = Number(summary.remainingCount || 0);
-        const failed = Number(summary.failedCount || 0);
-        acc.total += 1;
-        acc.remaining += remaining;
-        acc.failed += failed;
-        acc.details.push(`${getTargetLabel(job.target)} ${safeString(job.id || '').slice(0, 32)} · 남음 ${remaining}개 · 실패/재시도 ${failed}개`);
-        return acc;
-    }, { total: 0, remaining: 0, failed: 0, details: [] });
+    return { total: 0, remaining: 0, failed: 0, details: [] };
 }
 
 async function reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId = '') {
-    if (!storageId) return { reconciled: 0 };
-    try {
-        const actionJobs = await loadKeroActionJobs(storageId);
-        const bulkJobs = await loadKeroBulkCreateJobs(storageId);
-        let reconciled = 0;
-        const reconciledStepIds = new Set();
-        Object.entries(actionJobs || {}).forEach(([id, job]) => {
-            if (!job || typeof job !== 'object') return;
-            if (!isKeroRecordInMission(job.missionId, missionId)) return;
-            if (safeString(job.status || '') !== 'warning') return;
-            const action = job.action || {};
-            if (safeString(action.type) !== 'bulk_create') return;
-            const bulkId = safeString(action.bulkJobId || action.jobId || job.id || action.actionJobId || action.stepId);
-            const bulkJob = bulkJobs?.[bulkId];
-            if (!bulkJob || typeof bulkJob !== 'object') return;
-            const summary = getKeroBulkCreateJobSummary(bulkJob);
-            if (Number(summary.remainingCount || 0) > 0 || Number(summary.failedCount || 0) > 0) return;
-            actionJobs[id] = {
-                ...job,
-                status: 'done',
-                finishedAt: job.finishedAt || new Date().toISOString(),
-                lastError: '',
-                verification: {
-                    ...(job.verification || {}),
-                    status: 'verified',
-                    ok: true,
-                    detail: '대량 생성 job이 남은 범위 없이 완료되어 이전 경고를 완료로 정리했습니다.'
-                },
-                updatedAt: new Date().toISOString()
-            };
-            [id, job.stepId, action.stepId, action.actionJobId, action.jobId, action.bulkJobId]
-                .map((value) => safeString(value))
-                .filter(Boolean)
-                .forEach((value) => reconciledStepIds.add(value));
-            reconciled += 1;
-        });
-        if (reconciled > 0) {
-            await saveKeroActionJobs(storageId, actionJobs);
-            if (currentKeroMission
-                && (!missionId || safeString(currentKeroMission.id) === safeString(missionId))
-                && (!currentKeroMission.storageId || safeString(currentKeroMission.storageId) === safeString(storageId))
-                && reconciledStepIds.size > 0) {
-                const steps = ensureArray(currentKeroMission.steps).map((step) => {
-                    const id = safeString(step?.id);
-                    if (!reconciledStepIds.has(id) || !['warning', 'blocked'].includes(safeString(step?.status))) return step;
-                    return {
-                        ...step,
-                        status: 'verified',
-                        detail: '대량 생성 job 완료 확인으로 이전 경고를 정리했습니다.',
-                        updatedAt: new Date().toISOString()
-                    };
-                });
-                updateKeroMissionState({ steps }, {
-                    title: '대량 생성 경고 정리',
-                    detail: `완료된 대량 생성 action/step ${reconciled}개를 검증 완료로 정리했습니다.`,
-                    status: 'verified'
-                });
-            }
-        }
-        return { reconciled };
-    } catch (error) {
-        Logger.warn('Kero bulk warning action reconcile failed:', error?.message || error);
-        return { reconciled: 0, error: error?.message || String(error) };
-    }
+    return { reconciled: 0 };
 }
 
 function buildKeroBulkCreateResumeAction(job = {}) {
-    const summary = getKeroBulkCreateJobSummary(job);
-    const firstChunk = summary.remainingChunks[0] || serializeKeroBulkChunks(job?.chunks)[0] || {};
-    const id = safeString(job.id || job.bulkJobId || job.jobId || `bulk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    return {
-        type: 'bulk_create',
-        target: safeString(job.target),
-        count: summary.total,
-        total: summary.total,
-        chunkSize: summary.chunkSize,
-        itemCharLimit: Number(firstChunk.itemCharLimit || job.itemCharLimit) || undefined,
-        chunkCharLimit: Number(firstChunk.chunkCharLimit || job.chunkCharLimit) || undefined,
-        userRequest: safeString(job.userRequest || job.request || ''),
-        jobId: id,
-        bulkJobId: id,
-        actionJobId: id,
-        stepId: id,
-        reason: 'resume_bulk_create'
-    };
+    return null;
 }
 
 function isSameKeroBulkCreateRequest(action = {}, job = {}) {
-    if (safeString(action?.type) !== 'bulk_create') return false;
-    const actionReq = normalizeKeroBulkCreateRequest(action);
-    const jobTotal = Math.max(0, Math.floor(Number(job?.total || job?.count || job?.requestedCount || 0)));
-    const targetMatches = safeString(actionReq.target) === safeString(job.target);
-    if (!targetMatches) return false;
-    const actionIds = [
-        action?.bulkJobId,
-        action?.jobId,
-        action?.actionJobId,
-        action?.stepId,
-        action?.planId
-    ].map((value) => safeString(value)).filter(Boolean);
-    const jobIds = [
-        job?.id,
-        job?.bulkJobId,
-        job?.jobId,
-        job?.actionJobId,
-        job?.stepId,
-        job?.planId
-    ].map((value) => safeString(value)).filter(Boolean);
-    if (actionIds.length && jobIds.length && actionIds.some((id) => jobIds.includes(id))) return true;
-    if (actionReq.count !== jobTotal) return false;
-    const actionRequest = safeString(actionReq.userRequest).trim();
-    const jobRequest = safeString(job.userRequest || job.request).trim();
-    if (actionRequest === jobRequest) return true;
-    const extractGatewayRecoveryFragments = (value) => {
-        const source = safeString(value);
-        if (!/\[게이트웨이 복구용 축약 요청\]|\[원문 앞부분\]|\[원문 뒷부분\]/i.test(source)) return [];
-        const fragments = [];
-        const headMatch = source.match(/\[원문 앞부분\]\s*([\s\S]*?)(?:\n\s*\[원문 뒷부분\]|$)/i);
-        const tailMatch = source.match(/\[원문 뒷부분\]\s*([\s\S]*)$/i);
-        [headMatch?.[1], tailMatch?.[1]]
-            .map((part) => safeString(part).replace(/\s+/g, ' ').trim())
-            .filter((part) => part.length >= 80)
-            .forEach((part) => fragments.push(part));
-        return fragments;
-    };
-    const actionFragments = extractGatewayRecoveryFragments(actionRequest);
-    const jobFragments = extractGatewayRecoveryFragments(jobRequest);
-    const normalizedOtherForAction = safeString(jobRequest).replace(/\s+/g, ' ').trim();
-    const normalizedOtherForJob = safeString(actionRequest).replace(/\s+/g, ' ').trim();
-    if (actionFragments.length && actionFragments.every((part) => normalizedOtherForAction.includes(part))) return true;
-    if (jobFragments.length && jobFragments.every((part) => normalizedOtherForJob.includes(part))) return true;
-    const normalizeRequestForMatch = (value) => safeString(value)
-        .replace(/\[게이트웨이 복구용 축약 요청\][\s\S]*?\[원문 앞부분\]/gi, '')
-        .replace(/\[복구 추론 작업\][^\n]*/gi, '')
-        .replace(/\[원문 뒷부분\]/gi, '')
-        .replace(/원문 전체를 다시 보내면 같은 524가 반복될 수 있어[^\n]*/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const normalizedActionRequest = normalizeRequestForMatch(actionRequest);
-    const normalizedJobRequest = normalizeRequestForMatch(jobRequest);
-    const shorterLength = Math.min(normalizedActionRequest.length, normalizedJobRequest.length);
-    if (shorterLength >= 240) {
-        return normalizedActionRequest.includes(normalizedJobRequest)
-            || normalizedJobRequest.includes(normalizedActionRequest);
-    }
     return false;
 }
 
@@ -12213,163 +11938,6 @@ function getEffectiveKeroMissionStatus(mission = currentKeroMission, events = ke
     return rawStatus;
 }
 
-function getKeroRecoverySnapshotStatus(snapshot = {}) {
-    const action = snapshot.actionSummary || {};
-    const bulk = snapshot.bulkSummary || {};
-    const missionStatus = safeString(snapshot.missionStatus || '');
-    if (missionStatus === 'error' || Number(action.failed || 0) > 0) return 'error';
-    if (
-        ['interrupted', 'warning', 'blocked'].includes(missionStatus)
-        || Number(action.warning || 0) > 0
-        || Number(action.pending || 0) > 0
-        || Number(bulk.remaining || 0) > 0
-        || Number(bulk.failed || 0) > 0
-        || Number(snapshot.queuedInputCount || 0) > 0
-        || Number(snapshot.processingInputCount || 0) > 0
-        || Number(snapshot.attentionInputCount || 0) > 0
-        || Number(snapshot.failedInputCount || 0) > 0
-    ) return 'warning';
-    return 'context';
-}
-
-function hasKeroRecoveryAttention(snapshot = {}) {
-    const action = snapshot.actionSummary || {};
-    const bulk = snapshot.bulkSummary || {};
-    const missionStatus = safeString(snapshot.missionStatus || snapshot.rawMissionStatus || '').toLowerCase();
-    const hasActiveMission = !!snapshot.hasMission
-        && !['done', 'verified', 'cancelled'].includes(missionStatus);
-    const hasActionAttention = Number(action.failed || 0) > 0
-        || Number(action.warning || 0) > 0
-        || Number(action.pending || 0) > 0;
-    const hasBulkAttention = Number(bulk.remaining || 0) > 0
-        || Number(bulk.failed || 0) > 0;
-    return hasActiveMission
-        || hasActionAttention
-        || hasBulkAttention
-        || Number(snapshot.queuedInputCount || 0) > 0
-        || Number(snapshot.processingInputCount || 0) > 0
-        || Number(snapshot.attentionInputCount || 0) > 0
-        || Number(snapshot.failedInputCount || 0) > 0;
-}
-
-function buildKeroRecoveryNoticeKey(storageId, snapshot = {}) {
-    const action = snapshot.actionSummary || {};
-    const bulk = snapshot.bulkSummary || {};
-    return [
-        safeString(storageId || snapshot.storageId),
-        safeString(snapshot.missionId),
-        safeString(snapshot.missionStatus),
-        Number(action.total || 0),
-        Number(action.done || 0),
-        Number(action.failed || 0),
-        Number(action.warning || 0),
-        Number(action.pending || 0),
-        Number(bulk.total || 0),
-        Number(bulk.remaining || 0),
-        Number(bulk.failed || 0),
-        Number(snapshot.queuedInputCount || 0),
-        Number(snapshot.processingInputCount || 0),
-        Number(snapshot.attentionInputCount || 0),
-        Number(snapshot.failedInputCount || 0)
-    ].join('|');
-}
-
-function formatKeroRecoverySnapshotDetail(snapshot = {}) {
-    const action = snapshot.actionSummary || {};
-    const bulk = snapshot.bulkSummary || {};
-    const parts = [];
-    if (snapshot.hasMission) {
-        parts.push(`미션 ${getKeroRecoveryMissionLabel(snapshot.missionStatus)}`);
-    }
-    if (Number(action.total || 0) > 0) {
-        parts.push(`액션 ${Number(action.total || 0)}개(완료 ${Number(action.done || 0)}, 경고 ${Number(action.warning || 0)}, 실패 ${Number(action.failed || 0)}, 대기 ${Number(action.pending || 0)})`);
-    }
-    if (Number(bulk.total || 0) > 0) {
-        parts.push(`대량 생성 ${Number(bulk.total || 0)}개 job(남음 ${Number(bulk.remaining || 0)}, 실패/재시도 ${Number(bulk.failed || 0)})`);
-    }
-    const queuedTotal = Number(snapshot.queuedInputCount || 0)
-        + Number(snapshot.processingInputCount || 0)
-        + Number(snapshot.attentionInputCount || 0)
-        + Number(snapshot.failedInputCount || 0);
-    if (queuedTotal > 0) {
-        const detailParts = [];
-        if (Number(snapshot.queuedInputCount || 0) > 0) detailParts.push(`대기 ${Number(snapshot.queuedInputCount || 0)}`);
-        if (Number(snapshot.processingInputCount || 0) > 0) detailParts.push(`처리중 ${Number(snapshot.processingInputCount || 0)}`);
-        if (Number(snapshot.attentionInputCount || 0) > 0) detailParts.push(`확인필요 ${Number(snapshot.attentionInputCount || 0)}`);
-        if (Number(snapshot.failedInputCount || 0) > 0) detailParts.push(`실패 ${Number(snapshot.failedInputCount || 0)}`);
-        parts.push(`대기 요청 ${queuedTotal}개${detailParts.length ? `(${detailParts.join(', ')})` : ''}`);
-    }
-    return parts.join(' · ') || '복구할 작업 없음';
-}
-
-function formatKeroRecoverySnapshotMessage(snapshot = {}) {
-    const action = snapshot.actionSummary || {};
-    const bulk = snapshot.bulkSummary || {};
-    const objective = safeString(snapshot.objective).trim();
-    const objectiveLine = objective
-        ? `목표: ${objective.slice(0, 220)}${objective.length > 220 ? '...' : ''}`
-        : '';
-    const lines = [
-        '이전 작업 상태를 복원했어.',
-        objectiveLine,
-        `미션: ${snapshot.hasMission ? getKeroRecoveryMissionLabel(snapshot.missionStatus) : '없음'}`,
-        `액션: 총 ${Number(action.total || 0)}개 · 완료 ${Number(action.done || 0)}개${Number(action.superseded || 0) ? ` (이관 ${Number(action.superseded || 0)}개 포함)` : ''} · 경고 ${Number(action.warning || 0)}개 · 실패 ${Number(action.failed || 0)}개 · 대기/진행 ${Number(action.pending || 0)}개`,
-        `대량 생성: job ${Number(bulk.total || 0)}개 · 남음 ${Number(bulk.remaining || 0)}개 · 실패/재시도 ${Number(bulk.failed || 0)}개`,
-        `대기 요청: 대기 ${Number(snapshot.queuedInputCount || 0)}개 · 처리중 ${Number(snapshot.processingInputCount || 0)}개 · 확인필요 ${Number(snapshot.attentionInputCount || 0)}개 · 실패 ${Number(snapshot.failedInputCount || 0)}개`,
-        '',
-        '"계속 진행"이라고 말하면 안전한 미완료 작업부터 이어가고, "재시도"라고 말하면 경고 작업과 확인필요/실패 대기 요청까지 다시 확인해서 진행할게.'
-    ].filter((line) => line !== '');
-    return lines.join('\n');
-}
-
-async function buildKeroRecoverySnapshot(storageId, mission = currentKeroMission, queue = keroQueuedUserInputs) {
-    const missionId = safeString(mission?.id || '');
-    const normalizedQueue = normalizeKeroInputQueue(queue);
-    const scopedQueue = normalizedQueue.filter((item) => isKeroRecordInMission(item.missionId, missionId));
-    const actionSummary = await summarizeKeroActionJobsForMission(storageId, missionId);
-    const bulkSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-    const rawMissionStatus = safeString(mission?.status || '');
-    const effectiveMissionStatus = getEffectiveKeroMissionStatus(mission, keroWorkstreamEvents) || rawMissionStatus;
-    return {
-        storageId: safeString(storageId || mission?.storageId || ''),
-        missionId,
-        hasMission: !!mission && !['done', 'cancelled'].includes(safeString(mission.status)),
-        missionStatus: effectiveMissionStatus,
-        rawMissionStatus,
-        objective: safeString(mission?.objective || ''),
-        actionSummary,
-        bulkSummary,
-        queuedInputCount: scopedQueue.filter((item) => safeString(item.status) === 'queued').length,
-        processingInputCount: scopedQueue.filter((item) => safeString(item.status) === 'processing').length,
-        attentionInputCount: scopedQueue.filter(isKeroAttentionInputQueueItem).length,
-        failedInputCount: scopedQueue.filter((item) => safeString(item.status) === 'failed' && !isKeroAttentionInputQueueItem(item)).length
-    };
-}
-
-async function announceKeroRecoverySnapshotIfNeeded(storageId, mission = currentKeroMission, queue = keroQueuedUserInputs, options = {}) {
-    if (!storageId) return false;
-    const snapshot = await buildKeroRecoverySnapshot(storageId, mission, queue);
-    if (!hasKeroRecoveryAttention(snapshot)) return false;
-    const key = buildKeroRecoveryNoticeKey(storageId, snapshot);
-    if (key && key === keroRecoveryNoticeKey) return true;
-    keroRecoveryNoticeKey = key;
-    const detail = formatKeroRecoverySnapshotDetail(snapshot);
-    addKeroWorkstreamEvent('작업 복구 대시보드', detail, getKeroRecoverySnapshotStatus(snapshot));
-    const botMessage = typeof options.addBotMessage === 'function'
-        ? options.addBotMessage
-        : (typeof keroRuntimeLocalOps?.addBotMessage === 'function'
-            ? keroRuntimeLocalOps.addBotMessage
-            : (typeof globalThis?.addBotMessage === 'function' ? globalThis.addBotMessage : null));
-    if (botMessage) {
-        try {
-            await botMessage(formatKeroRecoverySnapshotMessage(snapshot));
-        } catch (error) {
-            recordSvbRuntimeDiagnostic('복구 안내 메시지 출력 실패', error?.message || error, 'warning');
-        }
-    }
-    return true;
-}
-
 function isKeroEphemeralWorkstreamEvent(status = '', title = '', detail = '') {
     const normalizedStatus = safeString(status || '').toLowerCase();
     const normalizedTitle = safeString(title || '');
@@ -12475,8 +12043,6 @@ function addSvbRuntimeApiMethodCheck(checks, label, reader) {
     ));
 }
 
-const SVB_RUNTIME_GATEWAY_FALLBACK_TEST_MIN_BULK_COUNT = 50;
-const SVB_RUNTIME_GATEWAY_FALLBACK_TEST_MAX_BULK_REQUEST_CHARS = 7000;
 
 function addSvbRuntimeActionParserSelfTest(checks) {
     const result = readSvbRuntimeValue('작업 액션 파서 자체 테스트', () => {
@@ -12492,11 +12058,12 @@ function addSvbRuntimeActionParserSelfTest(checks) {
                 }
             },
             {
-                type: 'bulk_create',
+                type: 'create',
                 target: 'lorebook',
-                count: 50,
-                userRequest: '진단용 로어북 50개 생성',
-                chunkSize: 5
+                payload: [
+                    { comment: '진단 로어 1', key: 'diagnostic_lore_1', content: '진단용 로어북 본문 1' },
+                    { comment: '진단 로어 2', key: 'diagnostic_lore_2', content: '진단용 로어북 본문 2' }
+                ]
             },
             {
                 type: 'update',
@@ -12608,8 +12175,8 @@ function addSvbRuntimeActionParserSelfTest(checks) {
                 hasCharacterPayload: target === 'character'
                     ? !!(safeString(payload.name).trim() && safeString(payload.desc).trim() && safeString(payload.firstMessage).trim())
                     : true,
-                hasBulkPayload: target === 'lorebook'
-                    ? Number(action?.count || 0) >= 50 && !!safeString(action?.userRequest).trim()
+                hasCreatePayload: target === 'lorebook'
+                    ? normalizeKeroCreatePayloads(action?.payload).length >= 1
                     : true,
                 hasModulePayload: target === 'module'
                     ? !!(safeString(payload.name || action?.name).trim() && safeString(payload.cjs || action?.cjs).trim())
@@ -12663,7 +12230,7 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     const value = result.value || {};
     const required = [
         'update:character',
-        'bulk_create:lorebook',
+        'create:lorebook',
         'update:module',
         'update:plugin',
         'create:asset'
@@ -12674,19 +12241,19 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     const bareKeys = toKeySet(value.bare);
     const aliasKeys = toKeySet(value.alias);
     const missingTagged = required.filter((key) => !taggedKeys.has(key));
-    const missingInline = ['bulk_create:lorebook'].filter((key) => !inlineKeys.has(key));
+    const missingInline = ['create:lorebook'].filter((key) => !inlineKeys.has(key));
     const missingBare = required.filter((key) => !bareKeys.has(key));
     const missingAlias = ['update:module'].filter((key) => !aliasKeys.has(key));
     const badTaggedPayload = ensureArray(value.tagged).filter((row) => (
         row?.hasCharacterPayload === false
-        || row?.hasBulkPayload === false
+        || row?.hasCreatePayload === false
         || row?.hasModulePayload === false
         || row?.hasPluginPayload === false
         || row?.hasAssetPayload === false
     ));
     const badBarePayload = ensureArray(value.bare).filter((row) => (
         row?.hasCharacterPayload === false
-        || row?.hasBulkPayload === false
+        || row?.hasCreatePayload === false
         || row?.hasModulePayload === false
         || row?.hasPluginPayload === false
         || row?.hasAssetPayload === false
@@ -12705,15 +12272,12 @@ function addSvbRuntimeActionParserSelfTest(checks) {
     if (!safeString(value.aliasModuleCjs).includes('fixed: true')) problems.push('module_update alias payload cjs 보존 실패');
     if (!value.aliasRejectedCharacterModulePayload) problems.push('캐릭터 필드가 섞인 module_update 차단 실패');
     if (Number(value.koreanCount || 0) !== 3) problems.push(`한글 숫자 count 실패 ${value.koreanCount}`);
-    if (Number(value.underfilledCoverageCount || 0) !== 1
-        || value.underfilledCoverageType !== 'bulk_create'
-        || value.underfilledCoverageTarget !== 'lorebook'
-        || Number(value.underfilledCoverageRemaining || 0) !== 2) {
-        problems.push(`부족 생성 보강 실패 ${value.underfilledCoverageType}:${value.underfilledCoverageTarget}:${value.underfilledCoverageRemaining}`);
+    if (Number(value.underfilledCoverageCount || 0) !== 0) {
+        problems.push(`부족 생성 자동 보강 제거 실패 ${value.underfilledCoverageCount}`);
     }
     if (Number(value.declaredCreateCount || 0) !== 3) problems.push(`create 선언 count 실패 ${value.declaredCreateCount}`);
     if (Number(value.recoveredFieldActions || 0) !== 1
-        || value.recoveredFieldActionType !== 'bulk_create'
+        || value.recoveredFieldActionType !== 'create'
         || value.recoveredFieldActionTarget !== 'lorebook'
         || /@action/i.test(safeString(value.recoveredFieldText))) {
         problems.push(`필드 내 @action 분리 실패 ${value.recoveredFieldActionType}:${value.recoveredFieldActionTarget}`);
@@ -12728,119 +12292,6 @@ function addSvbRuntimeActionParserSelfTest(checks) {
         problems.length === 0,
         '작업 액션 파서 자체 테스트',
         `@action ${ensureArray(value.tagged).length}개 · inline ${ensureArray(value.inline).length}개 · 순수 JSON ${ensureArray(value.bare).length}개 · alias ${ensureArray(value.alias).length}개/${value.aliasInvalid || 0} invalid · 한글 count ${value.koreanCount || 0} · 필드분리 ${value.recoveredFieldActions || 0}개${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
-        problems.length ? 'error' : 'ok'
-    ));
-}
-
-function addSvbRuntimeSteeringQueueSelfTest(checks) {
-    const result = readSvbRuntimeValue('작업 중 스티어링/후속 큐 자체 테스트', () => {
-        const previousMission = currentKeroMission;
-        const previousProcessingQueuedInput = keroProcessingQueuedInput;
-        const previousDrainAgainRequested = keroQueueDrainAgainRequested;
-        try {
-            currentKeroMission = {
-                id: 'diagnostic-mission',
-                status: 'running',
-                objective: 'diagnostic'
-            };
-            keroProcessingQueuedInput = false;
-            keroQueueDrainAgainRequested = false;
-            const idleDrainRequested = markKeroQueueDrainAgainIfProcessing('diagnostic_idle');
-            const idleDrainFlag = keroQueueDrainAgainRequested;
-            keroProcessingQueuedInput = true;
-            keroQueueDrainAgainRequested = false;
-            const processingDrainRequested = markKeroQueueDrainAgainIfProcessing('diagnostic_processing');
-            const processingDrainFlag = keroQueueDrainAgainRequested;
-            return {
-                plainSteeringQueued: shouldQueueKeroFollowupDuringTask('색감은 조금 더 따뜻하게 해줘', {}),
-                finishFollowupQueued: shouldQueueKeroFollowupDuringTask('작업 끝나면 로어북도 추가해줘', {}),
-                continueQueued: shouldQueueKeroFollowupDuringTask('계속 진행', {}),
-                retryQueued: shouldQueueKeroFollowupDuringTask('재시도', {}),
-                continueControlOnly: isKeroControlOnlyResumeRequest('계속 진행'),
-                retryControlOnly: isKeroControlOnlyResumeRequest('재시도'),
-                longRetryTextNotControlOnly: isKeroControlOnlyResumeRequest('이 로어북을 다시 시도해서 더 자세히 작성해줘'),
-                forcedQueued: shouldQueueKeroFollowupDuringTask('이건 그냥 참고해줘', { queueAfterTask: true }),
-                steeringOnlyBlocksQueue: shouldQueueKeroFollowupDuringTask('계속 진행', { steeringOnly: true }),
-                noMissionQueues: (() => {
-                    currentKeroMission = null;
-                    return shouldQueueKeroFollowupDuringTask('색감은 조금 더 따뜻하게 해줘', {});
-                })(),
-                idleDrainRequested,
-                idleDrainFlag,
-                processingDrainRequested,
-                processingDrainFlag
-            };
-        } finally {
-            currentKeroMission = previousMission;
-            keroProcessingQueuedInput = previousProcessingQueuedInput;
-            keroQueueDrainAgainRequested = previousDrainAgainRequested;
-        }
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '작업 중 스티어링/후속 큐 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const problems = [];
-    if (value.plainSteeringQueued) problems.push('일반 스티어링을 후속 작업으로 오판');
-    if (!value.finishFollowupQueued) problems.push('완료 후 요청 감지 실패');
-    if (!value.continueQueued) problems.push('계속 진행 큐 감지 실패');
-    if (!value.retryQueued) problems.push('재시도 큐 감지 실패');
-    if (!value.continueControlOnly) problems.push('계속 진행 제어어 단독 판정 실패');
-    if (!value.retryControlOnly) problems.push('재시도 제어어 단독 판정 실패');
-    if (value.longRetryTextNotControlOnly) problems.push('긴 재작업 요청을 제어어 단독으로 오판');
-    if (!value.forcedQueued) problems.push('강제 후속 큐 옵션 실패');
-    if (value.steeringOnlyBlocksQueue) problems.push('steeringOnly 옵션 무시');
-    if (!value.noMissionQueues) problems.push('미션 없는 작업 중 입력 보존 실패');
-    if (value.idleDrainRequested || value.idleDrainFlag) problems.push('idle 상태에서 재-drain 플래그 오작동');
-    if (!value.processingDrainRequested || !value.processingDrainFlag) problems.push('큐 처리 중 새 요청 재-drain 예약 실패');
-    checks.push(makeSvbRuntimeCheck(
-        problems.length === 0,
-        '작업 중 스티어링/후속 큐 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : '일반 스티어링은 현재 미션에만 반영 · 명시 후속 요청만 큐 실행',
-        problems.length ? 'error' : 'ok'
-    ));
-}
-
-function addSvbRuntimeControlRoutingSelfTest(checks) {
-    const result = readSvbRuntimeValue('제어어 라우팅 자체 테스트', () => {
-        const mission = {
-            id: 'diagnostic-mission',
-            status: 'interrupted',
-            objective: '진단용 이전 미션 목표'
-        };
-        const emptyMission = {
-            id: 'diagnostic-empty-mission',
-            status: 'interrupted',
-            objective: ''
-        };
-        const continueRoute = resolveKeroControlOnlyResumeRouting('계속 진행', mission, { resumeOnly: true });
-        const retryRoute = resolveKeroControlOnlyResumeRouting('재시도', mission, { retryOnly: true });
-        const emptyRoute = resolveKeroControlOnlyResumeRouting('계속 진행', emptyMission, { resumeOnly: true });
-        const normalRoute = resolveKeroControlOnlyResumeRouting('이 로어북을 다시 시도해서 더 자세히 작성해줘', mission, {});
-        return {
-            continueControl: continueRoute.controlOnly === true,
-            continueUsesObjective: continueRoute.modelUserInput === mission.objective,
-            retryControl: retryRoute.controlOnly === true,
-            retryUsesObjective: retryRoute.modelUserInput === mission.objective,
-            emptyBlocked: emptyRoute.blocked === true && !safeString(emptyRoute.modelUserInput).trim(),
-            normalNotControl: normalRoute.controlOnly === false && normalRoute.modelUserInput === '이 로어북을 다시 시도해서 더 자세히 작성해줘'
-        };
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '제어어 라우팅 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const problems = [];
-    if (!value.continueControl || !value.continueUsesObjective) problems.push('계속 진행 objective 라우팅 실패');
-    if (!value.retryControl || !value.retryUsesObjective) problems.push('재시도 objective 라우팅 실패');
-    if (!value.emptyBlocked) problems.push('objective 없음 차단 실패');
-    if (!value.normalNotControl) problems.push('일반 재작업 요청을 제어어로 오판');
-    checks.push(makeSvbRuntimeCheck(
-        problems.length === 0,
-        '제어어 라우팅 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : '계속 진행/재시도 단독 입력은 이전 objective로 라우팅 · objective 없으면 새 작업으로 새지 않음',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -12928,11 +12379,6 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
         const singleDescActions = parseKeroAction(singleDescFallback).actions || [];
         const singleDescAction = singleDescActions[0] || {};
         const singleDescFullFallback = buildKeroMissingActionFallbackResponse(singleDescRequest, '', { userRequest: singleDescRequest });
-        const singleDescPreplan = buildKeroPreplannedLargeRequestResponse(singleDescRequest, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: singleDescRequest
-        });
         const singleDescBulkSpecs = inferKeroBulkCreateSpecsFromText(singleDescRequest, { allowSmallCreate: true, fullBuild: false });
         const planningTodoRequest = '아직 계속 기획 중이야. 요청 사항 정리해서 먼저 TODO 리스트를 만들어줘.';
         const planningGoalPlan = '1. 요구사항 정리\n2. 작업 단위 분해';
@@ -12949,11 +12395,6 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
         const fullBuildProbe = isKeroGatewayFullCharacterBuildRequest('make this bot fantasy lorebook');
         const assetOnlyRequest = '각 인물들 흰 배경 상체 기본 스텐딩 에셋 하나씩 만들어주고 각 인물들 감정 에셋도 다양하게 만들어줘';
         const assetOnlyBulkSpecs = inferKeroBulkCreateSpecsFromText(assetOnlyRequest, { allowSmallCreate: true, fullBuild: false });
-        const assetOnlyPreplan = buildKeroPreplannedLargeRequestResponse(assetOnlyRequest, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: assetOnlyRequest
-        });
         return {
             generated: typeof response === 'string',
             hasAction: /@action/.test(response),
@@ -12969,25 +12410,22 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             singleDescNotFullBuild: !isKeroGatewayFullCharacterBuildRequest(singleDescRequest),
             singleDescFallbackOnlyDesc: singleDescActions.length === 1 && normalizeKeroActionTargetName(singleDescAction?.target) === 'desc',
             singleDescNoCharacterSeedFallback: !singleDescFullFallback,
-            singleDescNoPreplan: !singleDescPreplan,
             singleDescNoBulkSpecs: singleDescBulkSpecs.length === 0,
             planningTodoDetected: isKeroPlanningOnlyRequest(planningTodoRequest) === true,
             planningTodoNoMutationIntent: hasKeroExplicitMutationIntent(planningTodoRequest) === false,
-            planningTodoNoPreplan: shouldPreplanKeroLargeCharacterRequest(planningTodoRequest, { keroMode: 'work', workTargetMode: 'character', userRequest: planningTodoRequest }) === false,
             planningTodoNoMissingActionFallback: shouldAttemptKeroMissingActionFallback(planningTodoRequest, { userRequest: planningTodoRequest }) === false,
             planningGoalRemembered: !!pendingPlanningGoal?.objective && /기획/.test(pendingPlanningGoal.objective),
             planningGoalApprovalDetected,
             planningRetryCountOne: getKeroModelRetryCountForMode('planning') === 1,
             dailyRetryCountOne: getKeroModelRetryCountForMode('daily') === 1,
-            workRetryCountThree: getKeroModelRetryCountForMode('work') === 3,
+            workRetryCountOne: getKeroModelRetryCountForMode('work') === 1,
             workPlanningOnlyRetryCountOne: getKeroModelRetryCountForMode('work', { planningOnly: true }) === 1,
             malformedFieldActionBlocked,
             gatewayGenreHelper: typeof hasKeroGatewayGenreBuildSignal === 'function',
             fullBuildProbeType: typeof fullBuildProbe === 'boolean',
             assetOnlyFocused: isKeroAssetFocusedRequest(assetOnlyRequest) === true,
             assetOnlyNotFullBuild: isKeroGatewayFullCharacterBuildRequest(assetOnlyRequest) === false,
-            assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0,
-            assetOnlyNoPreplan: !assetOnlyPreplan
+            assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0
         };
     });
     if (!result.ok) {
@@ -13010,17 +12448,15 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.singleDescNotFullBuild) problems.push('single desc edit was misdetected as full build');
     if (!value.singleDescFallbackOnlyDesc) problems.push('single desc edit did not create exactly one desc action');
     if (!value.singleDescNoCharacterSeedFallback) problems.push('single desc edit created character seed fallback');
-    if (!value.singleDescNoPreplan) problems.push('single desc edit triggered large-request preplan');
     if (!value.singleDescNoBulkSpecs) problems.push('single desc edit inferred bulk specs');
     if (!value.planningTodoDetected) problems.push('planning/TODO request was not detected as planning-only');
     if (!value.planningTodoNoMutationIntent) problems.push('planning/TODO request was misdetected as mutation intent');
-    if (!value.planningTodoNoPreplan) problems.push('planning/TODO request triggered large-request preplan');
     if (!value.planningTodoNoMissingActionFallback) problems.push('planning/TODO request allowed missing-action fallback');
     if (!value.planningGoalRemembered) problems.push('planning goal candidate was not stored');
     if (!value.planningGoalApprovalDetected) problems.push('planning goal approval phrase was not detected');
     if (!value.planningRetryCountOne) problems.push('planning mode retry count is not 1');
     if (!value.dailyRetryCountOne) problems.push('daily mode retry count is not 1');
-    if (!value.workRetryCountThree) problems.push('work mode retry count is not 3');
+    if (!value.workRetryCountOne) problems.push('work mode retry count is not 1');
     if (!value.workPlanningOnlyRetryCountOne) problems.push('work planning-only retry count is not 1');
     if (!value.malformedFieldActionBlocked) problems.push('malformed field @action was not blocked');
     if (!value.gatewayGenreHelper) problems.push('gateway genre helper is missing');
@@ -13028,7 +12464,6 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.assetOnlyFocused) problems.push('asset-only request was not detected as asset-focused');
     if (!value.assetOnlyNotFullBuild) problems.push('asset-only request was misdetected as full character build');
     if (!value.assetOnlyNoBulkSpecs) problems.push('asset-only request inferred bulk_create specs');
-    if (!value.assetOnlyNoPreplan) problems.push('asset-only request triggered large-request preplan');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
@@ -13341,76 +12776,6 @@ function addSvbRuntimeKeroChatContinuitySelfTest(checks) {
     ));
 }
 
-function addSvbRuntimeInputQueueRecoverySelfTest(checks) {
-    const result = readSvbRuntimeValue('대기 요청 processing 복구 자체 테스트', () => {
-        const now = Date.now();
-        const sameSession = keroRuntimeSessionId || 'svb-runtime-session';
-        const queue = [
-            {
-                id: 'fresh-same',
-                text: 'fresh same session',
-                status: 'processing',
-                processingAt: now - 1000,
-                heartbeatAt: now - 1000,
-                runtimeSessionId: sameSession
-            },
-            {
-                id: 'stale-same',
-                text: 'stale same session',
-                status: 'processing',
-                processingAt: now - KERO_INPUT_QUEUE_PROCESSING_STALE_MS - 1000,
-                heartbeatAt: now - KERO_INPUT_QUEUE_PROCESSING_STALE_MS - 1000,
-                runtimeSessionId: sameSession
-            },
-            {
-                id: 'fresh-foreign',
-                text: 'fresh foreign session',
-                status: 'processing',
-                processingAt: now - 1000,
-                heartbeatAt: now - 1000,
-                runtimeSessionId: 'foreign-session'
-            },
-            {
-                id: 'stale-foreign',
-                text: 'stale foreign session',
-                status: 'processing',
-                processingAt: now - KERO_INPUT_QUEUE_FOREIGN_PROCESSING_STALE_MS - 1000,
-                heartbeatAt: now - KERO_INPUT_QUEUE_FOREIGN_PROCESSING_STALE_MS - 1000,
-                runtimeSessionId: 'foreign-session'
-            }
-        ];
-        const recovered = recoverStaleKeroInputQueue(queue, { force: true, now });
-        const byId = new Map(normalizeKeroInputQueue(recovered.queue).map((item) => [item.id, item]));
-        return {
-            recovered: recovered.recovered,
-            freshSameStatus: byId.get('fresh-same')?.status,
-            staleSameStatus: byId.get('stale-same')?.status,
-            freshForeignStatus: byId.get('fresh-foreign')?.status,
-            staleForeignStatus: byId.get('stale-foreign')?.status,
-            staleSameRuntime: byId.get('stale-same')?.runtimeSessionId,
-            staleForeignRuntime: byId.get('stale-foreign')?.runtimeSessionId
-        };
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '대기 요청 processing 복구 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const problems = [];
-    if (Number(value.recovered || 0) !== 2) problems.push(`복구 수 ${value.recovered}`);
-    if (value.freshSameStatus !== 'processing') problems.push('같은 세션 fresh processing 오복구');
-    if (value.staleSameStatus !== 'queued') problems.push('같은 세션 stale processing 복구 실패');
-    if (value.freshForeignStatus !== 'processing') problems.push('외부 세션 fresh processing 오복구');
-    if (value.staleForeignStatus !== 'queued') problems.push('외부 세션 stale processing 복구 실패');
-    if (value.staleSameRuntime || value.staleForeignRuntime) problems.push('복구 후 runtimeSessionId 정리 실패');
-    checks.push(makeSvbRuntimeCheck(
-        problems.length === 0,
-        '대기 요청 processing 복구 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : 'force 복구도 stale processing만 대기열로 되돌림',
-        problems.length ? 'error' : 'ok'
-    ));
-}
-
 function addSvbRuntimeWarningReplaySelfTest(checks) {
     const result = readSvbRuntimeValue('검증 경고 job 재실행 정책 자체 테스트', () => ({
         updateWarningReplay: isKeroWarningActionJobSafeReplay({
@@ -13442,13 +12807,13 @@ function addSvbRuntimeWarningReplaySelfTest(checks) {
     const problems = [];
     if (value.updateWarningReplay) problems.push('update warning 자동 재실행 허용');
     if (value.patchWarningReplay) problems.push('patch warning 자동 재실행 허용');
-    if (!value.bulkWarningReplay) problems.push('bulk_create warning 안전 재개 차단');
+    if (value.bulkWarningReplay) problems.push('bulk_create warning 자동 재실행 허용');
     if (!value.explicitSafeReplay) problems.push('명시 safeReplayable 차단');
     if (!value.doneReplay) problems.push('warning 아닌 job replay 판정 실패');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '검증 경고 job 재실행 정책 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : '일반 warning 저장 job은 보류 · bulk/safeReplayable만 재실행',
+        problems.length ? `문제: ${problems.join(' / ')}` : '일반 warning 저장 job은 보류 · 명시 safeReplayable만 재실행',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -13663,7 +13028,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.95',
+            '//@version 1.5.96',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -13969,55 +13334,6 @@ function addSvbRuntimeWellspringLoraIdentitySelfTest(checks, localFunctions = {}
     ));
 }
 
-function addSvbRuntimeGatewayFallbackSelfTest(checks) {
-    const result = readSvbRuntimeValue('게이트웨이 fallback 자체 테스트', () => {
-        const sampleRequest = '진단용 대형 캐릭터 제작 요청: 이름, 디스크립션, 첫 메시지, 상태창 HTML/CSS, 그리고 서로 다른 등장인물 로어북 50개를 만들어줘. 흔한 이름과 복붙식 설정은 피하고 각 인물의 역할, 관계, 비밀을 분리해줘.';
-        const fallback = buildKeroLlmChunkQueueFallbackResponse(sampleRequest, {
-            userRequest: sampleRequest,
-            allowSmallCreate: true,
-            actionReason: 'diagnostic_gateway_fallback',
-            reasonText: '진단용'
-        });
-        const parsed = parseKeroAction(fallback || '');
-        const actions = ensureArray(parsed?.actions);
-        const characterAction = actions.find((action) =>
-            ['update', 'patch'].includes(safeString(action?.type))
-            && normalizeKeroActionTargetName(action?.target) === 'character'
-        );
-        const bulkLoreAction = actions.find((action) =>
-            safeString(action?.type) === 'bulk_create'
-            && normalizeKeroActionTargetName(action?.target) === 'lorebook'
-        );
-        const bulkRequestLength = safeString(bulkLoreAction?.userRequest || '').length;
-        return {
-            actionCount: actions.length,
-            hasCharacterAction: !!characterAction,
-            hasBulkLoreAction: !!bulkLoreAction,
-            bulkCount: Number(bulkLoreAction?.count || 0),
-            bulkRequestLength,
-            hasUnsafeFallbackFingerprint: hasKeroUnsafeEmbeddedTemplateFingerprint(fallback),
-            fallbackLength: safeString(fallback).length
-        };
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '게이트웨이 fallback 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const missing = [];
-    if (value.hasCharacterAction) missing.push('로컬 캐릭터 update 생성 금지 위반');
-    if (!value.hasBulkLoreAction) missing.push('로어북 bulk_create');
-    if (Number(value.bulkCount || 0) < SVB_RUNTIME_GATEWAY_FALLBACK_TEST_MIN_BULK_COUNT) missing.push(`로어북 ${SVB_RUNTIME_GATEWAY_FALLBACK_TEST_MIN_BULK_COUNT}개 이상`);
-    if (Number(value.bulkRequestLength || 0) > SVB_RUNTIME_GATEWAY_FALLBACK_TEST_MAX_BULK_REQUEST_CHARS) missing.push('복구 bulk 요청 과대');
-    if (value.hasUnsafeFallbackFingerprint) missing.push('로컬 fallback 고정 템플릿명 노출');
-    checks.push(makeSvbRuntimeCheck(
-        missing.length === 0,
-        '게이트웨이 fallback 자체 테스트',
-        `액션 ${value.actionCount || 0}개 · bulk ${value.bulkCount || 0}개 · bulk 요청 ${value.bulkRequestLength || 0}자${missing.length ? ` · 문제: ${missing.join(', ')}` : ''}`,
-        missing.length ? 'error' : 'ok'
-    ));
-}
-
 function addSvbRuntimeOutputLimitRecoverySelfTest(checks) {
     const result = readSvbRuntimeValue('출력 한도 복구 판정 자체 테스트', () => {
         const coded = new Error('diagnostic output limit');
@@ -14028,7 +13344,7 @@ function addSvbRuntimeOutputLimitRecoverySelfTest(checks) {
             messageDetected: isProviderOutputLimitError(messageError),
             retryableDetected: isRetryableModelTransportError(messageError),
             friendlyMentionsSplit: /작은\s*작업\s*단위|작은\s*실행\s*단위/.test(getFriendlyModelErrorMessage(messageError)),
-            recoveryAllowed: shouldAttemptKeroGatewayRecovery({ keroMode: 'work', fromKero: true, allowGatewayRecovery: true }),
+            recoveryBlockedByDirectRuntime: !shouldAttemptKeroGatewayRecovery({ keroMode: 'work', fromKero: true, allowGatewayRecovery: true }),
             recoveryBlockedForRecoveryCall: shouldAttemptKeroGatewayRecovery({ keroMode: 'work', fromKero: true, gatewayRecovery: true }),
             decision: getKeroModelCallRecoveryDecision(messageError, { keroMode: 'work', fromKero: true, allowGatewayRecovery: true }),
             recursiveDecision: getKeroModelCallRecoveryDecision(messageError, { keroMode: 'work', fromKero: true, gatewayRecovery: true })
@@ -14044,7 +13360,7 @@ function addSvbRuntimeOutputLimitRecoverySelfTest(checks) {
     if (!value.messageDetected) problems.push('length 메시지 감지 실패');
     if (!value.retryableDetected) problems.push('복구 가능 오류 판정 실패');
     if (!value.friendlyMentionsSplit) problems.push('사용자 안내에 작은 단위 전환 누락');
-    if (!value.recoveryAllowed) problems.push('작업모드 복구 허용 실패');
+    if (!value.recoveryBlockedByDirectRuntime) problems.push('작업모드 로컬 복구 차단 실패');
     if (value.recoveryBlockedForRecoveryCall) problems.push('복구 호출 중 재귀 방지 실패');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
@@ -14061,7 +13377,7 @@ function addSvbRuntimeOutputLimitDecisionSelfTest(checks) {
         const recursive = getKeroModelCallRecoveryDecision(error, { keroMode: 'work', fromKero: true, gatewayRecovery: true });
         return {
             detectsLimit: recovery.kind === 'output_limit',
-            canRecover: recovery.canRecover === true,
+            localRecoveryBlocked: recovery.canRecover === false,
             noSameRequestRetry: recovery.retrySameRequest === false,
             blocksRecursiveRecovery: recursive.canRecover === false
         };
@@ -14073,7 +13389,7 @@ function addSvbRuntimeOutputLimitDecisionSelfTest(checks) {
     const value = result.value || {};
     const problems = [];
     if (!value.detectsLimit) problems.push('output limit was not detected');
-    if (!value.canRecover) problems.push('recoverable output limit was not routed to recovery');
+    if (!value.localRecoveryBlocked) problems.push('output limit local recovery was not blocked');
     if (!value.noSameRequestRetry) problems.push('same large request retry was not blocked');
     if (!value.blocksRecursiveRecovery) problems.push('recursive gateway recovery was not blocked');
     checks.push(makeSvbRuntimeCheck(
@@ -14103,7 +13419,8 @@ function addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks) {
         return {
             detectsFullBuild: isKeroGatewayFullCharacterBuildRequest(request),
             transportRetryable: isRetryableModelTransportError(error),
-            routesLargeRequestToRecovery: recovery.kind === 'gateway_timeout' && recovery.canRecover === true,
+            detectsLargeRequestRecoveryKind: recovery.kind === 'gateway_timeout',
+            blocksLocalLargeRequestRecovery: recovery.canRecover === false,
             blocksSameRequestRetry: recovery.retrySameRequest === false,
             leavesSmallRequestOnNormalRetry: normal.kind === 'none' && normal.retrySameRequest === true
         };
@@ -14116,132 +13433,14 @@ function addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks) {
     const problems = [];
     if (!value.detectsFullBuild) problems.push('판타지 전체 제작 요청 감지 실패');
     if (!value.transportRetryable) problems.push('transport timeout 감지 실패');
-    if (!value.routesLargeRequestToRecovery) problems.push('대형 요청 transport 오류가 복구로 라우팅되지 않음');
+    if (!value.detectsLargeRequestRecoveryKind) problems.push('대형 요청 transport 오류 종류 감지 실패');
+    if (!value.blocksLocalLargeRequestRecovery) problems.push('대형 요청 로컬 복구 차단 실패');
     if (!value.blocksSameRequestRetry) problems.push('같은 대형 원문 재시도 차단 실패');
     if (!value.leavesSmallRequestOnNormalRetry) problems.push('작은 일반 요청까지 복구로 오판정');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '대형 요청 transport 복구 판정 자체 테스트',
         problems.length ? `문제: ${problems.join(' / ')}` : 'NanoGPT timeout 계열 대형 제작 요청을 같은 원문 3회 반복 대신 작은 실행 단위 복구로 전환',
-        problems.length ? 'error' : 'ok'
-    ));
-}
-
-function addSvbRuntimeLargeRequestPreplanSelfTest(checks) {
-    const result = readSvbRuntimeValue('대형 요청 선분해 자체 테스트', () => {
-        const request = '이 봇을 정통 판타지 시뮬봇으로 만들어줘. 디스크립션에는 세계관을 인물은 대표 주인공급으로 10명 정도. 다양하게 인물들끼리의 관계성도 잘 구축하고 이름도 뻔하지 않게.';
-        const remakeRequest = '에델가르드는 예전에 만든 작품이야. 이 작품을 리메이크 해서 제목, 인물 이름, 제국이름 등 싹 AI티 안나게 교체하고, 더욱 내용도 보강하고 새롭게 발전 및 풍성해지는 세계관, 거미줄처럼 이어지는 인물관계, 역사, 과거 이야기등 생생한 하나의 새로운 세계를 만들고 싶어. 작업은 지금 이 비어있는 봇에 하고';
-        const delegatedNumberedRequest = `에델가르드는 예전에 만든 작품이야. 과거 작품이다 보니 AI 특유의 단어와 이름이 너무 티나. 이 작품을 리메이크해서 제목, 인물 이름, 제국이름 등 싹 AI티 안나게 뻔하지 않게 교체하고, 내용도 보강하고 새롭게 발전 및 풍성해지는 세계관, 거미줄처럼 이어지는 인물관계, 역사, 과거 이야기 등 생생한 하나의 새로운 세계를 만들고 싶어. 작업은 지금 이 비어있는 봇에 해.
-
-너무 다크 판타지라기 보단 정통판타지, 따지면 하이판타지가 더 맞아.
-
-1. 이름에서도 센스가 나오게 흔치않고 문화권 차이가 느껴지게 해.
-2. 참고 플러그인이 관리나 로어북 등을 가져가서 관리 잘해주니까 상호작용하기 좋은 구조로 만들자.
-3. 일단 스토리 큰 축은 유지해야지.
-
-싹다 알아서 최종완료까지 진행해.`;
-        const referencePayload = {
-            referenceCharacters: [{
-                basic: { name: 'Aethelgard' },
-                descriptions: { desc: '13개 세계의 약속, 마법 체계, 종족, 세력, 오래된 전쟁을 가진 참고 작품.' },
-                lorebooks: [
-                    { comment: '세계의 약속', key: '세계의 약속', content: '원작의 큰 축은 유지하되 새 이름과 관계 구조로 재구성해야 한다.' },
-                    { comment: '아퀼라 제국', key: 'Aquilan Empire', content: '직관적인 제국명이라 새 문화권 이름으로 교체해야 한다.' }
-                ]
-            }]
-        };
-        const response = buildKeroPreplannedLargeRequestResponse(request, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: request
-        });
-        const remakeResponse = buildKeroPreplannedLargeRequestResponse(remakeRequest, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: remakeRequest,
-            keroContextPayload: referencePayload
-        });
-        const delegatedResponse = buildKeroPreplannedLargeRequestResponse(delegatedNumberedRequest, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: delegatedNumberedRequest
-        });
-        const delegatedSubagentRequest = `${delegatedNumberedRequest}\n필요하면 노예 써서 검토해.`;
-        const delegatedSubagentResponse = buildKeroPreplannedLargeRequestResponse(delegatedSubagentRequest, {
-            keroMode: 'work',
-            workTargetMode: 'character',
-            userRequest: delegatedSubagentRequest
-        });
-        const parsed = parseKeroAction(response);
-        const remakeParsed = parseKeroAction(remakeResponse);
-        const delegatedParsed = parseKeroAction(delegatedResponse);
-        const delegatedSubagentParsed = parseKeroAction(delegatedSubagentResponse);
-        const delegatedSubagentBulkActions = ensureArray(delegatedSubagentParsed.actions)
-            .filter((action) => safeString(action?.type) === 'bulk_create');
-        const delegatedSpecs = inferKeroBulkCreateSpecsFromText(delegatedNumberedRequest, { allowSmallCreate: false, fullBuild: true });
-        const delegatedLorebookSpec = delegatedSpecs.find((spec) => normalizeKeroActionTargetName(spec?.target) === 'lorebook');
-        return {
-            shouldPreplan: shouldPreplanKeroLargeCharacterRequest(request, { keroMode: 'work', workTargetMode: 'character', userRequest: request }),
-            hasResponse: !!response,
-            actionCount: parsed.actions?.length || 0,
-            hasCharacterUpdate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'update' && normalizeKeroActionTargetName(action?.target) === 'character'),
-            hasBulkCreate: ensureArray(parsed.actions).some((action) => safeString(action?.type) === 'bulk_create' && normalizeKeroActionTargetName(action?.target) === 'lorebook'),
-            hasUnsafeFallbackFingerprint: hasKeroUnsafeEmbeddedTemplateFingerprint(response),
-            remakeShouldPreplan: shouldPreplanKeroLargeCharacterRequest(remakeRequest, { keroMode: 'work', workTargetMode: 'character', userRequest: remakeRequest }),
-            remakeHasCharacterUpdate: ensureArray(remakeParsed.actions).some((action) => safeString(action?.type) === 'update' && normalizeKeroActionTargetName(action?.target) === 'character'),
-            remakeHasBulkCreate: ensureArray(remakeParsed.actions).some((action) => safeString(action?.type) === 'bulk_create' && normalizeKeroActionTargetName(action?.target) === 'lorebook'),
-            remakeCarriesReferenceDigest: /Aethelgard|세계의 약속|아퀼라 제국/.test(remakeResponse),
-            remakeHasUnsafeFallbackFingerprint: hasKeroUnsafeEmbeddedTemplateFingerprint(remakeResponse),
-            delegatedShouldPreplan: shouldPreplanKeroLargeCharacterRequest(delegatedNumberedRequest, { keroMode: 'work', workTargetMode: 'character', userRequest: delegatedNumberedRequest }),
-            delegatedAutonomous: isKeroAutonomousExecutionRequest(delegatedNumberedRequest),
-            delegatedCountNotListOrdinal: inferKeroBulkCreateCountFromText(delegatedNumberedRequest) !== 2,
-            delegatedLorebookCount: Number(delegatedLorebookSpec?.count || 0),
-            delegatedBulkCount: getKeroPlannedCreateCountForTargetFromActions(delegatedParsed.actions, 'lorebook'),
-            delegatedSubagentDetected: isExplicitKeroSubmodelRequest(delegatedSubagentRequest),
-            delegatedSubagentBulkCount: delegatedSubagentBulkActions.length,
-            delegatedSubagentBulkPreserved: delegatedSubagentBulkActions.length > 0
-                && delegatedSubagentBulkActions.every((action) => action?.useSubmodels === true),
-            detectsClarificationResponse: isKeroClarificationOrApprovalResponse('세계 이름은 어떤 느낌이 좋아? 아니면 내가 알아서 정할까? 이 방향성 어때?'),
-            descOnlyUnderfilled: hasKeroUnderfilledFullBuildActions([{ type: 'update', target: 'character', payload: { desc: 'desc only' } }], delegatedNumberedRequest),
-            startNowFollowupDetected: isKeroStartNowFollowupRequest('하라고') === true && isKeroStartNowFollowupRequest('알아서 뚝딱뚝딱 해') === true,
-            moduleBlocked: !buildKeroPreplannedLargeRequestResponse(request, { keroMode: 'work', workTargetMode: 'module', userRequest: request }),
-            planningOnlyBlocked: !buildKeroPreplannedLargeRequestResponse(`${request}\n먼저 계획만 보여줘.`, { keroMode: 'work', workTargetMode: 'character' })
-        };
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '대형 요청 선분해 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const problems = [];
-    if (!value.shouldPreplan) problems.push('선분해 대상 감지 실패');
-    if (!value.hasResponse) problems.push('선분해 응답 생성 실패');
-    if (Number(value.actionCount || 0) < 1) problems.push('액션 분해 부족');
-    if (value.hasCharacterUpdate) problems.push('로컬 선분해가 캐릭터 전체 패치를 직접 생성함');
-    if (!value.hasBulkCreate) problems.push('로어북/인물 bulk_create 누락');
-    if (value.hasUnsafeFallbackFingerprint) problems.push('로컬 fallback 고정 템플릿명 노출');
-    if (!value.remakeShouldPreplan) problems.push('리메이크/빈 봇 프로젝트 요청 선분해 감지 실패');
-    if (value.remakeHasCharacterUpdate) problems.push('리메이크 로컬 선분해가 캐릭터 전체 패치를 직접 생성함');
-    if (!value.remakeHasBulkCreate) problems.push('리메이크 요청 bulk_create 누락');
-    if (!value.remakeCarriesReferenceDigest) problems.push('리메이크 선분해 액션에 참고 자료 다이제스트 누락');
-    if (value.remakeHasUnsafeFallbackFingerprint) problems.push('리메이크 선분해에 고정 판타지 fallback 템플릿명 노출');
-    if (!value.delegatedShouldPreplan) problems.push('번호 목록+위임형 리메이크 요청 선분해 감지 실패');
-    if (!value.delegatedAutonomous) problems.push('알아서/최종완료 위임형 실행 신호 감지 실패');
-    if (!value.delegatedCountNotListOrdinal) problems.push('번호 목록 2번을 생성 수량으로 오판');
-    if (Number(value.delegatedLorebookCount || 0) < 50) problems.push('번호 목록 포함 전체 제작 요청이 로어북 기본 50개로 승격되지 않음');
-    if (Number(value.delegatedBulkCount || 0) < 50) problems.push('위임형 전체 제작 선분해 bulk_create 수량 부족');
-    if (!value.delegatedSubagentDetected) problems.push('위임형 요청의 노예/서브에이전트 명시 감지 실패');
-    if (Number(value.delegatedSubagentBulkCount || 0) < 1) problems.push('위임형 서브에이전트 요청 bulk_create 생성 실패');
-    if (!value.delegatedSubagentBulkPreserved) problems.push('위임형 bulk_create 큐에 서브에이전트 사용 의도 누락');
-    if (!value.detectsClarificationResponse) problems.push('확인/선호 질문형 응답 감지 실패');
-    if (!value.descOnlyUnderfilled) problems.push('전체 제작 요청의 desc-only 부분 액션 감지 실패');
-    if (!value.startNowFollowupDetected) problems.push('시작/하라고 후속 실행 지시 감지 실패');
-    if (!value.moduleBlocked) problems.push('모듈 작업 대상에서 캐릭터 선분해 차단 실패');
-    if (!value.planningOnlyBlocked) problems.push('계획만 요청에서 선분해 차단 실패');
-    checks.push(makeSvbRuntimeCheck(
-        problems.length === 0,
-        '대형 요청 선분해 자체 테스트',
-        problems.length ? `문제: ${problems.join(' / ')}` : '로컬 선분해는 임의 캐릭터 전체 덮어쓰기 없이 bulk_create 청크 작업만 구성',
         problems.length ? 'error' : 'ok'
     ));
 }
@@ -14772,160 +13971,6 @@ function addSvbRuntimeSubAgentAutoSkipSelfTest(checks) {
     ));
 }
 
-function addSvbRuntimeBulkCreateRangeSelfTest(checks) {
-    const result = readSvbRuntimeValue('대량 생성 range/retry 자체 테스트', () => {
-        const adaptiveLimits = getSvbAdaptiveRuntimeLimits({ force: true });
-        const plan = buildKeroBulkCreateChunks(120, 30, 1000, 8000);
-        const completedRanges = normalizeKeroBulkRanges([{ start: 0, count: 30, saved: 30, created: 30 }]);
-        const failedRanges = normalizeKeroBulkFailedRanges([{ start: 30, count: 30, reason: 'diagnostic', retryCount: 1 }], completedRanges);
-        const job = {
-            id: 'diagnostic-bulk',
-            target: 'lorebook',
-            total: 120,
-            count: 120,
-            chunkSize: 30,
-            userRequest: '진단용 대량 생성',
-            chunks: plan.chunks,
-            completedRanges,
-            failedRanges
-        };
-        const summary = getKeroBulkCreateJobSummary(job);
-        const resumeAction = buildKeroBulkCreateResumeAction(job);
-        const retryBudget = hasKeroBulkNoProgressRetryBudget([job]);
-        const completedAllJob = {
-            ...job,
-            completedRanges: normalizeKeroBulkRanges([{ start: 0, count: 120, saved: 120, created: 120 }]),
-            failedRanges: normalizeKeroBulkFailedRanges([{ start: 30, count: 30, reason: 'old_failed', retryCount: 2 }], [{ start: 0, count: 120 }])
-        };
-        const completedSummary = getKeroBulkCreateJobSummary(completedAllJob);
-        const mergedRetryRanges = normalizeKeroBulkFailedRanges([
-            { start: 30, count: 10, reason: 'first', retryCount: 1 },
-            { start: 35, count: 15, reason: 'second', retryCount: 3 }
-        ], []);
-        const defaultBulkReq = normalizeKeroBulkCreateRequest({
-            type: 'bulk_create',
-            target: 'lorebook',
-            count: 100,
-            userRequest: '진단용 로어북 생성'
-        });
-        const strictBulkReq = normalizeKeroBulkCreateRequest({
-            type: 'bulk_create',
-            target: 'lorebook',
-            count: 100,
-            chunkSize: 50,
-            fullBuild: true,
-            userRequest: '진단용 정통 판타지 전체 제작'
-        });
-        const glmThinkingOutput = resolveMaxOutputTokens('GLM 5.2 Thinking');
-        const emptyModelOutput = resolveMaxOutputTokens('');
-        const autoModelOutput = resolveMaxOutputTokens('auto');
-        const unknownRouterOutput = resolveMaxOutputTokens('nanogpt-router-auto-model');
-        const richBudgetReq = normalizeKeroBulkCreateRequest({
-            type: 'bulk_create',
-            target: 'lorebook',
-            count: 10,
-            chunkSize: 10,
-            itemCharLimit: 2400,
-            chunkCharLimit: 16000,
-            maxOutputTokens: glmThinkingOutput,
-            fullBuild: true,
-            subject: 'character',
-            perEntity: true,
-            qualityProfile: 'character_roster_lorebook',
-            userRequest: '정통 판타지 시뮬봇 대표 인물 10명 로어북을 요약 없이 상세하게 생성'
-        });
-        const richBudgetPlan = buildKeroBulkCreateChunks(10, richBudgetReq.chunkSize, richBudgetReq.itemCharLimit, richBudgetReq.chunkCharLimit);
-        const previousMission = currentKeroMission;
-        let fullBuildWarningDependency = '';
-        let manualWarningDependency = '';
-        try {
-            currentKeroMission = {
-                id: 'diagnostic-mission',
-                steps: [{ id: 'char-seed', status: 'warning', title: '캐릭터 기본 저장' }]
-            };
-            fullBuildWarningDependency = getKeroActionDependencyBlockReason({
-                type: 'bulk_create',
-                target: 'lorebook',
-                dependsOn: ['char-seed'],
-                reason: 'character_full_build',
-                fullBuild: true
-            });
-            manualWarningDependency = getKeroActionDependencyBlockReason({
-                type: 'bulk_create',
-                target: 'lorebook',
-                dependsOn: ['char-seed'],
-                reason: 'manual_bulk'
-            });
-        } finally {
-            currentKeroMission = previousMission;
-        }
-        return {
-            chunkCount: plan.chunks.length,
-            summaryRemaining: summary.remainingCount,
-            summaryFailed: summary.failedCount,
-            remainderCount: getKeroBulkRemainderCount({ remaining: summary.remainingCount, failed: summary.failedCount }),
-            failedRetryCount: failedRanges[0]?.retryCount || 0,
-            retryBudget,
-            resumeJobId: resumeAction.bulkJobId || resumeAction.jobId,
-            resumeCount: Number(resumeAction.count || 0),
-            completedRemaining: completedSummary.remainingCount,
-            completedFailed: completedSummary.failedCount,
-            completedResumable: isResumableKeroBulkCreateJob(completedAllJob),
-            mergedRetryCount: mergedRetryRanges[0]?.retryCount || 0,
-            defaultChunkSize: defaultBulkReq.chunkSize,
-            strictChunkSize: strictBulkReq.chunkSize,
-            fullBuildWarningDependency,
-            manualWarningDependency,
-            effectiveChunkSize: plan.effectiveChunkSize,
-            expectedDefaultChunkSize: adaptiveLimits.bulkDefaultChunkSize,
-            glmThinkingOutput,
-            emptyModelOutput,
-            autoModelOutput,
-            unknownRouterOutput,
-            richBudgetItemLimit: richBudgetReq.itemCharLimit,
-            richBudgetChunkLimit: richBudgetReq.chunkCharLimit,
-            richBudgetEffectiveChunkSize: richBudgetPlan.effectiveChunkSize,
-            noSummaryCompressionFalse: isKeroCompressionRequested('요약 없이 상세하게 작성') === false,
-            positiveCompressionTrue: isKeroCompressionRequested('짧게 요약해') === true
-        };
-    });
-    if (!result.ok) {
-        checks.push(makeSvbRuntimeCheck(false, '대량 생성 range/retry 자체 테스트', result.error, 'error'));
-        return;
-    }
-    const value = result.value || {};
-    const problems = [];
-    const expectedChunkCount = Math.ceil(120 / Math.max(1, Number(value.effectiveChunkSize || 1)));
-    if (Number(value.chunkCount || 0) !== expectedChunkCount) problems.push(`청크 분할 ${expectedChunkCount}개 실패`);
-    if (Number(value.summaryRemaining || 0) !== 90) problems.push(`잔여 계산 ${value.summaryRemaining}개`);
-    if (Number(value.summaryFailed || 0) !== 30) problems.push(`실패 계산 ${value.summaryFailed}개`);
-    if (Number(value.remainderCount || 0) !== 90) problems.push(`잔여 대표값 ${value.remainderCount}개`);
-    if (Number(value.failedRetryCount || 0) !== 1) problems.push('실패 range retryCount 보존 실패');
-    if (value.retryBudget !== true) problems.push('실패 range 재시도 여유 감지 실패');
-    if (!value.resumeJobId || Number(value.resumeCount || 0) !== 120) problems.push('resume action 구성 실패');
-    if (Number(value.completedRemaining || 0) !== 0 || Number(value.completedFailed || 0) !== 0 || value.completedResumable) problems.push('완료 job 잔여/실패 정리 실패');
-    if (Number(value.mergedRetryCount || 0) !== 3) problems.push('겹친 실패 range retryCount 병합 실패');
-    if (Number(value.defaultChunkSize || 0) !== Number(value.expectedDefaultChunkSize || 0)) problems.push(`기본 chunkSize ${value.defaultChunkSize}`);
-    if (Number(value.strictChunkSize || 0) !== 50) problems.push(`explicit chunkSize not preserved ${value.strictChunkSize}`);
-    if (Number(value.glmThinkingOutput || 0) < 64000) problems.push(`GLM/Kimi output budget fallback regression ${value.glmThinkingOutput}`);
-    if (Number(value.emptyModelOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`empty model output fallback still low ${value.emptyModelOutput}`);
-    if (Number(value.autoModelOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`auto model output fallback still low ${value.autoModelOutput}`);
-    if (Number(value.unknownRouterOutput || 0) < SVB_DEFAULT_MAX_OUTPUT_TOKENS) problems.push(`unknown/router model output fallback still low ${value.unknownRouterOutput}`);
-    if (Number(value.richBudgetItemLimit || 0) <= 2400) problems.push(`rich lorebook item budget capped too low ${value.richBudgetItemLimit}`);
-    if (Number(value.richBudgetChunkLimit || 0) <= 16000) problems.push(`rich lorebook chunk budget capped too low ${value.richBudgetChunkLimit}`);
-    if (Number(value.richBudgetEffectiveChunkSize || 0) !== 10) problems.push(`rich lorebook should keep multi-item chunks ${value.richBudgetEffectiveChunkSize}`);
-    if (!value.noSummaryCompressionFalse) problems.push('요약 없이 부정형을 압축 요청으로 오판');
-    if (!value.positiveCompressionTrue) problems.push('명시 요약/압축 요청 감지 실패');
-    if (safeString(value.fullBuildWarningDependency)) problems.push('full-build bulk warning dependency 허용 실패');
-    if (!safeString(value.manualWarningDependency)) problems.push('일반 bulk warning dependency 차단 실패');
-    checks.push(makeSvbRuntimeCheck(
-        problems.length === 0,
-        '대량 생성 range/retry 자체 테스트',
-        `잔여 ${value.summaryRemaining || 0}개 · 실패 ${value.summaryFailed || 0}개 · retry ${value.failedRetryCount || 0}회${problems.length ? ` · 문제: ${problems.join(' / ')}` : ''}`,
-        problems.length ? 'error' : 'ok'
-    ));
-}
-
 function addSvbRuntimeMissionPersistSelfTest(checks) {
     const result = readSvbRuntimeValue('미션 저장 스냅샷 자체 테스트', () => {
         const mission = {
@@ -15417,10 +14462,6 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeFunctionCheck(checks, '작업 하트비트 withKeroActivityHeartbeat', () => withKeroActivityHeartbeat);
     addSvbRuntimeFunctionCheck(checks, '서브에이전트 호출 buildSubmodelConsultationBlock', () => buildSubmodelConsultationBlock);
     addSvbRuntimeFunctionCheck(checks, '캐릭터 패치 적용 applyKeroCharacterPatchAction', () => applyKeroCharacterPatchAction);
-    addSvbRuntimeFunctionCheck(checks, '게이트웨이 복구 runKeroGatewayRecovery', () => runKeroGatewayRecovery);
-    addSvbRuntimeFunctionCheck(checks, 'LLM 청크 큐 buildKeroLlmChunkQueueFallbackResponse', () => buildKeroLlmChunkQueueFallbackResponse);
-    addSvbRuntimeFunctionCheck(checks, '대량 생성 실행 runKeroBulkCreate', () => runtimeFunction('runKeroBulkCreate'));
-    addSvbRuntimeFunctionCheck(checks, '대량 생성 자동 재개 autoResumeKeroBulkJobsUntilSettled', () => runtimeFunction('autoResumeKeroBulkJobsUntilSettled'));
     addSvbRuntimeFunctionCheck(checks, '백그라운드 상태 renderKeroBackgroundStatus', () => renderKeroBackgroundStatus);
     addSvbRuntimeFunctionCheck(checks, '대기 요청 패널 renderKeroQueuePanel', () => renderKeroQueuePanel);
     addSvbRuntimeFunctionCheck(checks, '작업 흐름 렌더 renderKeroWorkstream', () => runtimeFunction('renderWorkstream') || keroWorkstreamRenderer);
@@ -15429,13 +14470,10 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeActionParserSelfTest(checks);
     addSvbRuntimeLocalActionParserSelfTest(checks, localFunctions);
     addSvbRuntimeWorkTargetFilterSelfTest(checks, localFunctions);
-    addSvbRuntimeSteeringQueueSelfTest(checks);
-    addSvbRuntimeControlRoutingSelfTest(checks);
     addSvbRuntimePlanningRoutingSelfTest(checks);
     addSvbRuntimeMissingImproveFallbackSelfTest(checks);
     addSvbRuntimeIndexFallbackSelfTest(checks);
     addSvbRuntimeKeroChatContinuitySelfTest(checks);
-    addSvbRuntimeInputQueueRecoverySelfTest(checks);
     addSvbRuntimeWarningReplaySelfTest(checks);
     addSvbRuntimeWorkTargetRecoverySelfTest(checks);
     addSvbRuntimePluginMetadataSelfTest(checks);
@@ -15443,17 +14481,14 @@ function runSvbRuntimeSelfCheck(options = {}) {
     addSvbRuntimeWellspringImageSelfTest(checks);
     addSvbRuntimeWellspringFetchRetrySelfTest(checks);
     addSvbRuntimeWellspringLoraIdentitySelfTest(checks, localFunctions);
-    addSvbRuntimeGatewayFallbackSelfTest(checks);
     addSvbRuntimeOutputLimitRecoverySelfTest(checks);
     addSvbRuntimeOutputLimitDecisionSelfTest(checks);
     addSvbRuntimeLargeRequestTransportRecoverySelfTest(checks);
-    addSvbRuntimeLargeRequestPreplanSelfTest(checks);
     addSvbRuntimeLegacyFieldPolicySelfTest(checks);
     addSvbRuntimeContextPayloadSelfTest(checks);
     addSvbRuntimeSubAgentPayloadBudgetSelfTest(checks);
     addSvbRuntimeAdaptiveLimitsSelfTest(checks);
     addSvbRuntimeSubAgentAutoSkipSelfTest(checks);
-    addSvbRuntimeBulkCreateRangeSelfTest(checks);
     addSvbRuntimeMissionPersistSelfTest(checks);
     addSvbRuntimeSubAgentHardCapSelfTest(checks);
     addSvbRuntimeHeartbeatTimeoutSelfTest(checks);
@@ -15768,52 +14803,18 @@ function updateKeroQueuedInputUi() {
     renderKeroQueuePanel(currentKeroMission?.id || '');
     const sendBtn = document.getElementById('risu-trans-chat-send');
     if (!sendBtn) return;
-    const readyQueuedCount = getKeroReadyQueuedInputCount();
     const processingCount = countKeroInputQueueByStatus(keroQueuedUserInputs, ['processing']);
     if (keroChatTaskRunning) {
         sendBtn.disabled = false;
-        sendBtn.textContent = readyQueuedCount ? `추가 전달(${readyQueuedCount})` : '추가 전달';
-        sendBtn.title = readyQueuedCount
-            ? `현재 작업이 끝나면 이어서 처리할 요청 ${readyQueuedCount}개가 대기 중입니다.`
-            : (processingCount ? `대기열 요청 ${processingCount}개를 처리 중입니다. 새 요청은 다음 순서로 남깁니다.` : '현재 작업이 끝나면 이어서 처리할 요청으로 남깁니다.');
+        sendBtn.textContent = '추가 메모';
+        sendBtn.title = processingCount
+            ? `현재 작업 입력 메모를 반영하는 중입니다.`
+            : '현재 작업 참고 메모로만 반영하고 자동 후속 실행/재시도는 만들지 않습니다.';
         return;
     }
     sendBtn.disabled = false;
     sendBtn.textContent = '전송';
     sendBtn.title = '';
-}
-
-function getKeroQueuedDrainSnapshot(queue = keroQueuedUserInputs, missionId = currentKeroMission?.id || '') {
-    const targetMissionId = safeString(missionId || '');
-    return new Set(normalizeKeroInputQueue(queue)
-        .filter((item) => safeString(item.status || 'queued') === 'queued')
-        .filter((item) => isKeroRecordInMission(item.missionId, targetMissionId))
-        .map((item) => safeString(item.id))
-        .filter(Boolean));
-}
-
-function requeueFailedKeroInputQueue(queue = keroQueuedUserInputs, missionId = currentKeroMission?.id || '') {
-    const targetMissionId = safeString(missionId || '');
-    let requeued = 0;
-    const now = Date.now();
-    const nextQueue = normalizeKeroInputQueue(queue).map((item) => {
-        if (safeString(item.status || '') !== 'failed') return item;
-        const itemMissionId = safeString(item.missionId || '');
-        if (!isKeroRecordInMission(itemMissionId, targetMissionId)) return item;
-        requeued += 1;
-        return {
-            ...item,
-            status: 'queued',
-            retryCount: 0,
-            processingAt: 0,
-            heartbeatAt: 0,
-            runtimeSessionId: '',
-            requeuedAt: now,
-            lastTaskStatus: '',
-            lastError: ''
-        };
-    });
-    return { queue: nextQueue, requeued };
 }
 
 function getKeroChatTaskZombieMs() {
@@ -15962,9 +14963,6 @@ function requestKeroTaskInterruption(options = {}) {
 
 function registerKeroRuntimeLocalOps(ops = {}) {
     if (!ops || typeof ops !== 'object') return;
-    if (typeof ops.drainQueuedInputs === 'function') {
-        keroRuntimeLocalOps.drainQueuedInputs = ops.drainQueuedInputs;
-    }
     if (typeof ops.renderWorkstream === 'function') {
         keroRuntimeLocalOps.renderWorkstream = ops.renderWorkstream;
     }
@@ -15983,24 +14981,15 @@ function registerKeroRuntimeLocalOps(ops = {}) {
     if (typeof ops.bindKeroToolsEvents === 'function') {
         keroRuntimeLocalOps.bindKeroToolsEvents = ops.bindKeroToolsEvents;
     }
-    if (typeof ops.runKeroBulkCreate === 'function') {
-        keroRuntimeLocalOps.runKeroBulkCreate = ops.runKeroBulkCreate;
-    }
-    if (typeof ops.autoResumeKeroBulkJobsUntilSettled === 'function') {
-        keroRuntimeLocalOps.autoResumeKeroBulkJobsUntilSettled = ops.autoResumeKeroBulkJobsUntilSettled;
-    }
 }
 
 function clearKeroRuntimeLocalOps() {
-    keroRuntimeLocalOps.drainQueuedInputs = null;
     keroRuntimeLocalOps.renderWorkstream = null;
     keroRuntimeLocalOps.updateQueuedInputUi = null;
     keroRuntimeLocalOps.addBotMessage = null;
     keroRuntimeLocalOps.handleKeroActionRequest = null;
     keroRuntimeLocalOps.openKeroToolsPanel = null;
     keroRuntimeLocalOps.bindKeroToolsEvents = null;
-    keroRuntimeLocalOps.runKeroBulkCreate = null;
-    keroRuntimeLocalOps.autoResumeKeroBulkJobsUntilSettled = null;
 }
 
 async function resolveKeroWakeStorageId() {
@@ -16087,27 +15076,13 @@ async function runKeroRuntimeWakeRecovery(reason = 'runtime_wake') {
         if (typeof updateQueue === 'function') {
             try { updateQueue(); } catch (error) { Logger.warn('Kero wake queue UI update failed:', error?.message || error); }
         }
-        const drain = keroRuntimeLocalOps.drainQueuedInputs;
-        const missionId = currentKeroMission?.id || '';
-        const readyForMission = getKeroReadyQueuedInputCount(keroQueuedUserInputs, missionId);
-        const readyAny = missionId ? getKeroReadyQueuedInputCount(keroQueuedUserInputs, '') : readyForMission;
-        const readyCount = readyForMission || readyAny;
-        if (readyCount > 0 && typeof drain === 'function' && !keroChatTaskRunning && !keroProcessingQueuedInput) {
-            addKeroWorkstreamEvent(
-                '대기열 복귀 자동 진행',
-                `화면 복귀 후 대기 요청 ${readyCount}개를 이어 처리합니다.`,
-                'queued',
-                currentKeroRequestJobId ? { jobId: currentKeroRequestJobId } : { detached: true, allowCurrentJobFallback: false }
-            );
-            await drain();
-        }
         const renderWorkstream = keroRuntimeLocalOps.renderWorkstream || keroWorkstreamRenderer;
         if (typeof renderWorkstream === 'function') {
             try { await renderWorkstream(); } catch (error) { Logger.warn('Kero wake workstream render failed:', error?.message || error); }
         }
         return result || { recovered: false };
     } catch (error) {
-        recordSvbRuntimeDiagnostic('화면 복귀 복구 실패', error?.message || String(error), 'error');
+        recordSvbRuntimeDiagnostic('화면 복귀 처리 실패', error?.message || String(error), 'error');
         Logger.warn('Kero runtime wake recovery failed:', error?.message || error);
         return { recovered: false, error };
     } finally {
@@ -16214,65 +15189,15 @@ async function recoverKeroRuntimeStateOnWake(reason = 'app_wake') {
         }
         renderKeroBackgroundStatus();
 
-        const storageId = await resolveKeroWakeStorageId();
-        if (!storageId) return { recovered: false, reason: 'no_storage' };
-        const wakeProgressOptions = currentKeroRequestJobId
-            ? { jobId: currentKeroRequestJobId }
-            : { detached: true, allowCurrentJobFallback: false };
-
-        let recoveredQueueCount = 0;
-        try {
-            const latestQueue = await loadKeroInputQueue(storageId);
-            const recoveredQueue = recoverStaleKeroInputQueue(latestQueue, { force: !keroChatTaskRunning });
-            if (recoveredQueue.recovered > 0) {
-                keroQueuedUserInputs = recoveredQueue.queue;
-                await saveKeroInputQueue(storageId, keroQueuedUserInputs);
-                recoveredQueueCount = recoveredQueue.recovered;
-                updateKeroQueuedInputUi();
-            }
-        } catch (error) {
-            Logger.warn('Kero wake queue recovery failed:', error?.message || error);
-        }
-
-        let recoveredActionCount = 0;
         const taskLooksZombie = isKeroChatTaskLikelyZombie(now);
-        if (currentKeroMission) {
-            try {
-                const recoveredActions = await recoverOrphanedKeroActionJobs(storageId, currentKeroMission.id || '', { force: false });
-                recoveredActionCount = Number(recoveredActions?.recovered || 0);
-                if (recoveredActionCount > 0) {
-                    await reconcileKeroMissionStepsWithActionJobs(storageId, currentKeroMission.id || '', {
-                        title: '화면 복귀 액션 단계 정리',
-                        detail: `오래 갱신되지 않은 액션 job ${recoveredActionCount}개를 중단 감지로 정리했습니다.`,
-                        status: 'warning'
-                    });
-                }
-                if (taskLooksZombie) {
-                    const chatZombieMinutes = Math.round(getKeroChatTaskZombieMs() / 60000);
-                    const released = releaseKeroZombieRuntimeLock(
-                        `작업 표시가 ${chatZombieMinutes}분 이상 갱신되지 않아 멈춘 런타임 잠금을 해제했습니다. "계속 진행"으로 미완료 작업을 이어갈 수 있습니다.`
-                    );
-                    addKeroWorkstreamEvent(
-                        '장시간 정지 복구',
-                        `작업 표시가 ${chatZombieMinutes}분 이상 갱신되지 않아 런타임 잠금${released ? '' : ' 확인'} 및 액션 job ${recoveredActionCount}개를 재개 가능 상태로 정리했습니다.`,
-                        'warning',
-                        wakeProgressOptions
-                    );
-                }
-            } catch (error) {
-                Logger.warn('Kero wake action recovery failed:', error?.message || error);
-            }
-        }
-
-        if (recoveredQueueCount > 0 || recoveredActionCount > 0) {
-            addKeroWorkstreamEvent(
-                '화면 복귀 복구',
-                `처리 중으로 남아 있던 대기 요청 ${recoveredQueueCount}개, 액션 job ${recoveredActionCount}개를 정리했습니다.`,
-                'retry',
-                wakeProgressOptions
+        if (taskLooksZombie) {
+            const chatZombieMinutes = Math.round(getKeroChatTaskZombieMs() / 60000);
+            const released = releaseKeroZombieRuntimeLock(
+                `작업 표시가 ${chatZombieMinutes}분 이상 갱신되지 않아 멈춘 런타임 잠금을 해제했습니다.`
             );
+            return { recovered: false, releasedZombieLock: released, reason: 'runtime_lock_released' };
         }
-        return { recovered: recoveredQueueCount > 0 || recoveredActionCount > 0, recoveredQueueCount, recoveredActionCount };
+        return { recovered: false, reason: 'runtime_recovery_removed' };
     } finally {
         keroWakeRecoveryRunning = false;
         renderKeroBackgroundStatus();
@@ -16643,7 +15568,7 @@ function getKeroModelRetryCountForMode(mode = currentKeroMode, options = {}) {
     const normalized = normalizeKeroMode(mode);
     if (options.planningOnly === true || normalized === 'planning' || normalized === 'daily') return 1;
     if (isKeroAssetFocusedRequest(options.userRequest || options.visibleUserInput || '')) return 1;
-    return isKeroExecutionMode(normalized) ? 3 : 1;
+    return 1;
 }
 
 function getKeroModeMeta(mode = currentKeroMode) {
@@ -25350,14 +24275,7 @@ async function createTransUI() {
         el("div", { class: "kero-workstream-goal is-empty", id: "kero-workstream-goal" }),
         el("div", { class: "kero-queue-panel is-empty", id: "kero-queue-panel" }),
         el("div", { class: "kero-tool-row" }, [
-            el("button", { class: "btn-secondary", id: "kero-runtime-continue-btn", text: "계속 진행" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-diagnostics-btn", text: "진단 실행" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-recover-btn", text: "대기 복구 확인" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-retry-btn", text: "재시도" }),
-            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지", title: "현재 모델 호출/실행을 중단하고 이미 완료된 저장은 유지합니다." })
-        ]),
-        el("div", { class: "kero-runtime-diagnostics-list", id: "kero-runtime-diagnostics-list" }, [
-            el("div", { class: "kero-empty", text: "작업이 멈추거나 오류가 의심되면 진단을 실행하세요." })
+            el("button", { class: "btn-secondary", id: "kero-runtime-stop-btn", text: "중지", title: "현재 모델 호출/실행을 중단합니다." })
         ]),
         el("div", { class: "kero-workstream-list", id: "kero-workstream-list" }, [
             el("div", { class: "kero-empty", text: "아직 기록된 작업 흐름이 없습니다." })
@@ -28427,7 +27345,7 @@ ${currentVars || '{}'}
         const raw = safeString(value).trim();
         if (!raw) return { type: '', target: '' };
         const parts = raw.toLowerCase().split(/[\s_:.-]+/).filter(Boolean);
-        const validTypes = new Set(['apply', 'asset_manage', 'bulk_create', 'create', 'delete', 'improve', 'patch', 'update']);
+        const validTypes = new Set(['apply', 'asset_manage', 'create', 'delete', 'improve', 'patch', 'update']);
         const validTargets = new Set(['character', 'desc', 'globalNote', 'background', 'vars', 'lorebook', 'regex', 'trigger', 'authorNote', 'creatorComment', 'firstMessage', 'alternateGreetings', 'translatorNote', 'chatLorebook', 'asset', 'module', 'plugin']);
         for (let index = 0; index < parts.length; index += 1) {
             const first = parts[index];
@@ -28520,7 +27438,6 @@ ${currentVars || '{}'}
         return [
             'apply',
             'asset_manage',
-            'bulk_create',
             'create',
             'delete',
             'improve',
@@ -28641,9 +27558,9 @@ ${currentVars || '{}'}
         if (options.silentRecoveryEvent !== true && options.suppressWorkstreamEvent !== true) {
             const progressOptions = resolveKeroActionProgressOptions(options);
             addKeroWorkstreamEvent(
-                '필드 내 액션 분리',
-                `${label} 본문에 섞인 @action ${extractedActions.length}개를 저장 텍스트에서 분리해 후속 작업으로 이어 실행합니다.`,
-                'action',
+                '필드 내 액션 제거',
+                `${label} 본문에 섞인 @action ${extractedActions.length}개를 저장 텍스트에서 분리했습니다. 자동 후속 실행은 만들지 않습니다.`,
+                'warning',
                 progressOptions
             );
         }
@@ -28690,8 +27607,6 @@ ${currentVars || '{}'}
             createimage: 'create',
             assetgeneration: 'create',
             imagegeneration: 'create',
-            bulkcreate: 'bulk_create',
-            bulkadd: 'bulk_create',
             delete: 'delete',
             remove: 'delete'
         };
@@ -28878,9 +27793,9 @@ ${currentVars || '{}'}
         }
         if (['lorebook', 'regex', 'trigger'].includes(target)) {
             if (type === 'create' && !normalized.payload && Number(normalized.count || normalized.total || normalized.requestedCount || 0) > 1) {
-                return { ...normalized, type: 'bulk_create' };
+                return null;
             }
-            if (['improve', 'apply', 'create', 'bulk_create', 'delete'].includes(type)) return normalized;
+            if (['improve', 'apply', 'create', 'delete'].includes(type)) return normalized;
             return null;
         }
     if (target === 'asset') {
@@ -29012,7 +27927,7 @@ ${currentVars || '{}'}
     }
 
     function isKeroBulkCreateAction(action = {}) {
-        return safeString(action?.type) === 'bulk_create';
+        return false;
     }
 
     function shouldAutoPromoteUIDesignAction(userInput, assistantText) {
@@ -29041,10 +27956,6 @@ ${currentVars || '{}'}
             if (!action || typeof action !== 'object') return;
             const type = safeString(action.type);
             const actionTarget = normalizeKeroActionTargetName(action.target);
-            if (actionTarget === normalizedTarget && type === 'bulk_create') {
-                count += clampKeroBulkCreateCount(action.count ?? action.total ?? action.requestedCount ?? action.amount ?? action.payload?.count ?? action.payload?.total);
-                return;
-            }
             if (actionTarget === normalizedTarget && type === 'create') {
                 const payloadCount = normalizeKeroCreatePayloads(action.payload).length;
                 count += payloadCount || clampKeroBulkCreateCount(action.count ?? action.total ?? action.requestedCount ?? action.amount);
@@ -29067,7 +27978,7 @@ ${currentVars || '{}'}
             '',
             '[슈바봇 부족분 자동 이어쓰기]',
             `사용자 요청은 ${targetLabel} 총 ${spec.count}개입니다.`,
-            `앞선 액션에서 ${plannedCount}개만 계획되어 있어, 이번 bulk_create는 부족한 ${remainingCount}개를 새로 생성합니다.`,
+            `앞선 액션에서 ${plannedCount}개만 계획되어 있어, 다음 create payload에서 부족한 ${remainingCount}개를 새로 생성합니다.`,
             '앞선 항목과 comment/name/key/in/out이 겹치지 않게 이어서 작성하고, "이미 만들었다"거나 "생략"하지 말고 반드시 신규 항목 수를 채웁니다.'
         ];
         if (spec.target === 'lorebook' && (spec.subject === 'character' || spec.perEntity === true || spec.qualityProfile === 'character_roster_lorebook')) {
@@ -29085,45 +27996,7 @@ ${currentVars || '{}'}
     }
 
     function buildKeroCreateCountCoverageActions(userInput, actions = [], options = {}) {
-        const request = safeString(userInput).trim();
-        if (!hasKeroExplicitMutationIntent(request) || isKeroQuestionOnlyRequest(request)) return [];
-        if (!request || !isKeroCreateLikeRequest(request) && !isKeroFullCharacterBuildRequest(request)) return [];
-        const fullBuild = options.fullBuild === true || isKeroFullCharacterBuildRequest(request);
-        const specs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
-        const added = [];
-        specs.forEach((spec, index) => {
-            const target = normalizeKeroActionTargetName(spec?.target);
-            if (!['lorebook', 'regex', 'trigger'].includes(target)) return;
-            const requestedCount = clampKeroBulkCreateCount(spec.count);
-            if (requestedCount <= 1) return;
-            const isRosterLorebook = target === 'lorebook'
-                && (spec.subject === 'character' || spec.perEntity === true || spec.qualityProfile === 'character_roster_lorebook' || requestedCount >= 10 && /등장인물|인물|npc|characters?|각각|각자/i.test(request));
-            const plannedCount = getKeroPlannedCreateCountForTarget(actions, target, {
-                includeCharacterPayload: !(fullBuild && isRosterLorebook)
-            });
-            if (plannedCount >= requestedCount) return;
-            const remainingCount = requestedCount - plannedCount;
-            const bulkId = `coverage-count-${target}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`;
-            const bulkAction = buildKeroCoverageAction({
-                type: 'bulk_create',
-                target,
-                count: remainingCount,
-                chunkSize: resolveKeroBulkCreateFallbackChunkSize(remainingCount, 8),
-                userRequest: buildKeroCreateCountCoverageUserRequest(request, { ...spec, target, count: requestedCount }, plannedCount, remainingCount, options),
-                jobId: bulkId,
-                bulkJobId: bulkId,
-                actionJobId: bulkId,
-                stepId: bulkId,
-                reason: 'requested_count_coverage',
-                requestedTotalCount: requestedCount,
-                plannedBeforeCount: plannedCount,
-                ...(fullBuild ? { fullBuild: true, coverageFullBuild: true } : {}),
-                ...(isRosterLorebook ? { subject: 'character', perEntity: true, qualityProfile: 'character_roster_lorebook' } : {}),
-                ...(options.seedAction?.stepId ? { dependsOn: options.seedAction.stepId, allowWarningDependency: true } : {})
-            });
-            added.push(bulkAction);
-        });
-        return added;
+        return [];
     }
 
     function sanitizeKeroAutoUiHtml(html = '') {
@@ -29258,11 +28131,11 @@ ${currentVars || '{}'}
         const hasBackgroundWork = hasKeroCharacterUpdateField(actions, ['backgroundHTML', 'backgroundHtml', 'background_html', 'background', 'statusWindow', 'html', 'css'])
             || hasKeroTargetAction(actions, ['background'], ['apply', 'update', 'patch']);
         const hasRegexWork = hasKeroCharacterUpdateField(actions, ['regexScripts', 'regex', 'customscript', 'regexAppend'])
-            || hasKeroTargetAction(actions, ['regex'], ['apply', 'create', 'bulk_create', 'update', 'patch']);
+            || hasKeroTargetAction(actions, ['regex'], ['apply', 'create', 'update', 'patch']);
         const hasVarsWork = hasKeroCharacterUpdateField(actions, ['defaultVariables', 'variables', 'vars'])
             || hasKeroTargetAction(actions, ['vars'], ['apply', 'update', 'patch']);
         const hasTriggerWork = hasKeroCharacterUpdateField(actions, ['triggers', 'trigger', 'triggerscript', 'triggerScripts', 'triggerAppend'])
-            || hasKeroTargetAction(actions, ['trigger'], ['apply', 'create', 'bulk_create', 'update', 'patch']);
+            || hasKeroTargetAction(actions, ['trigger'], ['apply', 'create', 'update', 'patch']);
 
         const rawHtml = safeString(designPayload.html).trim();
         const rawCss = safeString(designPayload.css).trim();
@@ -29405,7 +28278,7 @@ ${currentVars || '{}'}
         const hasLorebookCreation = hasKeroCharacterUpdateField(coverageBase, ['lorebooks', 'lorebook', 'globalLore', 'lorebookEntries', 'lorebookAppend'])
             || hasKeroActionFor(coverageBase, (action) =>
             normalizeKeroActionTargetName(action.target) === 'lorebook'
-            && ['create', 'bulk_create'].includes(safeString(action.type))
+            && safeString(action.type) === 'create'
         );
         const requestedLorebookCount = inferKeroCoverageLorebookCount(userInput);
 
@@ -29691,7 +28564,6 @@ ${currentVars || '{}'}
     }
 
     function resolveKeroActionExecutionTimeoutMs(action = {}) {
-        if (safeString(action?.type) === 'bulk_create') return 0;
         const explicit = Number(action?.actionTimeoutMs || action?.timeoutMs);
         if (Number.isFinite(explicit) && explicit > 0) {
             return Math.max(30000, explicit);
@@ -30090,7 +28962,7 @@ ${currentVars || '{}'}
                 return;
             }
             attachKeroActionPlanToMission(compactedActions);
-            addKeroWorkstreamEvent('액션 실행 대기열', `${compactedActions.length}개 작업을 순서대로 실행합니다.`, 'queued', actionProgressOptions);
+            addKeroWorkstreamEvent('액션 실행', `${compactedActions.length}개 작업을 순서대로 실행합니다.`, 'action', actionProgressOptions);
             const actionStorageId = actionStorageIdAtRequest || currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
             if (!actionStorageId) {
                 const detail = `작업 저장소 ID가 없어 ${compactedActions.length}개 액션을 추적할 수 없습니다. 실제 적용을 시작하지 않고 확인 필요 상태로 멈춥니다.`;
@@ -30109,7 +28981,7 @@ ${currentVars || '{}'}
                         jobs[job.id] = mergeKeroQueuedActionJob(previous, job);
                     });
                     queuedPersisted = await persistKeroActionJobSafely(
-                        '액션 대기열 기록',
+                        '액션 실행 기록',
                         () => saveKeroActionJobs(actionStorageId, jobs),
                         actionProgressOptions
                     );
@@ -30117,9 +28989,9 @@ ${currentVars || '{}'}
                     Logger.warn('Kero action job queue persist failed; aborting batch:', error?.message || error);
                 }
                 if (!queuedPersisted) {
-                    const detail = `액션 대기열 기록 저장에 실패해 ${compactedActions.length}개 작업을 실행하지 않았습니다.`;
+                    const detail = `액션 실행 기록 저장에 실패해 ${compactedActions.length}개 작업을 실행하지 않았습니다.`;
                     await markKeroActionsBlocked(compactedActions, actionMissionId, actionStorageId, detail);
-                    addKeroWorkstreamEvent('액션 대기열 기록 실패', detail, 'error', actionProgressOptions);
+                    addKeroWorkstreamEvent('액션 실행 기록 실패', detail, 'error', actionProgressOptions);
                     throw new Error(detail);
                 }
             }
@@ -30225,35 +29097,12 @@ ${currentVars || '{}'}
                         ? []
                         : normalizeKeroDeferredActionsFromResult(actionResult, action, { missionId: actionMissionId });
                     if (deferredActions.length) {
-                        let followupPersisted = true;
-                        if (actionStorageId) {
-                            followupPersisted = await persistKeroActionJobSafely(
-                                '후속 액션 대기열 기록',
-                                async () => {
-                                    const jobs = await loadKeroActionJobs(actionStorageId);
-                                    deferredActions.forEach((followup, followupIndex) => {
-                                        const job = normalizeKeroActionJob(followup, index + followupIndex + 1, actionMissionId || currentKeroMission?.id || '');
-                                        const previous = jobs[job.id] || {};
-                                        jobs[job.id] = mergeKeroQueuedActionJob(previous, job);
-                                    });
-                                    await saveKeroActionJobs(actionStorageId, jobs);
-                                },
-                                actionProgressOptions
-                            );
-                        }
-                        if (followupPersisted) {
-                            attachKeroActionPlanToMission(deferredActions);
-                            compactedActions.splice(index + 1, 0, ...deferredActions);
-                            addKeroWorkstreamEvent(
-                                '후속 액션 자동 편입',
-                                `${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)} 결과에서 분리한 후속 작업 ${deferredActions.length}개를 이어 실행합니다.`,
-                                'queued',
-                                actionProgressOptions
-                            );
-                        } else {
-                            await markKeroActionsBlocked(deferredActions, actionMissionId, actionStorageId, '후속 액션 대기열 기록 저장 실패');
-                            addKeroWorkstreamEvent('후속 액션 기록 실패', `분리한 후속 작업 ${deferredActions.length}개를 추적 저장하지 못해 실행하지 않았습니다.`, 'warning', actionProgressOptions);
-                        }
+                        addKeroWorkstreamEvent(
+                            '후속 액션 자동 실행 차단',
+                            `${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)} 결과에서 추가 @action ${deferredActions.length}개가 분리됐지만, 자동 후속 실행으로 넘기지 않았습니다.`,
+                            'warning',
+                            actionProgressOptions
+                        );
                     }
                     const verification = shouldVerify
                         ? await verifyKeroActionEffect(action, beforeSnapshot, actionResult)
@@ -30282,7 +29131,7 @@ ${currentVars || '{}'}
                         const warningCodes = ensureArray(verification.warnings).map((warning) => safeString(warning));
                         const warningHint = warningCodes.includes('improve_auto_apply_deferred')
                             ? '결과 카드에서 적용하거나, 실제 저장이 필요하면 "적용해줘"라고 말해줘.'
-                            : '같은 저장 job을 다시 실행하려면 "재시도" 또는 "다시 해봐"라고 말해줘. "계속 진행"은 경고 작업을 반복하지 않고 보류합니다.';
+                            : '같은 저장 job을 자동 재실행하지 않습니다. 필요한 수정 내용을 새 요청으로 입력해줘.';
                         await addBotMessage(`⚠️ ${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)} 실행 후 검증 경고가 있어.\n${verification.detail}\n${warningHint}`);
                     }
                     if (actionStorageId) {
@@ -30379,9 +29228,9 @@ ${currentVars || '{}'}
                     await addBotMessage(
                         `${isRecoverableActionError ? '⚠️' : '❌'} ${getTargetLabel(action?.target)} ${getKeroActionLabel(action?.type)} ${isRecoverableActionError ? '작업을 보류했어' : '실패'}: ${errorDetail}\n` +
                         (isActionTimeout
-                            ? '이 액션은 늦게 완료될 가능성이 있어 후속 액션을 실행하지 않고 작업 묶음을 멈춥니다. 상태가 정리된 뒤 "재시도" 또는 "다시 해봐"로 저장 job을 다시 확인할 수 있어.'
+                            ? '이 액션은 늦게 완료될 가능성이 있어 후속 액션을 실행하지 않고 작업 묶음을 멈춥니다. 상태를 확인한 뒤 필요한 수정 내용을 새 요청으로 입력해줘.'
                             : isRecoverableActionError
-                            ? '이 액션은 경고 상태로 남기고 남은 작업은 계속 진행합니다. 같은 저장 job을 다시 시도하려면 "재시도" 또는 "다시 해봐"라고 말해줘.'
+                            ? '이 액션은 경고 상태로 남기고 남은 작업은 계속 진행합니다. 같은 저장 job을 자동 재실행하지 않습니다.'
                             : '남은 작업은 계속 진행합니다.')
                     );
                     if (isActionTimeout) {
@@ -30411,8 +29260,7 @@ ${currentVars || '{}'}
             update: '수정',
             delete: '삭제',
             create: '생성',
-            asset_manage: '에셋 관리',
-            bulk_create: '대량 생성'
+            asset_manage: '에셋 관리'
         };
         return labels[type] || type || '작업';
     }
@@ -30422,12 +29270,6 @@ ${currentVars || '{}'}
         const targetLabel = getTargetLabel(action?.target);
         const actionLabel = getKeroActionLabel(action?.type);
         const details = [];
-        if (safeString(action?.type) === 'bulk_create') {
-            const count = Math.max(0, Math.floor(Number(action?.count || action?.requestedCount || action?.total || 0)));
-            const chunkSize = Math.max(0, Math.floor(Number(action?.chunkSize || action?.batchSize || action?.limit || 0)));
-            if (count) details.push(`${count}개`);
-            if (chunkSize) details.push(`청크 최대 ${chunkSize}개씩`);
-        }
         const stepId = safeString(action?.stepId || action?.actionJobId || action?.jobId || action?.bulkJobId || '');
         if (stepId) details.push(`ID ${stepId.slice(0, 48)}`);
         return `${prefix}${targetLabel} ${actionLabel}${details.length ? ` · ${details.join(' · ')}` : ''}`;
@@ -30729,7 +29571,7 @@ ${currentVars || '{}'}
         const type = safeString(action?.type);
         const target = normalizeKeroActionTargetName(action?.target);
         if (!type || !target) return false;
-        if (['create', 'asset_manage', 'bulk_create', 'update', 'patch', 'delete', 'apply'].includes(type)) return true;
+        if (['create', 'asset_manage', 'update', 'patch', 'delete', 'apply'].includes(type)) return true;
         if (type === 'improve') return action?.autoApply !== false || ['lorebook', 'regex', 'trigger', 'desc', 'globalNote', 'background', 'vars'].includes(target);
         return false;
     }
@@ -31408,7 +30250,7 @@ ${currentVars || '{}'}
             '',
             '[슈바봇 create count 보강]',
             `모델 액션은 ${label} ${declaredCount}개 생성을 선언했지만 payload에는 ${payloads.length}개만 들어 있었습니다.`,
-            `이번 후속 bulk_create는 부족한 ${remainingCount}개를 같은 주제와 형식으로 이어서 생성합니다.`,
+            `이번 후속 create payload는 부족한 ${remainingCount}개를 같은 주제와 형식으로 이어서 생성합니다.`,
             sample ? `\n[이미 저장한 payload 예시]\n${sample}` : '',
             '이미 저장한 항목과 이름/comment/key/in/out이 겹치지 않게 새 항목만 생성합니다.'
         ].filter(Boolean).join('\n');
@@ -31427,10 +30269,8 @@ ${currentVars || '{}'}
         }
 
         const label = getTargetLabel(target);
-        const declaredCount = getKeroDeclaredCreateCount(req, payloads.length);
-        const requestedCount = Math.max(payloads.length, declaredCount);
+        const requestedCount = payloads.length;
         const isBulkManagedCreateTarget = ['lorebook', 'regex', 'trigger'].includes(target);
-        const needsCreateRemainder = isBulkManagedCreateTarget && declaredCount > payloads.length;
         const largePayloadCreate = isBulkManagedCreateTarget && payloads.length > KERO_CREATE_BATCH_LIMIT;
         const saveBatchLimit = largePayloadCreate
             ? Math.max(1, Math.min(adaptiveLimits.createSaveBatchLimit, KERO_CREATE_BATCH_LIMIT))
@@ -31450,11 +30290,7 @@ ${currentVars || '{}'}
             await addBotMessage(`⏳ ${label} ${payloads.length}개 생성 중... ${chunks.length > 1 ? `${saveBatchLimit}개씩 나눠서 저장할게.` : '완료되면 알려줄게.'}`);
         }
         if (payloads.length > saveBatchLimit || payloadCharSize > KERO_CREATE_PAYLOAD_CHAR_LIMIT) {
-            await addBotMessage(`⚠️ 이번 응답은 큰 생성 payload라 저장은 ${saveBatchLimit}개 단위로 처리합니다. 다음 대량 생성은 모델 응답 한계를 피하도록 bulk_create로 자동 분할하는 게 안전해요.`);
-        }
-
-        if (needsCreateRemainder) {
-            addKeroWorkstreamEvent('생성 개수 부족분 감지', `${label} 액션이 ${declaredCount}개를 선언했지만 payload는 ${payloads.length}개라 부족분 ${declaredCount - payloads.length}개를 후속 대량 생성으로 이어갑니다.`, 'warning', createProgressOptions);
+            await addBotMessage(`⚠️ 이번 응답은 큰 생성 payload라 저장은 ${saveBatchLimit}개 단위로 처리합니다.`);
         }
 
         const persistOptions = { ...options, deferredActions, progressOptions: createProgressOptions };
@@ -31474,32 +30310,6 @@ ${currentVars || '{}'}
             } catch (error) {
                 Logger.error(`Create failed for target ${target}:`, error);
                 results.failed += chunks[i].length;
-            }
-        }
-
-        if (needsCreateRemainder && !isKeroSaveAbortRequested(options)) {
-            const remainingCount = Math.max(0, declaredCount - Math.max(0, Math.floor(Number(results.created || 0))));
-            if (remainingCount > 0) {
-                const remainderJobId = `create-remainder-${target}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                const remainderResult = await runKeroBulkCreate({
-                    type: 'bulk_create',
-                    target,
-                    count: remainingCount,
-                    chunkSize: resolveKeroBulkCreateFallbackChunkSize(remainingCount, 8),
-                    userRequest: buildKeroCreateRemainderUserRequest(req, target, payloads, declaredCount, remainingCount),
-                    reason: 'create_count_remainder',
-                    jobId: remainderJobId,
-                    bulkJobId: remainderJobId,
-                    actionJobId: remainderJobId,
-                    silent: true
-                }, {
-                    ...persistOptions,
-                    silent: true
-                });
-                results.success += Number(remainderResult?.success || 0);
-                results.created += Number(remainderResult?.created || 0);
-                results.failed += Number(remainderResult?.failed || 0);
-                results.skipped += Number(remainderResult?.skipped || 0);
             }
         }
 
@@ -31965,9 +30775,9 @@ ${currentVars || '{}'}
                 sections.push(`[기존 ${getTargetLabel(target)} 항목]\n${hiddenCount ? `앞선 ${hiddenCount}개 항목은 생략하고 최근/대표 항목만 표시한다.\n` : ''}${samples.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`);
             }
             if (jobHints.length) {
-                sections.push(`[이번 대량 생성 job에서 이미 만든 항목]\n${jobHints.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`);
+                sections.push(`[이번 생성 묶음에서 이미 만든 항목]\n${jobHints.map((text, index) => `- ${index + 1}. ${text}`).join('\n')}`);
             }
-            return `\n[중복 제목/키 회피]\n현재 ${getTargetLabel(target)}에는 이미 ${sourceItems.length}개 항목이 있다. 아래 기존 항목과 이번 job에서 이미 만든 항목의 comment/name/key/in/out identity를 그대로 재사용하지 않는다. 제목만 같고 본문만 조금 바꾼 항목도 실패다. 중복을 스킵한다고 쓰지 말고 반드시 신규 대체 항목을 ${options.count || '요청 수'}개 채운다.\n${sections.join('\n\n')}`;
+            return `\n[중복 제목/키 회피]\n현재 ${getTargetLabel(target)}에는 이미 ${sourceItems.length}개 항목이 있다. 아래 기존 항목과 이번 생성 묶음에서 이미 만든 항목의 comment/name/key/in/out identity를 그대로 재사용하지 않는다. 제목만 같고 본문만 조금 바꾼 항목도 실패다. 중복을 스킵한다고 쓰지 말고 반드시 신규 대체 항목을 ${options.count || '요청 수'}개 채운다.\n${sections.join('\n\n')}`;
         } catch (error) {
             Logger.warn('Kero create avoidance guide failed:', error?.message || error);
             return '';
@@ -32096,2197 +30906,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     }
 
     async function runKeroBulkCreate(action, options = {}) {
-        const req = normalizeKeroBulkCreateRequest(action);
-        const label = getTargetLabel(req.target);
-        const bulkProgressOptions = resolveKeroActionProgressOptions(options);
-        const silentBulkCreate = options.silent === true || action?.silent === true || action?.autoBulkResume === true;
-        const shouldUseBulkSubmodels = svbToBoolean(
-            action?.useSubmodels ?? action?.useSubAgents ?? action?.subagents
-            ?? options.useSubmodels ?? options.useSubAgents ?? options.subagents,
-            hasEnabledKeroSubmodels()
-        );
-        if (!['lorebook', 'regex', 'trigger'].includes(req.target)) {
-            if (!silentBulkCreate) await addBotMessage('❌ 대량 생성은 로어북, 정규식, 트리거만 지원합니다.');
-            return { success: 0, failed: 1, skipped: 0, detail: '지원하지 않는 대량 생성 대상' };
-        }
-        if (!req.count || req.count < 1) {
-            if (!silentBulkCreate) await addBotMessage('❌ 대량 생성 개수를 파악하지 못했습니다. 예: 로어북 100개 생성');
-            return { success: 0, failed: 1, skipped: 0, detail: '대량 생성 개수 없음' };
-        }
-        if (!req.userRequest) {
-            if (!silentBulkCreate) await addBotMessage('❌ 대량 생성 요청 내용이 비어 있습니다. 어떤 내용을 만들지 함께 적어줘.');
-            return { success: 0, failed: 1, skipped: 0, detail: '대량 생성 요청 내용 없음' };
-        }
-        const total = req.count;
-        const plan = buildKeroBulkCreateChunks(total, req.chunkSize, req.itemCharLimit, req.chunkCharLimit);
-        const bulkJobId = safeString(action?.bulkJobId || action?.jobId || action?.actionJobId || action?.stepId || `bulk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-        if (action && typeof action === 'object') {
-            action.bulkJobId = action.bulkJobId || bulkJobId;
-            action.jobId = action.jobId || bulkJobId;
-            action.actionJobId = action.actionJobId || bulkJobId;
-        }
-        const expectedBulkMissionId = safeString(options.missionId || action?._missionId || action?.missionId || currentKeroMission?.id || '');
-        const expectedBulkStorageId = safeString(options.storageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || '');
-        const assertBulkCreateAllowed = () => {
-            if (!isKeroSaveAbortRequested(options) && isCurrentKeroMissionContext(expectedBulkMissionId, expectedBulkStorageId)) return;
-            const error = new Error(options.abortMessage || `중단되었거나 현재 미션이 바뀐 ${label} 대량 생성 저장을 차단했습니다.`);
-            error.code = 'KERO_SAVE_ABORTED';
-            throw error;
-        };
-        assertBulkCreateAllowed();
-        const bulkStorageId = expectedBulkStorageId || null;
-        let bulkJobs = bulkStorageId ? await loadKeroBulkCreateJobs(bulkStorageId) : {};
-        const existingBulkJob = bulkJobs[bulkJobId] || {};
-        const persistedChunks = serializeKeroBulkChunks(existingBulkJob.chunks);
-        const completedRanges = normalizeKeroBulkRanges(existingBulkJob.completedRanges);
-        const completedSummary = summarizeKeroBulkCompletedRanges(completedRanges);
-        const failedRanges = normalizeKeroBulkFailedRanges(existingBulkJob.failedRanges, completedRanges);
-        const chunks = buildKeroRemainingBulkChunks(persistedChunks.length ? persistedChunks : plan.chunks, completedRanges);
-        const bulkCreatedIdentityHints = ensureArray(existingBulkJob.createdIdentityHints)
-            .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
-            .filter(Boolean)
-            .slice(-300);
-        const bulkJobState = {
-            ...existingBulkJob,
-            id: bulkJobId,
-            missionId: safeString(existingBulkJob?.missionId || expectedBulkMissionId || currentKeroMission?.id || ''),
-            target: req.target,
-            userRequest: req.userRequest,
-            steeringNotes: normalizeKeroSteeringNotes(currentKeroMission?.steeringNotes),
-            total,
-            status: 'running',
-            chunkSize: plan.effectiveChunkSize,
-            chunks: serializeKeroBulkChunks(chunks),
-            completedRanges,
-            failedRanges,
-            createdIdentityHints: bulkCreatedIdentityHints.slice(-300),
-            autoResumeCount: Math.max(0, Math.floor(Number(existingBulkJob.autoResumeCount) || 0)) + (action?.autoBulkResume === true ? 1 : 0),
-            autoResumeAttemptedAt: action?.autoBulkResume === true ? new Date().toISOString() : existingBulkJob.autoResumeAttemptedAt,
-            startedAt: existingBulkJob?.startedAt || new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-        async function persistBulkJobState(patch = {}) {
-            if (!bulkStorageId) return;
-            Object.assign(bulkJobState, patch, { updatedAt: new Date().toISOString() });
-            bulkJobs[bulkJobId] = bulkJobState;
-            const persisted = await persistKeroActionJobSafely(
-                '대량 생성 job 상태 기록',
-                () => saveKeroBulkCreateJobs(bulkStorageId, bulkJobs),
-                bulkProgressOptions
-            );
-            if (!persisted) {
-                throw new Error(`대량 생성 job 상태 저장에 실패했습니다: ${bulkJobId}`);
-            }
-        }
-        function appendBulkCreatedIdentityHints(items = [], startIndex = 0) {
-            const nextHints = ensureArray(items)
-                .map((item, index) => summarizeKeroCreateAvoidanceItem(req.target, item, startIndex + index))
-                .map((text) => safeString(text).replace(/\s+/g, ' ').trim())
-                .filter(Boolean);
-            if (!nextHints.length) return;
-            bulkCreatedIdentityHints.push(...nextHints);
-            if (bulkCreatedIdentityHints.length > 300) {
-                bulkCreatedIdentityHints.splice(0, bulkCreatedIdentityHints.length - 300);
-            }
-            bulkJobState.createdIdentityHints = bulkCreatedIdentityHints.slice(-300);
-        }
-        await persistBulkJobState();
-
-        if (!silentBulkCreate) {
-            await addBotMessage(`⏳ ${label} ${total}개 대량 생성을 시작할게. 모델 출력 한도 ${req.modelOutputTokens.toLocaleString()}토큰 기준으로 최대 ${plan.effectiveChunkSize}개씩, 항목 예산 ${req.itemCharLimit}자 기준으로 나눠 생성합니다. 요약/축소 요청이 없으면 항목 품질을 줄이지 않습니다. 작업 ID: ${bulkJobId}`);
-        }
-        if (completedSummary.count > 0) {
-            addKeroWorkstreamEvent('대량 생성 재개', `이미 완료된 ${completedSummary.count}개 범위를 건너뛰고 남은 ${chunks.reduce((sum, chunk) => sum + chunk.count, 0)}개만 처리합니다.`, 'retry', bulkProgressOptions);
-        }
-        const backgroundId = createKeroBackgroundJob(`${label} 대량 생성`, `${Math.max(0, total - completedSummary.count)}개 남음 · ${chunks.length}개 청크`, { silent: silentBulkCreate });
-        const results = {
-            requested: total,
-            success: completedSummary.success,
-            created: completedSummary.created,
-            failed: 0,
-            skipped: completedSummary.skipped
-        };
-        addKeroWorkstreamEvent(
-            '대량 생성 시작',
-            `${label} ${total}개 작업 계획 저장 완료 · ${chunks.length}개 청크 · 실제 항목은 각 청크 생성 성공 후 저장`,
-            'action',
-            bulkProgressOptions
-        );
-        try {
-            assertBulkCreateAllowed();
-            for (let i = 0; i < chunks.length; i += 1) {
-                assertBulkCreateAllowed();
-                const chunk = chunks[i];
-                const rangeText = `${chunk.start + 1}-${chunk.start + chunk.count}/${total}`;
-                updateKeroBackgroundJob(backgroundId, { detail: `${label} 생성 중 ${rangeText}`, silent: silentBulkCreate });
-                updateKeroProgress(i + 1, chunks.length, `${label} ${rangeText} 생성 중...`, bulkProgressOptions);
-                const shouldLogChunk = shouldLogKeroBulkCreateChunk(i, chunks.length, chunk);
-                if (shouldLogChunk) {
-                    addKeroWorkstreamEvent(
-                        '대량 생성 청크 진행',
-                        `${label} ${rangeText} · ${i + 1}/${chunks.length}청크${chunk.retries ? ` · 재시도 ${chunk.retries}회` : ''}`,
-                        'progress',
-                        bulkProgressOptions
-                    );
-                }
-
-                let items = [];
-                const currentItemCharLimit = chunk.itemCharLimit || req.itemCharLimit;
-                const currentChunkCharLimit = chunk.chunkCharLimit || req.chunkCharLimit;
-                try {
-                    items = await generateKeroCreateChunk(
-                        req.target,
-                        req.userRequest,
-                        chunk.start,
-                        chunk.count,
-                        total,
-                        {
-                            ...options,
-                            userRequest: req.userRequest,
-                            itemCharLimit: currentItemCharLimit,
-                            chunkCharLimit: currentChunkCharLimit,
-                            maxOutputTokens: req.maxOutputTokens,
-                            timeoutMs: KERO_BULK_CHUNK_MODEL_TIMEOUT_MS,
-                            steeringBlock: renderKeroMissionSteeringBlock(8),
-                            useSubmodels: shouldUseBulkSubmodels,
-                            fullBuild: req.fullBuild === true,
-                            subject: req.subject,
-                            perEntity: req.perEntity === true,
-                            qualityProfile: req.qualityProfile,
-                            createdIdentityHints: bulkCreatedIdentityHints.slice(-300)
-                        }
-                    );
-                    assertBulkCreateAllowed();
-                } catch (error) {
-                    Logger.warn(`Kero bulk create chunk failed (${rangeText}):`, error?.message || error);
-                    if (error?.code === 'KERO_SAVE_ABORTED') throw error;
-                    if (chunk.count > 1 && (chunk.retries || 0) < KERO_CREATE_ADAPTIVE_RETRIES) {
-                        const leftCount = Math.ceil(chunk.count / 2);
-                        const rightCount = chunk.count - leftCount;
-                        chunks.splice(i, 1,
-                            { start: chunk.start, count: leftCount, retries: (chunk.retries || 0) + 1, itemCharLimit: currentItemCharLimit, chunkCharLimit: currentChunkCharLimit },
-                            { start: chunk.start + leftCount, count: rightCount, retries: (chunk.retries || 0) + 1, itemCharLimit: currentItemCharLimit, chunkCharLimit: currentChunkCharLimit }
-                        );
-                        bulkJobState.chunks = serializeKeroBulkChunks(chunks);
-                        await persistBulkJobState({ status: 'running', chunks: bulkJobState.chunks });
-                        i -= 1;
-                        updateKeroBackgroundJob(backgroundId, { detail: `${label} ${rangeText} 청크를 더 작게 나눠 재시도`, silent: silentBulkCreate });
-                        continue;
-                    }
-                    if (chunk.count === 1 && (chunk.retries || 0) < KERO_CREATE_ADAPTIVE_RETRIES) {
-                        const nextItemLimit = Math.min(KERO_CREATE_MAX_ITEM_CHAR_LIMIT, Math.max(currentItemCharLimit, Math.floor(currentItemCharLimit * 1.25)));
-                        const nextChunkLimit = Math.min(KERO_CREATE_MAX_CHUNK_CHAR_LIMIT, Math.max(currentChunkCharLimit, Math.floor(currentChunkCharLimit * 1.25)));
-                        chunks.splice(i, 1, {
-                            start: chunk.start,
-                            count: 1,
-                            retries: (chunk.retries || 0) + 1,
-                            itemCharLimit: nextItemLimit,
-                            chunkCharLimit: nextChunkLimit
-                        });
-                        bulkJobState.chunks = serializeKeroBulkChunks(chunks);
-                        await persistBulkJobState({ status: 'running', chunks: bulkJobState.chunks });
-                        i -= 1;
-                        updateKeroBackgroundJob(backgroundId, { detail: `${label} ${rangeText} 단일 항목을 더 작은 안전 한도로 재시도`, silent: silentBulkCreate });
-                        continue;
-                    }
-                    if (isRetryableModelTransportError(error)) {
-                        const nextTransportRetries = Math.max(0, Math.floor(Number(chunk.transportRetries) || 0)) + 1;
-                        if (nextTransportRetries <= KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT) {
-                            const waitMs = Math.min(60000, 5000 * Math.pow(2, Math.min(nextTransportRetries - 1, 4)));
-                            chunks.splice(i, 1, {
-                                ...chunk,
-                                transportRetries: nextTransportRetries,
-                                itemCharLimit: currentItemCharLimit,
-                                chunkCharLimit: currentChunkCharLimit
-                            });
-                            bulkJobState.chunks = serializeKeroBulkChunks(chunks);
-                            await persistBulkJobState({ status: 'running', chunks: bulkJobState.chunks });
-                            updateKeroBackgroundJob(backgroundId, { detail: `${label} ${rangeText} 전송 오류 재시도 대기 ${Math.round(waitMs / 1000)}초`, silent: silentBulkCreate });
-                            addKeroWorkstreamEvent('대량 생성 전송 재시도', `${rangeText} · ${nextTransportRetries}/${KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT}회 · ${error?.message || error} · ${Math.round(waitMs / 1000)}초 후 재시도`, 'retry', bulkProgressOptions);
-                            await new Promise(resolve => setTimeout(resolve, waitMs));
-                            i -= 1;
-                            continue;
-                        }
-                        addKeroWorkstreamEvent(
-                            '대량 생성 청크 재시도 한도',
-                            `${rangeText} · 전송 오류 ${KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT}회 재시도 후 실패 범위로 기록하고 다음 작업으로 넘어갑니다.`,
-                            'warning',
-                            bulkProgressOptions
-                        );
-                    }
-                    results.failed += chunk.count;
-                    bulkJobState.failedRanges.push({
-                        start: chunk.start,
-                        count: chunk.count,
-                        retryCount: Math.max(0, Math.floor(Number(chunk.retryCount || chunk.retries || chunk.transportRetries || 0))) + 1,
-                        reason: error?.message || String(error),
-                        at: new Date().toISOString()
-                    });
-                    await persistBulkJobState({ status: 'running', failedRanges: bulkJobState.failedRanges, failed: results.failed });
-                    if (shouldLogChunk) {
-                        addKeroWorkstreamEvent(
-                            '대량 생성 청크 실패',
-                            `${label} ${rangeText} · ${error?.message || error}`,
-                            'warning',
-                            bulkProgressOptions
-                        );
-                    }
-                    continue;
-                }
-
-                if (items.length === 0) {
-                    results.failed += chunk.count;
-                    bulkJobState.failedRanges.push({
-                        start: chunk.start,
-                        count: chunk.count,
-                        retryCount: Math.max(0, Math.floor(Number(chunk.retryCount || chunk.retries || 0))) + 1,
-                        reason: 'empty_items',
-                        at: new Date().toISOString()
-                    });
-                    await persistBulkJobState({ status: 'running', failedRanges: bulkJobState.failedRanges, failed: results.failed });
-                    if (shouldLogChunk) {
-                        addKeroWorkstreamEvent(
-                            '대량 생성 청크 빈 응답',
-                            `${label} ${rangeText} · 생성된 항목이 없어 실패 범위로 기록했습니다.`,
-                            'warning',
-                            bulkProgressOptions
-                        );
-                    }
-                    continue;
-                }
-                assertBulkCreateAllowed();
-                const saved = await persistKeroCreatePayloads(req.target, items, options);
-                assertBulkCreateAllowed();
-                appendBulkCreatedIdentityHints(items, chunk.start);
-                results.success += saved.success || 0;
-                results.created += saved.created || Math.max(0, (saved.success || 0) - (saved.skipped || 0));
-                const missingItemCount = Math.max(0, chunk.count - items.length);
-                const saveFailedCount = Number(saved.failed || 0);
-                const outcomeRanges = buildKeroBulkCreateOutcomeRanges(chunk, items.length, saved);
-                const outcomeFailedCount = outcomeRanges.failedRanges.reduce((sum, range) => sum + Math.max(0, Math.floor(Number(range?.count) || 0)), 0);
-                const countedFailureCount = Math.max(saveFailedCount + missingItemCount, outcomeFailedCount);
-                const hasPartialChunkFailure = countedFailureCount > 0;
-                results.failed += countedFailureCount;
-                results.skipped += saved.skipped || 0;
-                if (outcomeRanges.completedRanges.length > 0) {
-                    bulkJobState.completedRanges = normalizeKeroBulkRanges([
-                        ...bulkJobState.completedRanges,
-                        ...outcomeRanges.completedRanges.map(range => ({ ...range, at: new Date().toISOString() }))
-                    ]);
-                    bulkJobState.failedRanges = normalizeKeroBulkFailedRanges(bulkJobState.failedRanges, bulkJobState.completedRanges);
-                }
-                if (hasPartialChunkFailure || outcomeRanges.failedRanges.length > 0) {
-                    bulkJobState.failedRanges = normalizeKeroBulkFailedRanges(bulkJobState.failedRanges, bulkJobState.completedRanges);
-                    bulkJobState.failedRanges.push(...outcomeRanges.failedRanges.map(range => ({
-                        ...range,
-                        reason: range.reason || 'partial_save_failed',
-                        failed: Math.max(0, Math.floor(Number(range.count) || 0)),
-                        retryCount: Math.max(0, Math.floor(Number(chunk.retryCount || chunk.retries || 0))) + 1,
-                        missing: range.reason === 'missing_item' ? Math.max(0, Math.floor(Number(range.count) || 0)) : 0,
-                        at: new Date().toISOString()
-                    })));
-                    bulkJobState.failedRanges = normalizeKeroBulkFailedRanges(bulkJobState.failedRanges, bulkJobState.completedRanges);
-                }
-                await persistBulkJobState({
-                    status: 'running',
-                    success: results.success,
-                    created: results.created,
-                    failed: results.failed,
-                    skipped: results.skipped,
-                    completedRanges: bulkJobState.completedRanges,
-                    failedRanges: bulkJobState.failedRanges,
-                    createdIdentityHints: bulkJobState.createdIdentityHints
-                });
-                if (shouldLogChunk) {
-                    addKeroWorkstreamEvent(
-                        '대량 생성 청크 저장',
-                        `${label} ${rangeText} · 신규 ${saved.created || 0}개 · 성공 ${saved.success || 0}개${saved.skipped ? ` · 중복 ${saved.skipped}개` : ''}${countedFailureCount ? ` · 실패/누락 ${countedFailureCount}개` : ''}`,
-                        countedFailureCount ? 'warning' : 'progress',
-                        bulkProgressOptions
-                    );
-                }
-                await new Promise(resolve => setTimeout(resolve, 250));
-            }
-
-            assertBulkCreateAllowed();
-            const createdCount = Number(results.created || 0);
-            const skippedCount = Math.max(0, Math.floor(Number(results.skipped || 0)));
-            const failedCount = Math.max(0, Math.floor(Number(results.failed || 0)));
-            const processedCount = createdCount;
-            const totalHandledCount = createdCount + skippedCount;
-            const hasCreateShortfall = results.requested > 0 && processedCount < results.requested;
-            const allBulkSkipped = createdCount <= 0 && skippedCount > 0 && failedCount === 0 && !hasCreateShortfall;
-            const finalBulkStatus = failedCount || hasCreateShortfall || allBulkSkipped ? 'warning' : 'done';
-            const finalBulkHeadline = finalBulkStatus === 'done'
-                ? `${label} 대량 생성 완료`
-                : (allBulkSkipped ? `${label} 대량 생성 신규 항목 없음` : `${label} 대량 생성 확인 필요`);
-            updateKeroProgress(chunks.length, chunks.length, finalBulkHeadline, bulkProgressOptions);
-            await persistBulkJobState({
-                status: finalBulkStatus,
-                success: results.success,
-                created: results.created,
-                failed: failedCount,
-                skipped: skippedCount,
-                unchanged: allBulkSkipped,
-                finishedAt: new Date().toISOString()
-            });
-            addKeroWorkstreamEvent(
-                finalBulkStatus === 'done' ? '대량 생성 완료' : (allBulkSkipped ? '대량 생성 신규 항목 없음' : '대량 생성 확인 필요'),
-                `${label} 요청 ${results.requested}개 · 신규 ${createdCount}개 · 성공 ${results.success}개${skippedCount ? ` · 중복 ${skippedCount}개` : ''}${failedCount ? ` · 실패/누락 ${failedCount}개` : ''}`,
-                finalBulkStatus === 'done' ? 'done' : 'warning',
-                bulkProgressOptions
-            );
-            finishKeroBackgroundJob(backgroundId, finalBulkStatus, `${label} 신규 ${createdCount}개 생성${allBulkSkipped ? ', 신규 생성 없음' : ''}${hasCreateShortfall ? `, 요청 ${results.requested}개 중 신규 부족 ${Math.max(0, results.requested - processedCount)}개` : ''}${skippedCount ? `, 중복 ${skippedCount}개` : ''}${failedCount ? `, ${failedCount}개 재시도 필요` : ''}`, { silent: silentBulkCreate });
-            const bulkStatusIcon = finalBulkStatus === 'done' ? '✅' : '⚠️';
-            const bulkHeadline = finalBulkHeadline;
-            if (!silentBulkCreate) {
-                await addBotMessage(
-                    `${bulkStatusIcon} ${bulkHeadline}\n` +
-                    (hasCreateShortfall ? `요청: ${results.requested}개 / 신규 생성: ${createdCount}개 / 중복 확인: ${skippedCount}개 / 처리 확인: ${totalHandledCount}개\n` : '') +
-                    (allBulkSkipped ? `요청한 범위가 모두 이미 존재해서 새로 저장된 항목은 없습니다.\n` : '') +
-                    `신규 생성: ${createdCount}개\n` +
-                    `처리 성공: ${results.success}개` +
-                    (skippedCount ? `\n이미 존재해 중복 없이 처리: ${skippedCount}개` : '') +
-                    (failedCount ? `\n실패/누락: ${failedCount}개` : '')
-                );
-            }
-            return {
-                ...results,
-                unchanged: allBulkSkipped,
-                status: finalBulkStatus,
-                detail: `${label} 대량 신규 생성 ${createdCount}개, 처리 성공 ${results.success}개${skippedCount ? `, 중복 확인 ${skippedCount}개` : ''}${failedCount ? `, 실패 ${failedCount}개` : ''}`
-            };
-        } catch (error) {
-            Logger.error('Kero bulk create failed:', error);
-            if (error?.code === 'KERO_SAVE_ABORTED') {
-                try {
-                    await persistBulkJobState({
-                        status: 'interrupted',
-                        lastError: error?.message || String(error),
-                        success: results.success,
-                        created: results.created,
-                        failed: results.failed,
-                        skipped: results.skipped,
-                        interruptedAt: new Date().toISOString()
-                    });
-                } catch (persistError) {
-                    Logger.warn('Kero bulk create interrupted state persist failed:', persistError?.message || persistError);
-                }
-                finishKeroBackgroundJob(backgroundId, 'warning', error?.message || '대량 생성 저장이 중단되었습니다.', { silent: silentBulkCreate });
-                throw error;
-            }
-            try {
-                await persistBulkJobState({
-                    status: 'error',
-                    lastError: error?.message || String(error),
-                    success: results.success,
-                    created: results.created,
-                    failed: results.failed,
-                    skipped: results.skipped,
-                    finishedAt: new Date().toISOString()
-                });
-            } catch (persistError) {
-                Logger.warn('Kero bulk create error state persist failed:', persistError?.message || persistError);
-            }
-            finishKeroBackgroundJob(backgroundId, 'error', error?.message || '대량 생성 실패', { silent: silentBulkCreate });
-            if (!silentBulkCreate) {
-                await addBotMessage(`❌ ${label} 대량 생성 실패: ${error.message || error}`);
-            }
-            return {
-                ...results,
-                failed: results.failed || 1,
-                detail: error?.message || String(error)
-            };
-        }
-    }
-
-    function hasKeroActionResult(target) {
-        const hasBulkState = Boolean(bulkEditState?.[target]?.result?.length);
-        if (target === 'desc') return Boolean(currentDescResult?.improved);
-        if (target === 'globalNote') return Boolean(currentGlobalNoteResult?.improved);
-        if (target === 'background') return Boolean(currentBackgroundResult?.improved);
-        if (target === 'vars') return Boolean(currentVariablesResult?.improved);
-        if (target === 'lorebook') return Boolean(currentLorebookResult?.improved) || hasBulkState;
-        if (target === 'regex') return Boolean(currentRegexResult?.improved) || hasBulkState;
-        if (target === 'trigger') return Boolean(currentTriggerResult?.improved) || hasBulkState;
-        return false;
-    }
-
-    function buildKeroBatchResultsFromState(target, state = bulkEditState?.[target]) {
-        if (!state || !Array.isArray(state.result)) return null;
-        const originals = ensureArray(state.original);
-        const idxList = ensureArray(state.idxList).length
-            ? ensureArray(state.idxList)
-            : state.result.map((_, index) => index);
-        const sourceHashes = ensureArray(state.sourceHashes);
-        const improved = state.result.map((item, index) => {
-            const idx = Number.isInteger(idxList[index]) ? idxList[index] : index;
-            const original = originals[index];
-            const name = target === 'lorebook'
-                ? safeString(item?.comment || item?.key || original?.comment || original?.key || `Lorebook #${idx + 1}`)
-                : target === 'regex'
-                    ? safeString(item?.comment || item?.name || original?.comment || original?.name || `Regex #${idx + 1}`)
-                    : safeString(item?.comment || item?.name || original?.comment || original?.name || `Trigger #${idx + 1}`);
-            return {
-                idx,
-                name,
-                original,
-                improved: item,
-                type: target,
-                sourceHash: sourceHashes[index] || '',
-                charId: state.charId || ''
-            };
-        });
-        return { success: improved.map((item) => item.name), failed: [], improved };
-    }
-
-    function getTargetIdxFallback(target, actionIdx) {
-        if (Number.isInteger(actionIdx)) return actionIdx;
-        const parsedIdx = Number(actionIdx);
-        if (Number.isInteger(parsedIdx)) return parsedIdx;
-        if (target === 'lorebook') return currentLorebookResult?.idx;
-        if (target === 'regex') return currentRegexResult?.idx;
-        if (target === 'trigger') return currentTriggerResult?.idx;
-        return undefined;
-    }
-
-    async function ensureGlobalNoteResult() {
-        if (currentGlobalNoteResult?.improved) return true;
-        const char = await getCharacterData();
-        if (!char) return false;
-        const note = getGlobalNoteContent(char);
-        const cacheKey = getGlobalNoteCacheKey(char);
-        const cached = cacheKey ? globalNoteImprovementCache[cacheKey] : null;
-        if (!cached) return false;
-        currentGlobalNoteResult = {
-            original: note,
-            improved: cached.improved,
-            charId: getCharacterId(char),
-            cacheKey,
-            analysis: cached.analysis || null
-        };
-        updateGlobalNoteResultView();
-        return true;
-    }
-
-    async function ensureBackgroundResult() {
-        if (currentBackgroundResult?.improved) return true;
-        const char = await getCharacterData();
-        if (!char) return false;
-        const background = getBackgroundContent(char);
-        const cacheKey = getBackgroundCacheKey(char);
-        const cached = cacheKey ? backgroundImprovementCache[cacheKey] : null;
-        if (!cached) return false;
-        currentBackgroundResult = {
-            original: background,
-            improved: cached.improved,
-            charId: getCharacterId(char),
-            cacheKey,
-            analysis: cached.analysis || null
-        };
-        updateBackgroundResultView();
-        return true;
-    }
-
-    async function openKeroResultView({ target, idx } = {}) {
-        if (!target) return;
-        const char = await getCharacterData();
-        if (!char) return;
-
-        // Kero 채팅에 결과를 표시하는 헬퍼
-        const showResultInChat = async (title, original, improved) => {
-            const previewText = `### 📊 ${title}\n\n**📝 원본:**\n\`\`\`\n${original?.slice(0, 300)}${original?.length > 300 ? '...' : ''}\n\`\`\`\n\n**✅ 개선됨:**\n\`\`\`\n${improved?.slice(0, 300)}${improved?.length > 300 ? '...' : ''}\n\`\`\``;
-            await addBotMessage(previewText);
-        };
-
-        if (['lorebook', 'regex', 'trigger'].includes(target) && bulkEditState?.[target]?.result?.length) {
-            const batchResults = buildKeroBatchResultsFromState(target);
-            if (batchResults?.improved?.length) {
-                showKeroBatchResults(batchResults, target);
-                return;
-            }
-        }
-
-        if (target === 'desc') {
-            const cacheKey = getDescCacheKey(char);
-            const cached = descImprovementCache[cacheKey];
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 설명 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat('Description 개선 결과', char.desc, cached.improved);
-            return;
-        }
-
-        if (target === 'lorebook') {
-            const realIdx = Number.isInteger(idx) ? idx : currentLorebookResult?.idx;
-            if (!Number.isInteger(realIdx)) {
-                await addBotMessage('로어북 결과를 보려면 idx가 필요해.');
-                return;
-            }
-            const cacheKey = getLorebookCacheKey(char, realIdx);
-            const cached = lorebookImprovementCache[cacheKey];
-            const lore = getKeroCharacterListItem(char, target, realIdx);
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 로어북 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat(`Lorebook #${realIdx + 1} 개선 결과`, lore?.content, cached.improved);
-            return;
-        }
-
-        if (target === 'regex') {
-            const realIdx = Number.isInteger(idx) ? idx : currentRegexResult?.idx;
-            if (!Number.isInteger(realIdx)) {
-                await addBotMessage('정규식 결과를 보려면 idx가 필요해.');
-                return;
-            }
-            const cacheKey = getRegexCacheKey(char, realIdx);
-            const cached = regexImprovementCache[cacheKey];
-            const script = getKeroCharacterListItem(char, target, realIdx);
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 정규식 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat(`Regex Script #${realIdx + 1} 개선 결과`, script?.script, cached.improved.script);
-            return;
-        }
-
-        if (target === 'trigger') {
-            const realIdx = Number.isInteger(idx) ? idx : currentTriggerResult?.idx;
-            if (!Number.isInteger(realIdx)) {
-                await addBotMessage('트리거 결과를 보려면 idx가 필요해.');
-                return;
-            }
-            const cacheKey = getTriggerCacheKey(char, realIdx);
-            const cached = triggerImprovementCache[cacheKey];
-            const script = getKeroCharacterListItem(char, target, realIdx);
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 트리거 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat(`Trigger Script #${realIdx + 1} 개선 결과`, script?.content, cached.improved.content);
-            return;
-        }
-
-        if (target === 'vars') {
-            const cacheKey = getVariablesCacheKey(char);
-            const cached = variablesImprovementCache[cacheKey];
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 변수 개선 결과가 없어.');
-                return;
-            }
-            const rawVars = getCharacterField(char, 'defaultVariables');
-            await showResultInChat('Variables 개선 결과', rawVars, JSON.stringify(cached.improved, null, 2));
-            return;
-        }
-
-        if (target === 'globalNote') {
-            const cacheKey = getGlobalNoteCacheKey(char);
-            const cached = globalNoteImprovementCache[cacheKey];
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 Global Note 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat('Global Note 개선 결과', getGlobalNoteContent(char), cached.improved);
-            return;
-        }
-
-        if (target === 'background') {
-            const cacheKey = getBackgroundCacheKey(char);
-            const cached = backgroundImprovementCache[cacheKey];
-            if (!cached || !cached.improved) {
-                await addBotMessage('확인할 Background 개선 결과가 없어.');
-                return;
-            }
-            await showResultInChat('Background HTML 개선 결과', getBackgroundContent(char), cached.improved);
-            return;
-        }
-    }
-
-    async function shouldAutoRunKeroAction(char, action) {
-        const perms = await loadKeroPerms(char);
-        const key = action?.target;
-        if (!key) return false;
-        return perms?.[key] !== 'ask';
-    }
-
-    function hasExplicitPartSelection(action) {
-        return action?.idx !== undefined && action?.idx !== null
-            || action?.all === true
-            || action?.selected === true;
-    }
-
-    function expandIdxList(target, action, char) {
-        const isSelected = action?.selected === true || action?.idx === 'selected';
-        if (isSelected) {
-            const selected = getSelectedPartIndexes(target, char, { defaultSelectAll: action?.allowDefaultSelectAll === true });
-            if (selected.length || action?.preferCurrent !== true) return selected;
-            const fallbackIdx = getTargetIdxFallback(target, undefined);
-            return Number.isInteger(fallbackIdx) ? [fallbackIdx] : [];
-        }
-        const isAll = action?.all === true || action?.idx === '*' || action?.idx === 'all';
-        if (!isAll) {
-            const raw = Array.isArray(action?.idx) ? action.idx
-                : Array.isArray(action?.indexes) ? action.indexes
-                    : Array.isArray(action?.indices) ? action.indices
-                        : Array.isArray(action?.idxList) ? action.idxList
-                            : [action?.idx];
-            return [...new Set(raw
-                .map((value) => getTargetIdxFallback(target, value))
-                .filter((idx) => Number.isInteger(idx)))]
-                .sort((a, b) => a - b);
-        }
-        if (['lorebook', 'regex', 'trigger'].includes(target)) return getSelectablePartIndexes(target, char);
-        return [];
-    }
-
-    function createKeroActionButtonStub() {
-        return {
-            textContent: '',
-            disabled: false,
-            classList: {
-                add() { },
-                remove() { }
-            }
-        };
-    }
-
-    function resolveKeroActionProgressOptions(options = {}) {
-        const normalized = normalizeKeroProgressOptions(options);
-        return normalized.jobId ? normalized : { detached: true, allowCurrentJobFallback: false };
-    }
-
-    async function runKeroAction(action, options = {}) {
-        const { type, target, userRequest } = action || {};
-        if (!type || !target) return;
-        const actionProgressOptions = resolveKeroActionProgressOptions(options);
-
-        const targetNames = {
-            desc: '캐릭터 설명',
-            globalNote: '글로벌 노트',
-            background: '배경 HTML',
-            vars: '기본 변수',
-            lorebook: '로어북',
-            regex: '정규식 스크립트',
-            trigger: '트리거 스크립트',
-            authorNote: '작가의 노트',
-            creatorComment: '제작자 코멘트',
-            firstMessage: '첫 메시지',
-            alternateGreetings: '추가 첫 메시지',
-            translatorNote: '번역가의 노트',
-            chatLorebook: '챗 로어북',
-            asset: '이미지 에셋',
-            module: '모듈',
-            plugin: '플러그인'
-        };
-        const actionLabel = type === 'apply' ? '적용' : '개선';
-
-        // userRequest가 있으면 개선 옵션에 포함
-        const keroOptions = await buildKeroContextOptions({
-            fromKero: true,
-            skipSwitchView: true,
-            userRequest: userRequest || null,
-            autoApply: action.autoApply !== false,
-            allowGatewayRecovery: type === 'improve' ? false : action.allowGatewayRecovery,
-            ...actionProgressOptions
-        });
-        const directVerificationAction = { ...(action || {}), type, target, autoApply: action.autoApply !== false };
-        const directShouldVerify = shouldVerifyKeroActionEffect(directVerificationAction);
-        const directBeforeSnapshot = directShouldVerify
-            ? getKeroActionVerificationSnapshot(await getCharacterData())
-            : null;
-        const verifyDirectActionResult = async (result) => {
-            if (!directShouldVerify) return null;
-            const verification = await verifyKeroActionEffect(directVerificationAction, directBeforeSnapshot, result);
-            if (verification?.status === 'warning' || verification?.ok === false) {
-                const detail = verification.detail || `${targetNames[target] || target} 실행 결과를 검증하지 못했습니다.`;
-                updateKeroProgress(1, 1, `${targetNames[target] || target} 확인 필요`, actionProgressOptions);
-                await addBotMessage(`⚠️ ${detail}`);
-                return {
-                    success: false,
-                    failed: 1,
-                    detail,
-                    verification
-                };
-            }
-            return null;
-        };
-
-        const improveWithButton = async (btn, fn, options = {}) => {
-            return await fn({ target: btn || null }, { ...keroOptions, ...options });
-        };
-
-        if (type === 'improve') {
-            let didRun = false;
-            let actionResult = true;
-            const startProgress = () => {
-                if (didRun) return;
-                didRun = true;
-                const reqPreview = userRequest ? ` (${userRequest.slice(0, 30)}${userRequest.length > 30 ? '...' : ''})` : '';
-                updateKeroProgress(0, 1, `${targetNames[target] || target} ${actionLabel} 준비 중...${reqPreview}`, actionProgressOptions);
-            };
-            if (target === 'desc') {
-                const btn = document.getElementById('desc-translate-btn') || createKeroActionButtonStub();
-                startProgress();
-                actionResult = await translateDescription(btn, keroOptions);
-            } else if (target === 'globalNote') {
-                const btn = document.querySelector('[data-global-note-action="improve"]');
-                startProgress();
-                actionResult = await improveWithButton(btn, improveGlobalNote);
-            } else if (target === 'background') {
-                const btn = document.querySelector('[data-background-action="improve"]');
-                startProgress();
-                actionResult = await improveWithButton(btn, improveBackground);
-            } else if (target === 'vars') {
-                const btn = document.getElementById('variables-improve-btn') || createKeroActionButtonStub();
-                startProgress();
-                actionResult = await improveVariables(btn, keroOptions);
-            } else if (target === 'lorebook') {
-                const idx = getTargetIdxFallback('lorebook', action.idx);
-                if (idx === undefined) {
-                    await addBotMessage('로어북 자동 개선을 하려면 먼저 로어북 항목을 하나 선택(보기/개선 결과 열기)하거나, @action에 idx를 포함해줘! 전체면 idx:"*" 또는 all:true도 가능해.');
-                    return { success: false, failed: 1, detail: '로어북 개선 대상 선택 없음' };
-                }
-                const btn = document.querySelector(`.lorebook-translate-btn[data-translate-idx="${idx}"]`) || createKeroActionButtonStub();
-                startProgress();
-                actionResult = await translateLoreEntry(idx, btn, keroOptions);
-            } else if (target === 'regex') {
-                const idx = getTargetIdxFallback('regex', action.idx);
-                if (idx === undefined) {
-                    await addBotMessage('정규식 자동 개선을 하려면 먼저 정규식 항목을 선택하거나, @action에 idx를 포함해줘! 전체면 idx:"*" 또는 all:true도 가능해.');
-                    return { success: false, failed: 1, detail: '정규식 개선 대상 선택 없음' };
-                }
-                startProgress();
-                actionResult = await improveRegexScript(idx, createKeroActionButtonStub(), keroOptions);
-            } else if (target === 'trigger') {
-                const idx = getTargetIdxFallback('trigger', action.idx);
-                if (idx === undefined) {
-                    await addBotMessage('트리거 자동 개선을 하려면 먼저 트리거 항목을 선택하거나, @action에 idx를 포함해줘! 전체면 idx:"*" 또는 all:true도 가능해.');
-                    return { success: false, failed: 1, detail: '트리거 개선 대상 선택 없음' };
-                }
-                startProgress();
-                actionResult = await improveTriggerScript(idx, createKeroActionButtonStub(), keroOptions);
-            } else if (isTextFieldStudioTarget(target)) {
-                startProgress();
-                const studioResult = await openCharacterTextFieldStudio(target, { ...keroOptions, userRequest, autoRun: true, autoApply: keroOptions.autoApply === true });
-                if (isKeroExecutionFailure(studioResult)) return studioResult;
-                actionResult = studioResult || true;
-            }
-            if (didRun) {
-                if (actionResult === false || isKeroExecutionFailure(actionResult)) {
-                    updateKeroProgress(1, 1, `${targetNames[target] || target} ${actionLabel} 실패`, actionProgressOptions);
-                    const detail = normalizeKeroExecutionResult(actionResult).detail || `${targetNames[target] || target} ${actionLabel}이 완료되지 않았습니다.`;
-                    await addBotMessage(`⚠️ ${detail}`);
-                    return actionResult || { success: false, failed: 1, detail };
-                }
-                const verificationWarning = await verifyDirectActionResult(actionResult);
-                if (verificationWarning) return verificationWarning;
-                updateKeroProgress(1, 1, `${targetNames[target] || target} ${actionLabel} 완료!`, actionProgressOptions);
-                await addBotMessage(`✅ ${targetNames[target] || target} ${actionLabel}이 완료되었습니다!`);
-                if (keroOptions.autoApply !== true && hasKeroActionResult(target)) {
-                    addKeroActionMessage({ target, idx: action.idx, showImprove: false, showApply: true });
-                    return { success: true, skipped: 1, detail: '개선 결과 적용 보류', autoApplyDeferred: true };
-                }
-            } else {
-                const detail = `${targetNames[target] || target} ${actionLabel} 실행 경로를 찾지 못했습니다. 실제 저장/개선을 하지 않았습니다.`;
-                addKeroWorkstreamEvent('액션 실행 경로 없음', detail, 'warning', actionProgressOptions);
-                await addBotMessage(`⚠️ ${detail}`);
-                return { success: false, failed: 1, detail };
-            }
-            return actionResult || { success: true };
-        }
-
-        if (type === 'apply') {
-            if (isTextFieldStudioTarget(target)) {
-                const studioResult = await openCharacterTextFieldStudio(target, { ...keroOptions, userRequest, autoRun: true, autoApply: true });
-                if (isKeroExecutionFailure(studioResult)) return studioResult;
-                const verificationWarning = await verifyDirectActionResult(studioResult);
-                if (verificationWarning) return verificationWarning;
-                await addBotMessage(`${targetNames[target] || target} 자동 적용을 실행했습니다.`);
-                return studioResult || { success: true };
-            }
-            if (hasKeroActionResult(target)) {
-                updateKeroProgress(0, 1, `${targetNames[target] || target} ${actionLabel} 진행 중...`, actionProgressOptions);
-                const applied = await withKeroApprovalBypass(() => applyKeroAction(target, keroOptions));
-                if (applied === false) {
-                    updateKeroProgress(1, 1, `${targetNames[target] || target} ${actionLabel} 중단`, actionProgressOptions);
-                    await addBotMessage(`⚠️ ${targetNames[target] || target} 적용이 완료되지 않았어. 저장된 데이터는 변경하지 않았고, 필요하면 다시 개선을 실행해줘.`);
-                    return { success: false, failed: 1, detail: `${targetNames[target] || target} 적용이 완료되지 않았습니다.` };
-                }
-                const verificationWarning = await verifyDirectActionResult(applied);
-                if (verificationWarning) return verificationWarning;
-                updateKeroProgress(1, 1, `${targetNames[target] || target} ${actionLabel} 완료!`, actionProgressOptions);
-                await addBotMessage(`✅ ${targetNames[target] || target} ${actionLabel}이 완료되었습니다!`);
-                return { success: true };
-            }
-            await addBotMessage('먼저 "개선"으로 결과를 만든 뒤, 그 다음에 "적용"을 눌러주세요.');
-            return { success: false, failed: 1, detail: '적용할 개선 결과 없음' };
-        }
-        return { success: false, failed: 1, detail: '지원하지 않는 액션 타입' };
-    }
-
-
-    // Expose runKeroAction globally
-    globalRunKeroAction = runKeroAction;
-    if (typeof window !== 'undefined') window.runKeroAction = runKeroAction;
-
-    function getWorkTargetActionPreview(action) {
-        const target = action?.target;
-        const type = action?.type;
-        const payload = action?.payload;
-        const label = target === 'module' ? '모듈' : '플러그인';
-        const targetId = safeString(action?.id || action?.moduleId || action?.name || action?.pluginName || action?.targetId || payload?.id || payload?.name || '').trim();
-        let preview = `${label} ${getKeroActionLabel(type)} 작업`;
-        if (targetId) preview += `\n대상: ${targetId}`;
-        if (payload && typeof payload === 'object') {
-            preview += `\n\npayload:\n${JSON.stringify(payload, null, 2).slice(0, 1600)}`;
-        }
-        return preview;
-    }
-
-    function getWorkTargetArtifactName(name, fallback = 'work-target-draft') {
-        const cleaned = safeString(name || fallback)
-            .trim()
-            .replace(/[\\/:*?"<>|]+/g, '_')
-            .slice(0, 96);
-        return cleaned || fallback;
-    }
-
-    async function getWorkTargetActionArtifacts(action) {
-        const target = action?.target;
-        const payload = action?.payload && typeof action.payload === 'object' ? action.payload : {};
-        const actionSnapshot = {
-            target,
-            type: action?.type,
-            id: action?.id || action?.moduleId || action?.pluginName || action?.name || null,
-            payload: action?.payload ?? null
-        };
-        const artifacts = [];
-
-        if (target === 'plugin') {
-            const pluginName = getWorkTargetArtifactName(payload.name || action?.name || action?.pluginName || action?.id, 'plugin-draft');
-            const script = safeString(payload.script || action?.script || '');
-            if (script) {
-                artifacts.push({ type: 'code', name: `${pluginName}.js`, language: 'javascript', content: script });
-            }
-            if (action?.type === 'delete') {
-                try {
-                    const db = await risuai.getDatabase();
-                    const plugins = Array.isArray(db?.plugins) ? db.plugins : [];
-                    const key = safeString(action?.name || action?.pluginName || action?.targetId || payload.name || manualSelectedPluginKey).trim();
-                    const index = findPluginIndexByKey(plugins, key);
-                    if (index >= 0) {
-                        const existing = makeCloneableData(plugins[index]);
-                        const existingName = getWorkTargetArtifactName(getPluginKey(existing), pluginName);
-                        artifacts.push({ type: 'code', name: `${existingName}.pending-delete-backup.js`, language: 'javascript', content: safeString(existing.script || '') });
-                        artifacts.push({ type: 'json', name: `${existingName}.pending-delete-plugin.json`, content: JSON.stringify(existing, null, 2) });
-                    }
-                } catch (error) {
-                    Logger.warn('Failed to build plugin failure artifacts:', error?.message || error);
-                }
-            }
-            artifacts.push({ type: 'json', name: `${pluginName}.plugin-action.json`, content: JSON.stringify(actionSnapshot, null, 2) });
-            return artifacts;
-        }
-
-        const moduleName = getWorkTargetArtifactName(payload.name || payload.id || action?.name || action?.id || action?.moduleId, 'module-draft');
-        if (target === 'module' && action?.type === 'delete') {
-            try {
-                const db = await risuai.getDatabase();
-                const modules = Array.isArray(db?.modules) ? db.modules : [];
-                const id = safeString(action?.id || action?.moduleId || action?.targetId || payload.id || manualSelectedModuleId).trim();
-                const index = findModuleIndexById(modules, id);
-                if (index >= 0) {
-                    const existing = makeCloneableData(modules[index]);
-                    const existingName = getWorkTargetArtifactName(getModuleDisplayName(existing), moduleName);
-                    artifacts.push({ type: 'json', name: `${existingName}.pending-delete-module.json`, content: JSON.stringify(existing, null, 2) });
-                }
-            } catch (error) {
-                Logger.warn('Failed to build module failure artifacts:', error?.message || error);
-            }
-        }
-        artifacts.push({ type: 'json', name: `${moduleName}.module-action.json`, content: JSON.stringify(actionSnapshot, null, 2) });
-        return artifacts;
-    }
-
-    async function persistWorkTargetFailureArtifacts(action, artifacts = []) {
-        const record = {
-            timestamp: Date.now(),
-            target: action?.target || '',
-            type: action?.type || '',
-            artifacts: normalizeKeroArtifacts(artifacts)
-        };
-        try {
-            const existing = await Storage.get(WORK_TARGET_FAILURE_ARTIFACT_KEY);
-            const list = Array.isArray(existing) ? existing : [];
-            list.unshift(record);
-            await Storage.set(WORK_TARGET_FAILURE_ARTIFACT_KEY, list.slice(0, WORK_TARGET_BACKUP_LIMIT));
-            return true;
-        } catch (error) {
-            Logger.warn('Failed to persist work target failure artifacts:', error?.message || error);
-        }
-        try {
-            if (typeof localStorage === 'undefined') return false;
-            const raw = localStorage.getItem(WORK_TARGET_FAILURE_ARTIFACT_KEY);
-            const existing = raw ? JSON.parse(raw) : [];
-            const list = Array.isArray(existing) ? existing : [];
-            list.unshift(record);
-            localStorage.setItem(WORK_TARGET_FAILURE_ARTIFACT_KEY, JSON.stringify(list.slice(0, WORK_TARGET_BACKUP_LIMIT)));
-            return true;
-        } catch (fallbackError) {
-            Logger.warn('Failed to persist work target failure artifacts fallback:', fallbackError?.message || fallbackError);
-            return false;
-        }
-    }
-
-    async function executeKeroWorkTargetAction(action, options = {}) {
-        const target = action?.target;
-        const type = action?.type;
-        if (!['module', 'plugin'].includes(target)) return false;
-        const actionProgressOptions = resolveKeroActionProgressOptions(options);
-        if (!['create', 'update', 'delete'].includes(type)) {
-            await addBotMessage(`${getTargetLabel(target)}은 create/update/delete 작업만 지원합니다.`);
-            return { handled: true, success: false, keepProposal: true };
-        }
-
-        const label = getTargetLabel(target);
-        const preview = getWorkTargetActionPreview(action);
-
-        if (type === 'delete') {
-            const targetPreview = preview && preview !== '미리보기 없음' ? ` · ${preview.slice(0, 120)}` : '';
-            const confirmed = confirmUnlessKeroApprovalBypass(
-                `${label} 삭제는 중요한 작업입니다. 정말 진행할까요?\n\n` +
-                `${preview.slice(0, 900)}\n\n` +
-                '취소하면 저장된 데이터는 변경하지 않습니다.'
-            );
-            if (!confirmed) {
-                await addBotMessage(`${label} 삭제를 취소했습니다. 저장된 데이터는 변경하지 않았습니다.`);
-                addKeroWorkstreamEvent('삭제 취소', `${label} 삭제 사용자 취소`, 'cancelled', actionProgressOptions);
-                return { handled: true, success: false, keepProposal: false };
-            }
-            addKeroWorkstreamEvent('삭제 자동 진행', `${label} 삭제${targetPreview} · 백업 후 적용`, 'action', actionProgressOptions);
-        }
-
-        addKeroWorkstreamEvent('저장 준비', `${label} ${getKeroActionLabel(type)} · 백업 후 적용`, 'pending', actionProgressOptions);
-        let result;
-        try {
-            result = target === 'module'
-                ? await applyModuleWorkTargetAction(action, options)
-                : await applyPluginWorkTargetAction(action, options);
-        } catch (error) {
-            Logger.error(`${target} action failed:`, error);
-            addKeroWorkstreamEvent('저장 실패', `${label} ${getKeroActionLabel(type)} 실패: ${error.message}`, 'error', actionProgressOptions);
-            let failureArtifacts = [];
-            try {
-                failureArtifacts = await getWorkTargetActionArtifacts(action);
-            } catch (artifactError) {
-                Logger.warn('Failed to build work target failure artifacts:', artifactError?.message || artifactError);
-                failureArtifacts = [{
-                    type: 'json',
-                    name: 'work-target-failed-action.json',
-                    content: JSON.stringify({
-                        target,
-                        type,
-                        preview: getWorkTargetActionPreview(action)
-                    }, null, 2)
-                }];
-            }
-            const artifactsPersisted = await persistWorkTargetFailureArtifacts(action, failureArtifacts);
-            try {
-                await addBotMessage(
-                    `❌ ${label} ${getKeroActionLabel(type)} 실패: ${error.message}\n\n` +
-                    '저장은 적용하지 않았어. 백업/저장 문제를 해결한 뒤 다시 실행하거나 아래 작업물을 복사해서 보관할 수 있어.',
-                    { artifacts: failureArtifacts }
-                );
-            } catch (messageError) {
-                Logger.warn('Work target failure message failed:', messageError?.message || messageError);
-                const artifactText = artifactsPersisted
-                    ? '실패 아티팩트는 유지했습니다.'
-                    : '실패 아티팩트 저장은 실패했습니다. 표시된 내용을 복사해 주세요.';
-                alert(`${label} ${getKeroActionLabel(type)} 실패: ${error.message}\n\n${artifactText}`);
-            }
-            return { handled: true, success: false, keepProposal: true };
-        }
-
-        addKeroWorkstreamEvent('저장 완료', result.message, 'done', actionProgressOptions);
-        try {
-            await refreshCharacterList();
-        } catch (error) {
-            Logger.warn('Work target refresh after save failed:', error?.message || error);
-        }
-        try {
-            updateWorkTargetButtonLabel();
-        } catch (error) {
-            Logger.warn('Work target label update after save failed:', error?.message || error);
-        }
-        try {
-            await addBotMessage(result.message, { artifacts: result.artifacts });
-        } catch (error) {
-            Logger.warn('Work target success message failed after save:', error?.message || error);
-            alert(`${result.message}\n\n저장은 완료됐지만 케로 대화창 메시지 표시에 실패했습니다.`);
-        }
-        return { handled: true, success: true, keepProposal: false };
-    }
-
-    function getKeroAssetPayloadObject(action = {}) {
-        return isPlainObject(action?.payload) ? action.payload : {};
-    }
-
-    function collectKeroAssetCreateSources(action = {}) {
-        const payload = action?.payload;
-        const payloadObj = isPlainObject(payload) ? payload : {};
-        if (Array.isArray(payload) && payload.length) return payload;
-        const collected = [];
-        const seen = new Set();
-        const pushArray = (source, forcedTarget = '') => {
-            if (!Array.isArray(source) || !source.length) return;
-            source.forEach((entry) => {
-                const item = isPlainObject(entry) && forcedTarget
-                    ? {
-                        ...entry,
-                        assetType: entry.assetType || entry.asset_type || entry.kind || entry.target || forcedTarget
-                    }
-                    : entry;
-                let key = '';
-                try {
-                    key = JSON.stringify(item);
-                } catch (_) {
-                    key = String(item);
-                }
-                if (seen.has(key)) return;
-                seen.add(key);
-                collected.push(item);
-            });
-        };
-        [
-            [payloadObj.assets, ''],
-            [payloadObj.items, ''],
-            [payloadObj.images, ''],
-            [payloadObj.prompts, ''],
-            [payloadObj.parts, ''],
-            [payloadObj.assetPrompts, ''],
-            [payloadObj.imagePrompts, ''],
-            [payloadObj.profileAssets, 'additional'],
-            [payloadObj.standingAssets, 'additional'],
-            [payloadObj.additionalAssets, 'additional'],
-            [payloadObj.emotionAssets, 'emotion'],
-            [payloadObj.expressionAssets, 'emotion'],
-            [payloadObj.emotionImages, 'emotion'],
-            [action.assets, ''],
-            [action.items, ''],
-            [action.images, ''],
-            [action.prompts, ''],
-            [action.parts, ''],
-            [action.assetPrompts, ''],
-            [action.imagePrompts, ''],
-            [action.profileAssets, 'additional'],
-            [action.standingAssets, 'additional'],
-            [action.additionalAssets, 'additional'],
-            [action.emotionAssets, 'emotion'],
-            [action.expressionAssets, 'emotion'],
-            [action.emotionImages, 'emotion']
-        ].forEach(([source, forcedTarget]) => pushArray(source, forcedTarget));
-        if (collected.length) return collected;
-        const arraySources = [
-            payload
-        ];
-        for (const source of arraySources) {
-            if (Array.isArray(source) && source.length) return source;
-        }
-        if (isPlainObject(payload) && (
-            payload.prompt || payload.positive || payload.positivePrompt || payload.caption || payload.imagePrompt
-            || payload.name || payload.assetName || payload.slotName || payload.emotionTarget || payload.emotion
-        )) {
-            return [payload];
-        }
-        const direct = {};
-        ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => {
-            if (Object.prototype.hasOwnProperty.call(action, key)) direct[key] = action[key];
-        });
-        return Object.keys(direct).length ? [direct] : [];
-    }
-
-    function normalizeKeroAssetCreatePayloads(action = {}) {
-        const payloadObj = getKeroAssetPayloadObject(action);
-        const sources = collectKeroAssetCreateSources(action);
-        const items = [];
-        sources.forEach((entry, index) => {
-            const source = isPlainObject(entry) ? entry : { prompt: entry };
-            if (source.enabled === false || source.disabled === true) return;
-            const rawTarget = safeString(source.target || source.assetType || source.asset_type || source.kind || source.type || payloadObj.target || payloadObj.assetType || '').trim().toLowerCase();
-            const target = /^(emotion|emote|expression|감정|표정)$/.test(rawTarget) || source.emotion || source.emotionTarget || source.emotionName
-                ? 'emotion'
-                : 'additional';
-            const fallbackName = target === 'emotion' ? `감정_${index + 1}` : `asset_${index + 1}`;
-            const rawName = safeString(
-                source.name || source.assetName || source.asset_name || source.slotName || source.slot
-                || source.emotionTarget || source.emotion || source.emotionName || source.label || source.title
-                || fallbackName
-            ).trim() || fallbackName;
-            const prompt = safeString(
-                source.prompt || source.positive || source.positivePrompt || source.caption || source.imagePrompt
-                || source.description || source.content || source.text
-            ).trim();
-            const negative = safeString(source.negative || source.negativePrompt || source.uc || payloadObj.negative || payloadObj.negativePrompt || action.negative || action.negativePrompt).trim();
-            const identityName = svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject || payloadObj.identityName || payloadObj.identityKey || payloadObj.characterName || payloadObj.subjectName || payloadObj.subject || action.identityName || action.identityKey || action.characterName || action.subjectName || action.subject);
-            const identityPrompt = safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.characterConsistencyPrompt || payloadObj.identityPrompt || payloadObj.characterPrompt || payloadObj.visualIdentityPrompt || payloadObj.characterConsistencyPrompt || action.identityPrompt || action.characterPrompt || action.visualIdentityPrompt || action.characterConsistencyPrompt).trim();
-            const identityNegative = safeString(source.identityNegative || source.characterNegative || payloadObj.identityNegative || payloadObj.characterNegative || action.identityNegative || action.characterNegative).trim();
-            const danbooruTags = safeString(source.danbooruTags || source.tagPrompt || source.tags || payloadObj.danbooruTags || payloadObj.tagPrompt || payloadObj.tags || action.danbooruTags || action.tagPrompt || action.tags).trim();
-            const rawCount = Number(source.count || source.batchSize || source.batch || source.n || source.samples || payloadObj.count || action.count || 1);
-            const count = Math.max(1, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1);
-            const ratioId = safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim();
-            const rawSteps = Number(source.steps || payloadObj.steps || action.steps || 0);
-            const steps = Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0;
-            const payloadJsonValue = source.wellspringPayloadJson ?? source.remotePayloadJson ?? payloadObj.wellspringPayloadJson ?? payloadObj.remotePayloadJson ?? action.wellspringPayloadJson ?? action.remotePayloadJson;
-            const stringifyPayloadJson = (value) => {
-                if (typeof value === 'string') return value;
-                if (isPlainObject(value)) return JSON.stringify(value);
-                return '';
-            };
-            items.push({
-                index,
-                target,
-                name: target === 'emotion' ? rawName : svbNormalizeAssetName(rawName, fallbackName),
-                label: safeString(source.label || source.title || rawName).trim() || rawName,
-                prompt,
-                negative,
-                ratioId,
-                steps,
-                count,
-                stylePreset: safeString(source.stylePreset || source.style || source.styleId || payloadObj.stylePreset || payloadObj.style || payloadObj.styleId || action.stylePreset || action.style || action.styleId).trim(),
-                stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
-                profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
-                presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim(),
-                identityName,
-                identityPrompt,
-                identityNegative,
-                danbooruTags,
-                referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
-                referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
-                referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
-                referenceInformationExtracted: svbOptionalNumber(source.referenceInformationExtracted ?? source.referenceInfo ?? payloadObj.referenceInformationExtracted ?? payloadObj.referenceInfo ?? action.referenceInformationExtracted ?? action.referenceInfo, undefined),
-                wellspringMode: safeString(source.wellspringMode || source.wellspringApiMode || payloadObj.wellspringMode || payloadObj.wellspringApiMode || action.wellspringMode || action.wellspringApiMode).trim(),
-                wellspringPresetId: safeString(source.wellspringPresetId || source.remotePresetId || source.preset_id || payloadObj.wellspringPresetId || payloadObj.remotePresetId || payloadObj.preset_id || action.wellspringPresetId || action.remotePresetId).trim(),
-                wellspringModelId: safeString(source.wellspringModelId || source.modelId || source.model_id || payloadObj.wellspringModelId || payloadObj.modelId || payloadObj.model_id || action.wellspringModelId || action.modelId || action.model_id).trim(),
-                wellspringWorkflowId: safeString(source.wellspringWorkflowId || source.workflowId || source.workflow_id || payloadObj.wellspringWorkflowId || payloadObj.workflowId || payloadObj.workflow_id || action.wellspringWorkflowId || action.workflowId || action.workflow_id).trim(),
-                wellspringCharacterId: safeString(source.wellspringCharacterId || source.projectId || source.project_id || source.remoteCharacterId || payloadObj.wellspringCharacterId || payloadObj.projectId || payloadObj.project_id || payloadObj.remoteCharacterId || action.wellspringCharacterId || action.projectId || action.project_id || action.remoteCharacterId).trim(),
-                wellspringVariantIds: svbNormalizeWellspringIdList(source.wellspringVariantIds || source.variantIds || source.variant_ids || source.wellspringVariantId || source.variantId || source.variant_id || payloadObj.wellspringVariantIds || payloadObj.variantIds || payloadObj.variant_ids || action.wellspringVariantIds || action.variantIds || action.variant_ids),
-                wellspringPerVariantBatch: svbOptionalNumber(source.wellspringPerVariantBatch ?? source.perVariantBatch ?? source.per_variant_batch ?? payloadObj.wellspringPerVariantBatch ?? payloadObj.perVariantBatch ?? payloadObj.per_variant_batch ?? action.wellspringPerVariantBatch ?? action.perVariantBatch ?? action.per_variant_batch, undefined),
-                wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt || payloadObj.wellspringQualityPrompt || payloadObj.qualityPrompt || payloadObj.quality_prompt || action.wellspringQualityPrompt || action.qualityPrompt || action.quality_prompt).trim(),
-                wellspringCfg: svbOptionalNumberAtLeast(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, 1, undefined, 30),
-                wellspringSampler: safeString(source.wellspringSampler || payloadObj.wellspringSampler || action.wellspringSampler).trim(),
-                wellspringScheduler: safeString(source.wellspringScheduler || payloadObj.wellspringScheduler || action.wellspringScheduler).trim(),
-                wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || payloadObj.wellspringLoras || payloadObj.loras || action.wellspringLoras || action.loras),
-                wellspringPayloadJson: stringifyPayloadJson(payloadJsonValue)
-            });
-        });
-        return items;
-    }
-
-    function hasExplicitKeroAssetCreatePayload(action = {}) {
-        const payloadObj = getKeroAssetPayloadObject(action);
-        const arrayKeys = [
-            'assets', 'items', 'images', 'prompts', 'parts',
-            'assetPrompts', 'imagePrompts', 'profileAssets', 'standingAssets',
-            'emotionAssets', 'expressionAssets', 'additionalAssets', 'emotionImages'
-        ];
-        const scalarKeys = [
-            'prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt',
-            'negative', 'negativePrompt', 'stylePreset', 'style', 'stylePrompt',
-            'identityName', 'identityKey', 'identityPrompt', 'characterPrompt',
-            'visualIdentityPrompt', 'danbooruTags', 'tagPrompt',
-            'wellspringMode', 'wellspringApiMode', 'wellspringPresetId',
-            'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId',
-            'workflowId', 'projectId', 'variantIds', 'variantId'
-        ];
-        return arrayKeys.some((key) => Array.isArray(payloadObj?.[key]) || Array.isArray(action?.[key]))
-            || scalarKeys.some((key) => Object.prototype.hasOwnProperty.call(payloadObj, key) || Object.prototype.hasOwnProperty.call(action || {}, key));
-    }
-
-    function buildKeroAssetCreateActionFromMisroutedCharacterAction(action = {}, options = {}) {
-        if (!isKeroCharacterPatchAction(action) || action._redirectedFromCharacterPatch === true) return null;
-        const request = safeString(action.userRequest || action.request || options.userRequest || options.request || currentKeroMission?.objective || '').trim();
-        if (!isKeroAssetFocusedRequest(request)) return null;
-        if (!hasExplicitKeroAssetCreatePayload(action)) return null;
-        const items = normalizeKeroAssetCreatePayloads(action).filter((item) =>
-            safeString(item.prompt).trim()
-            || safeString(item.wellspringPayloadJson).trim()
-            || safeString(item.danbooruTags).trim()
-            || safeString(item.identityPrompt).trim()
-            || safeString(item.referenceImagePath).trim()
-        );
-        if (!items.length) return null;
-        const payloadObj = getKeroAssetPayloadObject(action);
-        return {
-            ...action,
-            type: 'create',
-            target: 'asset',
-            payload: {
-                ...payloadObj,
-                assets: items
-            },
-            _redirectedFromCharacterPatch: true,
-            reason: 'image_focused_character_update_asset_payload_recovery'
-        };
-    }
-
-    function inferKeroAssetIdentityNameFromText(text = '') {
-        const source = safeString(text).trim();
-        if (!source) return '';
-        const patterns = [
-            /(?:^|[\s"'“”])([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)\s*(?:여러\s*가지\s*)?(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)/i,
-            /(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)\s*(?:을|를)?\s*([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)/i
-        ];
-        const blocked = new Set(['캐릭터', '인물', '봇', '주인공', '기본', '여러가지', '여러 가지']);
-        for (const pattern of patterns) {
-            const match = source.match(pattern);
-            const name = svbNormalizeAssetIdentityName(match?.[1] || '');
-            if (name && !blocked.has(name)) return name;
-        }
-        return '';
-    }
-
-    function resolveKeroAssetActionIdentityName(action = {}, items = []) {
-        const payloadObj = getKeroAssetPayloadObject(action);
-        const explicit = svbNormalizeAssetIdentityName(
-            action.identityName
-            || action.identityKey
-            || action.characterName
-            || action.subjectName
-            || action.subject
-            || payloadObj.identityName
-            || payloadObj.identityKey
-            || payloadObj.characterName
-            || payloadObj.subjectName
-            || payloadObj.subject
-            || items.find(item => item.identityName)?.identityName
-        );
-        if (explicit) return explicit;
-        return inferKeroAssetIdentityNameFromText(
-            action.userRequest
-            || action.request
-            || action.instruction
-            || action.mission
-            || action.reason
-            || payloadObj.userRequest
-            || payloadObj.request
-            || ''
-        );
-    }
-
-    async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
-        let meta = svbReadAssetStudioMetaFromCharacter(char);
-        const actionIdentityName = resolveKeroAssetActionIdentityName(action, items);
-        let dirty = false;
-        const hydrated = items.map((item) => {
-            const identityName = svbNormalizeAssetIdentityName(item.identityName || actionIdentityName);
-            const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
-            const identityPrompt = safeString(item.identityPrompt || stored?.prompt).trim();
-            const identityNegative = safeString(item.identityNegative || stored?.negative).trim();
-            const storedLoras = svbNormalizeWellspringLoras(stored?.wellspringLoras || stored?.loras);
-            const itemLoras = svbNormalizeWellspringLoras(item.wellspringLoras || item.loras);
-            if (identityName && (item.identityPrompt || item.identityNegative)) {
-                meta = svbSetAssetIdentityPrompt(meta, identityName, item.identityPrompt || stored?.prompt || '', item.identityNegative || stored?.negative || '');
-                dirty = true;
-            }
-            return {
-                ...item,
-                identityName,
-                identityPrompt,
-                identityNegative,
-                wellspringLoras: itemLoras.length ? itemLoras : storedLoras
-            };
-        });
-        if (dirty) {
-            svbWriteAssetStudioMetaToCharacter(char, meta);
-            const ok = await svbSaveAssetStudioCharacter(char, 'asset-identity-prompt');
-            if (!ok) throw new Error('인물 프롬프트 저장에 실패했습니다.');
-        }
-        return hydrated;
-    }
-
-    function findKeroImageProfile(profileId = '') {
-        const id = safeString(profileId).trim();
-        if (!id) return null;
-        const lower = id.toLowerCase();
-        return normalizeImageApiProfiles(imageApiProfiles).find((profile) => {
-            return safeString(profile.id).toLowerCase() === lower
-                || safeString(profile.name).toLowerCase() === lower
-                || safeString(profile.provider).toLowerCase() === lower;
-        }) || null;
-    }
-
-    function findKeroImagePreset(presetId = '') {
-        const id = safeString(presetId).trim();
-        if (!id) return null;
-        const lower = id.toLowerCase();
-        return normalizeImageGenerationPresets(imageGenerationPresets).find((preset) => {
-            return safeString(preset.id).toLowerCase() === lower
-                || safeString(preset.name).toLowerCase() === lower
-                || safeString(preset.provider).toLowerCase() === lower;
-        }) || null;
-    }
-
-    function pickKeroAssetImageProfile(profileId = '') {
-        let profile = findKeroImageProfile(profileId) || getActiveImageApiProfile();
-        const configuredWellspring = normalizeImageApiProfiles(imageApiProfiles).find((item) =>
-            (isWellspringImageProvider(item.provider) || safeString(item.endpoint).includes('wellspring.encrypt.gay'))
-            && safeString(item.endpoint).trim()
-        );
-        if ((!profile || !safeString(profile.endpoint).trim()) && configuredWellspring) {
-            profile = configuredWellspring;
-        }
-        profile = normalizeImageApiProfile(profile);
-        if (!safeString(profile.endpoint).trim()) {
-            throw new Error('이미지 API URL이 비어 있습니다. 설정 > 이미지 API 설정 또는 에셋 스튜디오에서 Wellspring 프로필을 먼저 저장해주세요.');
-        }
-        if (isWellspringImageProvider(profile.provider) && !safeString(profile.apiKey).trim()) {
-            throw new Error('Wellspring ws-key가 비어 있습니다. 설정 > 이미지 API 설정에서 ws-key를 저장한 뒤 에셋 생성을 다시 실행해주세요.');
-        }
-        return profile;
-    }
-
-    function pickKeroAssetImagePreset(presetId = '', profile = null) {
-        let preset = findKeroImagePreset(presetId);
-        if (!preset && profile && isWellspringImageProvider(profile.provider)) {
-            preset = findKeroImagePreset(WELLSPRING_IMAGE_GENERATION_PRESET_ID);
-        }
-        preset = preset || getActiveImageGenerationPreset();
-        return normalizeImageGenerationPreset(preset);
-    }
-
-    function getKeroDefaultAssetNegativePrompt(profile = {}, preset = {}) {
-        const probe = `${safeString(profile.provider)} ${safeString(profile.name)} ${safeString(profile.model)} ${safeString(preset.name)} ${safeString(preset.model)}`.toLowerCase();
-        const animeLike = /animagine|anima|anime|illustrious|nai|novel|adxl|sdxl/i.test(probe);
-        if (animeLike) {
-            return 'lowres, worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, text, logo, watermark, blurry, jpeg artifacts, cropped face, duplicate character';
-        }
-        return 'low quality, bad anatomy, bad hands, extra fingers, text, logo, watermark, blurry, distorted face, duplicate subject';
-    }
-
-    function isKeroAssetRealismRiskFragment(fragment = '') {
-        return /\b(?:photo|photograph|photographic|photography|photoshoot|photo[-\s]*realistic|photorealistic|realistic|realism|hyperrealistic|ultrarealistic|lifelike|real\s+person|live\s*action|cosplay|selfie|dslr|camera\s+lens|lens\s+flare|35mm|50mm|85mm|film\s+grain|cinematic|studio\s+portrait|portrait\s+photo|3d|3[-\s]*d|cgi|render(?:ed|ing)?|octane|unreal\s+engine|blender|vray|ray\s*tracing)\b|실사|사진|포토|현실적/i.test(safeString(fragment));
-    }
-
-    function stripKeroAssetRealismRiskFragments(text = '') {
-        return safeString(text)
-            .split(/[,;\n]+/)
-            .map((fragment) => fragment.trim())
-            .filter(Boolean)
-            .filter((fragment) => !isKeroAssetRealismRiskFragment(fragment))
-            .join(', ');
-    }
-
-    function joinKeroAssetPromptFragments(...values) {
-        const seen = new Set();
-        const out = [];
-        values.forEach((value) => {
-            safeString(value).split(/[,;\n]+/).forEach((fragment) => {
-                const clean = fragment.trim();
-                if (!clean) return;
-                const key = clean.toLowerCase().replace(/\s+/g, ' ');
-                if (seen.has(key)) return;
-                seen.add(key);
-                out.push(clean);
-            });
-        });
-        return out.join(', ');
-    }
-
-    function normalizeKeroAssetStyleKey(stylePreset = '') {
-        const raw = safeString(stylePreset).trim().toLowerCase();
-        if (!raw) return 'clean-anime';
-        const normalized = raw.replace(/[\s_]+/g, '-');
-        if (KERO_ASSET_STYLE_PRESETS[normalized]) return normalized;
-        if (/pastel|soft|gentle|warm/.test(normalized)) return 'soft-pastel';
-        if (/dark|gothic|shadow|fantasy/.test(normalized)) return 'dark-fantasy';
-        if (/water|paint|aquarelle/.test(normalized)) return 'watercolor';
-        if (/ink|manhwa|webtoon|comic/.test(normalized)) return 'ink-manhwa';
-        if (/retro|cel|90/.test(normalized)) return 'retro-cel';
-        if (/card|splash|gacha|game/.test(normalized)) return 'game-card';
-        if (/sharp|key|vivid|bold/.test(normalized)) return 'sharp-keyvisual';
-        return 'clean-anime';
-    }
-
-    function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '') {
-        const presetPrompt = KERO_ASSET_STYLE_PRESETS[normalizeKeroAssetStyleKey(stylePreset)] || KERO_ASSET_STYLE_PRESETS['clean-anime'];
-        return joinKeroAssetPromptFragments(presetPrompt, stripKeroAssetRealismRiskFragments(stylePrompt));
-    }
-
-    function normalizeKeroAsset2dPositivePrompt(prompt = '', stylePreset = '', stylePrompt = '') {
-        const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
-        const twoDBase = '2D anime illustration, anime style, cel-shaded character art, clean lineart, flat color shading';
-        return joinKeroAssetPromptFragments(
-            twoDBase,
-            buildKeroAssetStylePrompt(stylePreset, stylePrompt),
-            safePrompt || 'solo character asset, upper body, looking at viewer, detailed eyes, clean background'
-        );
-    }
-
-    function normalizeKeroAsset2dNegativePrompt(negative = '', profile = {}, preset = {}) {
-        const safeNegative = stripKeroAssetRealismRiskFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset));
-        return joinKeroAssetPromptFragments(
-            safeNegative || getKeroDefaultAssetNegativePrompt(profile, preset),
-            'lowres, worst quality, low quality, bad anatomy, bad hands, extra fingers, missing fingers, text, logo, watermark, blurry, cropped face, duplicate character'
-        );
-    }
-
-    function getKeroAssetOutputName(item, index = 0, total = 1) {
-        const base = safeString(item?.name).trim() || (item?.target === 'emotion' ? 'emotion' : 'asset');
-        if (total <= 1) return item?.target === 'emotion' ? base : svbNormalizeAssetName(base, 'asset');
-        const suffix = String(index + 1).padStart(2, '0');
-        return item?.target === 'emotion'
-            ? `${base}_${suffix}`
-            : svbNormalizeAssetName(`${base}_${suffix}`, 'asset');
-    }
-
-    function collectKeroAssetTrainingSources(action = {}) {
-        const payloadObj = getKeroAssetPayloadObject(action);
-        return [
-            payloadObj.wellspringTraining,
-            payloadObj.loraTraining,
-            payloadObj.training,
-            payloadObj,
-            action.wellspringTraining,
-            action.loraTraining,
-            action.training,
-            action
-        ].filter(isPlainObject);
-    }
-
-    function getKeroAssetTrainingValue(action = {}, keys = [], fallback = undefined) {
-        for (const source of collectKeroAssetTrainingSources(action)) {
-            for (const key of keys) {
-                if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
-            }
-        }
-        return fallback;
-    }
-
-    function isKeroAssetTrainingTruthy(value) {
-        if (value === true) return true;
-        if (value === false || value === null || value === undefined) return false;
-        const text = safeString(value).trim().toLowerCase();
-        return ['1', 'true', 'yes', 'y', 'on', 'auto', 'train', 'lora'].includes(text);
-    }
-
-    function resolveKeroAssetLoraTrainingOptions(action = {}, items = [], createdAssets = [], char = null) {
-        const explicit = getKeroAssetTrainingValue(action, ['trainLora', 'trainLoRA', 'wellspringTrainLora', 'autoTrainLora', 'enabled'], undefined);
-        const hasTrainingObject = collectKeroAssetTrainingSources(action).some((source) =>
-            source && source !== action && (
-                Object.prototype.hasOwnProperty.call(source, 'loraName')
-                || Object.prototype.hasOwnProperty.call(source, 'lora_name')
-                || Object.prototype.hasOwnProperty.call(source, 'galleryJobIds')
-                || Object.prototype.hasOwnProperty.call(source, 'uploadIds')
-            )
-        );
-        const enabled = isKeroAssetTrainingTruthy(explicit) || hasTrainingObject;
-        if (!enabled) return { enabled: false };
-        const identityName = svbNormalizeAssetIdentityName(
-            getKeroAssetTrainingValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '')
-            || items.find(item => item.identityName)?.identityName
-            || createdAssets.find(item => item.identityName)?.identityName
-            || getCharacterDisplayName(char)
-        );
-        const rawLoraName = safeString(getKeroAssetTrainingValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim();
-        const loraName = rawLoraName.slice(0, 40);
-        const loraStrength = svbOptionalNumberAtLeast(getKeroAssetTrainingValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2);
-        const waitForTraining = isKeroAssetTrainingTruthy(getKeroAssetTrainingValue(action, ['waitForTraining', 'wait', 'waitForCompletion'], false));
-        const autoUseTrainedLora = getKeroAssetTrainingValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false;
-        return {
-            enabled: true,
-            identityName,
-            loraName,
-            loraStrength,
-            waitForTraining,
-            autoUseTrainedLora,
-            profileId: safeString(getKeroAssetTrainingValue(action, ['profileId', 'profile'], '')).trim(),
-            steps: svbOptionalNumber(getKeroAssetTrainingValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined), undefined),
-            galleryJobIds: [
-                ...svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], [])),
-                ...createdAssets.map(asset => safeString(asset.wellspringJobId || asset.jobId).trim()).filter(Boolean)
-            ],
-            uploadIds: svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], [])),
-            trainingAssets: createdAssets
-                .filter(asset => safeString(asset.path).trim())
-                .map(asset => ({
-                    name: asset.name,
-                    path: asset.path,
-                    ext: asset.ext,
-                    wellspringJobId: asset.wellspringJobId
-                })),
-            trainingTimeoutMs: Math.max(0, Number(getKeroAssetTrainingValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
-        };
-    }
-
-    async function saveKeroAssetLoraTrainingMeta(char, trainingOptions = {}, started = {}, completed = null) {
-        if (!char || !trainingOptions.identityName) return;
-        let meta = svbReadAssetStudioMetaFromCharacter(char);
-        const identityName = trainingOptions.identityName;
-        const existing = svbFindAssetIdentityEntry(meta, identityName) || { name: identityName, prompt: '', negative: '' };
-        meta.identities[identityName] = {
-            ...existing,
-            name: identityName,
-            wellspringLoraName: started.loraName || trainingOptions.loraName || existing.wellspringLoraName || '',
-            wellspringTrainingId: started.trainingId || existing.wellspringTrainingId || '',
-            updatedAt: new Date().toISOString()
-        };
-        const loraId = completed?.lora ? svbExtractWellspringLoraId(completed.lora) : '';
-        if (loraId && trainingOptions.autoUseTrainedLora !== false) {
-            meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength: trainingOptions.loraStrength || 0.8 }], {
-                loraName: started.loraName || trainingOptions.loraName,
-                trainingId: started.trainingId
-            });
-        }
-        svbWriteAssetStudioMetaToCharacter(char, meta);
-        const ok = await svbSaveAssetStudioCharacter(char, completed?.lora ? 'asset-lora-trained' : 'asset-lora-training-started');
-        if (!ok) throw new Error('Failed to save Asset Studio LoRA metadata.');
-    }
-
-    async function runKeroAssetCreateAction(action = {}, options = {}) {
-        const actionProgressOptions = resolveKeroActionProgressOptions(options);
-        const actionSignal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
-        const char = await getCharacterData();
-        if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
-
-        let items = normalizeKeroAssetCreatePayloads(action);
-        if (!items.length) {
-            await addBotMessage('❌ 생성할 이미지 에셋 payload가 없습니다. prompt와 name을 포함한 assets/items 배열이 필요합니다.');
-            return { success: false, failed: 1, detail: '에셋 생성 항목 없음' };
-        }
-        items = await hydrateKeroAssetIdentityPrompts(char, action, items);
-        const missingPrompt = items.filter((item) => !safeString(item.prompt || item.identityPrompt || item.danbooruTags).trim());
-        if (missingPrompt.length) {
-            const detail = `이미지 프롬프트가 비어 있는 에셋 ${missingPrompt.length}개가 있어 실행하지 않았습니다.`;
-            await addBotMessage(`❌ ${detail}`);
-            return { success: false, failed: missingPrompt.length, detail };
-        }
-
-        await loadImageApiSettings();
-        await loadImageGenerationPresets();
-
-        const jobs = [];
-        items.forEach((item) => {
-            for (let index = 0; index < item.count; index += 1) {
-                jobs.push({ item, index, total: item.count });
-            }
-        });
-        const requested = jobs.length;
-        let created = 0;
-        let failed = 0;
-        const createdAssets = [];
-        const failedAssets = [];
-        let autoReferencePath = '';
-        let autoReferenceName = '';
-        const shouldAutoReferenceBatch = requested > 1 && !items.some(item => safeString(item.referenceImagePath).trim());
-        addKeroWorkstreamEvent('이미지 에셋 생성', `이미지 API로 ${requested}장 생성 후 캐릭터 에셋에 등록합니다.`, 'action', actionProgressOptions);
-
-        for (const job of jobs) {
-            assertKeroActionNotTimedOut(action, '이미지 에셋 생성');
-            throwIfSvbAborted(actionSignal, '이미지 에셋 생성이 사용자 요청으로 중단되었습니다.');
-            if (typeof options.abortCheck === 'function' && options.abortCheck()) {
-                throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 생성을 중단했습니다.');
-            }
-            const item = job.item;
-            const name = getKeroAssetOutputName(item, job.index, job.total);
-            const vars = {
-                character: getCharacterDisplayName(char),
-                char: getCharacterDisplayName(char),
-                emotion: item.target === 'emotion' ? (item.name || item.label) : item.label,
-                part: item.label,
-                name,
-                asset: name
-            };
-            const profile = pickKeroAssetImageProfile(item.profileId);
-            const preset = pickKeroAssetImagePreset(item.presetId, profile);
-            const renderedIdentityPrompt = svbRenderImagePromptTemplate(item.identityPrompt, vars).trim();
-            const renderedDanbooruTags = svbRenderImagePromptTemplate(item.danbooruTags, vars).trim();
-            const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
-            const prompt = normalizeKeroAsset2dPositivePrompt(
-                joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt),
-                item.stylePreset,
-                svbRenderImagePromptTemplate(item.stylePrompt, vars).trim()
-            );
-            const negative = normalizeKeroAsset2dNegativePrompt(
-                joinKeroAssetPromptFragments(
-                    svbRenderImagePromptTemplate(item.identityNegative, vars).trim(),
-                    svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim()
-                ),
-                profile,
-                preset
-            );
-            const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
-            const steps = item.steps || preset.steps || profile.steps || 26;
-            const allowAutoReferenceForProfile = shouldAutoReferenceBatch && !isWellspringImageProvider(profile.provider);
-            const referenceImagePath = safeString(item.referenceImagePath || (allowAutoReferenceForProfile ? autoReferencePath : '')).trim();
-            const referenceImageName = safeString(item.referenceImageName || (referenceImagePath === autoReferencePath ? autoReferenceName : '')).trim();
-            updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
-            try {
-                const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, {
-                    prompt,
-                    negative,
-                    ratioId,
-                    steps,
-                    referenceImagePath,
-                    referenceImageName,
-                    referenceStrength: item.referenceStrength,
-                    referenceInformationExtracted: item.referenceInformationExtracted,
-                    wellspringMode: item.wellspringMode,
-                    wellspringPresetId: item.wellspringPresetId,
-                    wellspringModelId: item.wellspringModelId,
-                    wellspringWorkflowId: item.wellspringWorkflowId,
-                    wellspringCharacterId: item.wellspringCharacterId,
-                    wellspringVariantIds: item.wellspringVariantIds,
-                    wellspringPerVariantBatch: item.wellspringPerVariantBatch,
-                    wellspringQualityPrompt: item.wellspringQualityPrompt,
-                    wellspringCfg: item.wellspringCfg,
-                    wellspringSampler: item.wellspringSampler,
-                    wellspringScheduler: item.wellspringScheduler,
-                    wellspringLoras: item.wellspringLoras,
-                    wellspringPayloadJson: item.wellspringPayloadJson,
-                    signal: actionSignal
-                });
-                throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
-                const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
-                const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
-                const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase()) || null;
-                if (allowAutoReferenceForProfile && !autoReferencePath) {
-                    if (savedAsset?.path) {
-                        autoReferencePath = savedAsset.path;
-                        autoReferenceName = savedAsset.name || name;
-                    }
-                }
-                created += 1;
-                createdAssets.push({
-                    target: item.target,
-                    name,
-                    path: savedAsset?.path || '',
-                    ext: savedAsset?.ext || imageResult.ext || svbGetFileExt(savedAsset?.path) || 'png',
-                    identityName: item.identityName || '',
-                    prompt: imageResult.prompt || prompt,
-                    negative: imageResult.negative || negative,
-                    stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
-                    ratioId,
-                    steps,
-                    referenceImagePath,
-                    wellspringJobId: imageResult.wellspringJobId || '',
-                    wellspringRunId: imageResult.wellspringRunId || ''
-                });
-            } catch (error) {
-                failed += 1;
-                failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
-                Logger.error('Kero asset generation failed:', error);
-                break;
-            }
-        }
-
-        updateKeroProgress(created + failed, requested, failed ? '이미지 에셋 생성 확인 필요' : '이미지 에셋 생성 완료', actionProgressOptions);
-        if (failed) {
-            const firstError = failedAssets[0]?.error || '알 수 없는 오류';
-            const detail = `이미지 에셋 ${created}/${requested}장 저장 후 중단: ${firstError}`;
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: created > 0 ? true : false, requested, created, failed, detail, createdAssets, failedAssets };
-        }
-        const trainingOptions = resolveKeroAssetLoraTrainingOptions(action, items, createdAssets, char);
-        let trainingResult = null;
-        if (trainingOptions.enabled) {
-            try {
-                const trainingProfile = pickKeroAssetImageProfile(trainingOptions.profileId);
-                if (!isWellspringImageProvider(trainingProfile.provider)) throw new Error('Wellspring profile is required for LoRA training.');
-                addKeroWorkstreamEvent('Wellspring LoRA training', `${trainingOptions.loraName} dataset ${trainingOptions.galleryJobIds.length + trainingOptions.uploadIds.length + trainingOptions.trainingAssets.length}`, 'action', actionProgressOptions);
-                updateKeroProgress(requested, requested, `Wellspring LoRA training start: ${trainingOptions.loraName}`, actionProgressOptions);
-                const started = await svbStartWellspringLoraTraining(trainingProfile, {
-                    ...trainingOptions,
-                    signal: actionSignal
-                });
-                await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
-                trainingResult = { started };
-                if (trainingOptions.waitForTraining) {
-                    updateKeroProgress(requested, requested, `Wellspring LoRA training wait: ${trainingOptions.loraName}`, actionProgressOptions);
-                    const completed = await svbWaitForWellspringLoraTraining(trainingProfile, started, {
-                        signal: actionSignal,
-                        trainingTimeoutMs: trainingOptions.trainingTimeoutMs
-                    });
-                    await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
-                    trainingResult.completed = completed;
-                }
-            } catch (error) {
-                Logger.error('Kero Wellspring LoRA training failed:', error);
-                trainingResult = { error: error?.message || String(error) };
-                await addBotMessage(`⚠️ 이미지 에셋은 ${created}장 저장했지만 Wellspring LoRA 학습 시작에 실패했습니다: ${error?.message || error}`);
-                return { success: true, requested, created, failed: 0, trainingFailed: true, detail: `Image assets saved, LoRA training failed: ${error?.message || error}`, createdAssets, trainingResult };
-            }
-        }
-        const trainingSuffix = trainingResult?.completed?.lora
-            ? ` Wellspring LoRA "${trainingOptions.loraName}"까지 identity에 연결했습니다.`
-            : (trainingResult?.started ? ` Wellspring LoRA "${trainingOptions.loraName}" 학습을 시작했습니다.` : '');
-        await addBotMessage(`✅ 이미지 에셋 ${created}장을 생성하고 캐릭터에 등록했습니다.${trainingSuffix}`);
-        return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료${trainingSuffix}`, createdAssets, trainingResult };
-    }
-
-    function getKeroAssetManageSources(action = {}) {
-        const sources = [];
-        if (isPlainObject(action.payload)) sources.push(action.payload);
-        ['data', 'params', 'options'].forEach((key) => {
-            if (isPlainObject(action?.[key])) sources.push(action[key]);
-        });
-        sources.push(action || {});
-        return sources;
-    }
-
-    function getKeroAssetManageValue(action = {}, keys = [], fallback = '') {
-        for (const source of getKeroAssetManageSources(action)) {
-            for (const key of keys) {
-                if (source && Object.prototype.hasOwnProperty.call(source, key)) {
-                    return source[key];
-                }
-            }
-        }
-        return fallback;
-    }
-
-    function getKeroAssetManageBoolean(action = {}, keys = []) {
-        const value = getKeroAssetManageValue(action, keys, undefined);
-        if (value === true) return true;
-        const text = safeString(value).trim().toLowerCase();
-        return ['1', 'true', 'yes', 'y', 'all', '*', '전체'].includes(text);
-    }
-
-    function normalizeKeroAssetManageOperation(action = {}) {
-        const explicit = getKeroAssetManageValue(action, ['operation', 'op', 'mode', 'assetOperation', 'asset_operation'], '');
-        const type = normalizeKeroActionTypeName(action?.type);
-        const raw = safeString(explicit).trim() || (type === 'delete' ? 'delete' : '');
-        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
-        if (/^(?:normalize|normalizeextension|normalizeextensions|stripext|stripextension|stripextensions|cleanext|cleanextension|cleanextensions|extensioncleanup|cleanupextensions?)$/.test(key)) return 'normalize_extensions';
-        if (/^(?:move|movefolder|folder|setfolder|organize|organizefolder|group|groupfolder)$/.test(key)) return 'move_folder';
-        if (/^(?:pattern|patternrename|renamepattern|rename|batchrename|bulkrename)$/.test(key)) return 'pattern_rename';
-        if (/^(?:batchreplace|bulkreplace|replaceimages?|replaceasset|replaceassets)$/.test(key)) return 'batch_replace';
-        if (/^(?:zipimport|importzip|imagezipimport|importimagezip|backupimport)$/.test(key)) return 'zip_import';
-        if (/^(?:trainlora|loratrain|loratraining|wellspringtrainlora|wellspringloratraining|traininglora)$/.test(key)) return 'train_lora';
-        if (/^(?:refreshloras?|listloras?|syncloras?|wellspringloras?)$/.test(key)) return 'refresh_loras';
-        if (/^(?:delete|remove|purge)$/.test(key)) return 'delete';
-        if (!key && getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')) return 'pattern_rename';
-        if (!key && getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '') !== '') return 'move_folder';
-        return '';
-    }
-
-    function normalizeKeroAssetManageKind(action = {}) {
-        const raw = safeString(getKeroAssetManageValue(action, ['kind', 'assetKind', 'assetType', 'targetKind', 'slotType'], '')).trim();
-        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
-        if (!key || ['all', '*', 'both', 'any', '전체'].includes(key)) return 'all';
-        if (/^(?:emotion|emotions|emotionimage|emotionimages|감정)$/.test(key)) return 'emotion';
-        if (/^(?:additional|additionalasset|additionalassets|image|images|profile|profileasset|standing|asset|assets|추가)$/.test(key)) return 'additional';
-        return 'all';
-    }
-
-    function collectKeroAssetManageNames(action = {}) {
-        const names = [];
-        const pushName = (value) => {
-            if (Array.isArray(value)) {
-                value.forEach(pushName);
-                return;
-            }
-            if (isPlainObject(value)) {
-                pushName(value.name || value.assetName || value.slotName || value.id || value.key || value.label);
-                return;
-            }
-            const text = safeString(value).trim();
-            if (!text) return;
-            text.split(/[,\n|]+/).map(item => item.trim()).filter(Boolean).forEach((item) => names.push(item));
-        };
-        for (const source of getKeroAssetManageSources(action)) {
-            ['names', 'name', 'assetNames', 'assetName', 'slotName', 'items', 'assets', 'images', 'targets'].forEach((key) => {
-                if (source && Object.prototype.hasOwnProperty.call(source, key)) pushName(source[key]);
-            });
-        }
-        const seen = new Set();
-        return names.filter((name) => {
-            const key = safeString(name).toLowerCase();
-            if (!key || seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-    }
-
-    function getKeroAssetManageLists(char) {
-        const emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
-        const additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
-        const meta = svbCleanAssetStudioMeta(svbReadAssetStudioMetaFromCharacter(char), emotionAssets, additionalAssets);
-        return { emotionAssets, additionalAssets, meta };
-    }
-
-    function getKeroAssetManageFolderFilter(action = {}, operation = '') {
-        if (operation === 'move_folder') {
-            const value = getKeroAssetManageValue(action, ['fromFolder', 'from_folder', 'sourceFolder', 'source_folder', 'currentFolder', 'current_folder'], undefined);
-            return value === undefined ? null : safeString(value).trim();
-        }
-        const value = getKeroAssetManageValue(action, ['folder', 'fromFolder', 'from_folder'], undefined);
-        return value === undefined ? null : safeString(value).trim();
-    }
-
-    function keroAssetFolderMatches(currentFolder, filter) {
-        if (filter === null || filter === undefined) return true;
-        const wanted = safeString(filter).trim();
-        if (!wanted) return true;
-        const key = wanted.toLowerCase();
-        if (['__none__', 'none', 'uncategorized', 'root', '미분류'].includes(key)) return !safeString(currentFolder).trim();
-        return safeString(currentFolder).trim() === wanted;
-    }
-
-    function selectKeroAssetManageRefs(lists, action = {}, operation = '') {
-        const kind = normalizeKeroAssetManageKind(action);
-        const names = collectKeroAssetManageNames(action);
-        const allRequested = getKeroAssetManageBoolean(action, ['all', 'includeAll', 'selectAll'])
-            || names.some(name => safeString(name).trim() === '*');
-        const nameSet = new Set(names
-            .filter(name => safeString(name).trim() !== '*')
-            .map(name => safeString(name).trim().toLowerCase()));
-        const folderFilter = getKeroAssetManageFolderFilter(action, operation);
-        const hasFolderFilter = folderFilter !== null && folderFilter !== undefined && safeString(folderFilter).trim() !== '';
-        const shouldDefaultAll = operation === 'normalize_extensions' && !nameSet.size && !hasFolderFilter;
-        const kinds = kind === 'emotion' ? ['emotion'] : (kind === 'additional' ? ['additional'] : ['additional', 'emotion']);
-        const refs = [];
-        for (const assetKind of kinds) {
-            const source = assetKind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
-            source.forEach((asset, idx) => {
-                const name = safeString(asset.name).trim();
-                const base = svbSplitAssetDisplayName(name).base;
-                const folder = svbGetAssetStudioFolder(lists.meta, assetKind, name);
-                const nameMatches = !nameSet.size || nameSet.has(name.toLowerCase()) || nameSet.has(base.toLowerCase());
-                if (!nameMatches) return;
-                if (!keroAssetFolderMatches(folder, folderFilter)) return;
-                if (!allRequested && !shouldDefaultAll && !nameSet.size && !hasFolderFilter) return;
-                refs.push({ kind: assetKind, idx, asset });
-            });
-        }
-        return refs;
-    }
-
-    function getKeroAssetManageOperationLabel(operation) {
-        const labels = {
-            normalize_extensions: '확장자 정리',
-            move_folder: '폴더 이동',
-            pattern_rename: '패턴 이름 변경',
-            train_lora: 'Wellspring LoRA 학습',
-            refresh_loras: 'Wellspring LoRA 갱신',
-            delete: '삭제'
-        };
-        return labels[operation] || operation || '에셋 관리';
-    }
-
-    function renderKeroAssetManagePattern(pattern, ref, sequence, lists) {
-        const asset = ref.asset || {};
-        const name = safeString(asset.name).trim();
-        const split = svbSplitAssetDisplayName(name);
-        const folder = svbGetAssetStudioFolder(lists.meta, ref.kind, name);
-        const ext = ref.kind === 'additional'
-            ? svbNormalizeAssetExtValue(split.ext, asset.ext, svbGetFileExt(asset.path), 'png')
-            : svbNormalizeAssetExtValue(split.ext, svbGetFileExt(asset.path), 'png');
-        const n = String(sequence + 1);
-        const nn = n.padStart(2, '0');
-        return safeString(pattern || '{name}')
-            .replace(/\{nn\}/g, nn)
-            .replace(/\{n\}/g, n)
-            .replace(/\{folder\}/g, folder || 'root')
-            .replace(/\{base\}/g, split.base || name)
-            .replace(/\{name\}/g, name)
-            .replace(/\{kind\}/g, ref.kind)
-            .replace(/\{ext\}/g, ext);
-    }
-
-    function getKeroAssetManageTrainingIdentity(action = {}, char = null) {
-        return svbNormalizeAssetIdentityName(
-            getKeroAssetManageValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '')
-            || getCharacterDisplayName(char)
-        );
-    }
-
-    function getKeroAssetManageTrainingAssets(refs = []) {
-        return ensureArray(refs)
-            .map((ref) => {
-                const asset = ref.asset || {};
-                const path = safeString(asset.path).trim();
-                if (!path) return null;
-                return {
-                    name: asset.name || `${ref.kind}_${ref.idx + 1}`,
-                    path,
-                    ext: asset.ext || svbGetFileExt(path) || 'png'
-                };
-            })
-            .filter(Boolean);
-    }
-
-    async function runKeroAssetTrainLoraAction(action = {}, char = null, options = {}) {
-        const actionProgressOptions = resolveKeroActionProgressOptions(options);
-        const lists = getKeroAssetManageLists(char);
-        const refs = selectKeroAssetManageRefs(lists, action, 'train_lora');
-        const identityName = getKeroAssetManageTrainingIdentity(action, char);
-        const loraName = safeString(getKeroAssetManageValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim().slice(0, 40);
-        const galleryJobIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], []));
-        const uploadIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], []));
-        const trainingAssets = getKeroAssetManageTrainingAssets(refs);
-        if (!loraName) {
-            const detail = 'Wellspring LoRA 학습에는 loraName 또는 identityName이 필요합니다.';
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        if (!galleryJobIds.length && !uploadIds.length && !trainingAssets.length) {
-            const detail = 'Wellspring LoRA 학습 데이터가 없습니다. names/folder/all:true로 에셋을 고르거나 galleryJobIds/uploadIds를 넣어야 합니다.';
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
-        if (!isWellspringImageProvider(profile.provider)) {
-            const detail = 'Wellspring LoRA 학습에는 Wellspring 이미지 프로필이 필요합니다.';
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        const signal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
-        addKeroWorkstreamEvent('Wellspring LoRA 학습', `${loraName} · local ${trainingAssets.length} · gallery ${galleryJobIds.length} · upload ${uploadIds.length}`, 'action', actionProgressOptions);
-        updateKeroProgress(0, Math.max(1, trainingAssets.length + galleryJobIds.length + uploadIds.length), `Wellspring LoRA 학습 시작: ${loraName}`, actionProgressOptions);
-        const started = await svbStartWellspringLoraTraining(profile, {
-            loraName,
-            steps: getKeroAssetManageValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined),
-            galleryJobIds,
-            uploadIds,
-            trainingAssets,
-            signal
-        });
-        const trainingOptions = {
-            identityName,
-            loraName,
-            loraStrength: svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2),
-            autoUseTrainedLora: getKeroAssetManageValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false
-        };
-        await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
-        let completed = null;
-        if (getKeroAssetManageBoolean(action, ['waitForTraining', 'wait', 'waitForCompletion'])) {
-            completed = await svbWaitForWellspringLoraTraining(profile, started, {
-                signal,
-                trainingTimeoutMs: Math.max(0, Number(getKeroAssetManageValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
-            });
-            await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
-        }
-        const detail = completed?.lora
-            ? `Wellspring LoRA 학습 완료 및 ${identityName} identity 연결: ${loraName}`
-            : `Wellspring LoRA 학습 시작: ${loraName}`;
-        await addBotMessage(`✅ ${detail}`);
-        return { success: true, requested: trainingAssets.length + galleryJobIds.length + uploadIds.length, changed: 1, detail, started, completed };
-    }
-
-    async function runKeroAssetRefreshLorasAction(action = {}, char = null, options = {}) {
-        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
-        if (!isWellspringImageProvider(profile.provider)) {
-            const detail = 'Wellspring LoRA 갱신에는 Wellspring 이미지 프로필이 필요합니다.';
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        const loras = await svbFetchWellspringMineLoras(profile);
-        const identityName = getKeroAssetManageTrainingIdentity(action, char);
-        const wanted = safeString(getKeroAssetManageValue(action, ['loraId', 'lora_id', 'loraName', 'lora_name', 'name'], '')).trim();
-        let attached = null;
-        if (identityName && wanted) {
-            attached = loras.find((lora) => {
-                const id = svbExtractWellspringLoraId(lora);
-                const name = safeString(lora.lora_name || lora.loraName || lora.name || lora.title).trim();
-                return id === wanted || name === wanted;
-            }) || null;
-            if (attached) {
-                const loraId = svbExtractWellspringLoraId(attached);
-                const strength = svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2);
-                let meta = svbReadAssetStudioMetaFromCharacter(char);
-                meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength }], {
-                    loraName: safeString(attached.lora_name || attached.loraName || attached.name || wanted).trim()
-                });
-                svbWriteAssetStudioMetaToCharacter(char, meta);
-                await svbSaveAssetStudioCharacter(char, 'asset-lora-refresh');
-            }
-        }
-        const detail = attached
-            ? `Wellspring LoRA ${wanted}를 ${identityName} identity에 연결했습니다.`
-            : `Wellspring LoRA ${loras.length}개를 확인했습니다.`;
-        await addBotMessage(`✅ ${detail}`);
-        return { success: true, requested: 1, changed: attached ? 1 : 0, detail, loras: loras.map(lora => ({ id: svbExtractWellspringLoraId(lora), name: lora.name || lora.lora_name || lora.loraName || '' })) };
-    }
-
-    async function runKeroAssetManageAction(action = {}, options = {}) {
-        const actionProgressOptions = resolveKeroActionProgressOptions(options);
-        const char = await getCharacterData();
-        if (!char) return { success: false, failed: 1, detail: '캐릭터 데이터 없음' };
-
-        const operation = normalizeKeroAssetManageOperation(action);
-        if (!operation) {
-            const detail = '에셋 관리 operation이 없습니다. normalize_extensions, move_folder, pattern_rename, delete 중 하나가 필요합니다.';
-            await addBotMessage(`❌ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        if (operation === 'batch_replace' || operation === 'zip_import') {
-            const detail = '파일 선택이 필요한 작업은 케로가 직접 로컬 파일을 고를 수 없어 에셋 스튜디오 버튼에서 실행해야 합니다.';
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, detail };
-        }
-        if (operation === 'train_lora') {
-            return await runKeroAssetTrainLoraAction(action, char, options);
-        }
-        if (operation === 'refresh_loras') {
-            return await runKeroAssetRefreshLorasAction(action, char, options);
-        }
-
-        const lists = getKeroAssetManageLists(char);
-        const refs = selectKeroAssetManageRefs(lists, action, operation);
-        if (!refs.length) {
-            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 에셋을 찾지 못했습니다. names, folder, all:true 중 하나로 대상을 지정해야 합니다.`;
-            await addBotMessage(`⚠️ ${detail}`);
-            return { success: false, failed: 1, requested: 0, detail };
-        }
-
-        addKeroWorkstreamEvent('이미지 에셋 관리', `${getKeroAssetManageOperationLabel(operation)} ${refs.length}개 대상`, 'action', actionProgressOptions);
-        updateKeroProgress(0, refs.length, `${getKeroAssetManageOperationLabel(operation)} 준비 중...`, actionProgressOptions);
-
-        let changed = 0;
-        const changedAssets = [];
-        const markChanged = (ref, beforeName, afterName, detail = '') => {
-            changed += 1;
-            changedAssets.push({ kind: ref.kind, beforeName, afterName, detail });
-            updateKeroProgress(Math.min(changed, refs.length), refs.length, `${getKeroAssetManageOperationLabel(operation)} ${changed}/${refs.length}`, actionProgressOptions);
-        };
-
-        if (operation === 'normalize_extensions') {
-            refs.forEach((ref) => {
-                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
-                const asset = list[ref.idx];
-                if (!asset) return;
-                const beforeName = safeString(asset.name).trim();
-                const split = svbSplitAssetDisplayName(beforeName);
-                const baseName = split.base || beforeName || (ref.kind === 'emotion' ? 'emotion' : 'asset');
-                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
-                if (ref.kind === 'emotion') {
-                    const nextName = svbMakeUniqueLooseAssetName(baseName, usedNames, 'emotion');
-                    if (nextName !== beforeName) {
-                        asset.name = nextName;
-                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
-                        markChanged(ref, beforeName, nextName, 'name');
-                    }
-                } else {
-                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
-                    const nextName = svbMakeUniqueAssetName(baseName, usedNames);
-                    const nextExt = svbNormalizeAssetExtValue(split.ext, beforeExt, svbGetFileExt(asset.path), 'png');
-                    if (nextName !== beforeName || nextExt !== beforeExt) {
-                        asset.name = nextName;
-                        asset.ext = nextExt;
-                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
-                        markChanged(ref, beforeName, nextName, `ext:${beforeExt || '-'}>${nextExt}`);
-                    }
-                }
-            });
-        } else if (operation === 'move_folder') {
-            const hasFolderValue = getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], undefined) !== undefined;
-            if (!hasFolderValue) {
-                const detail = '폴더 이동에는 folder 또는 toFolder 값이 필요합니다. 폴더를 비우려면 folder:""를 명시하세요.';
-                await addBotMessage(`❌ ${detail}`);
-                return { success: false, failed: 1, requested: refs.length, detail };
-            }
-            const folder = safeString(getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '')).trim();
-            refs.forEach((ref) => {
-                const asset = ref.kind === 'emotion' ? lists.emotionAssets[ref.idx] : lists.additionalAssets[ref.idx];
-                if (!asset?.name) return;
-                const beforeFolder = svbGetAssetStudioFolder(lists.meta, ref.kind, asset.name);
-                if (beforeFolder === folder) return;
-                svbSetAssetStudioFolder(lists.meta, ref.kind, asset.name, folder);
-                markChanged(ref, asset.name, asset.name, `folder:${beforeFolder || '미분류'}>${folder || '미분류'}`);
-            });
-        } else if (operation === 'pattern_rename') {
-            const pattern = safeString(getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')).trim();
-            if (!pattern) {
-                const detail = '패턴 이름 변경에는 pattern 값이 필요합니다. 예: "{folder}_{nn}_{base}"';
-                await addBotMessage(`❌ ${detail}`);
-                return { success: false, failed: 1, requested: refs.length, detail };
-            }
-            refs.forEach((ref, sequence) => {
-                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
-                const asset = list[ref.idx];
-                if (!asset) return;
-                const beforeName = safeString(asset.name).trim();
-                const rendered = renderKeroAssetManagePattern(pattern, ref, sequence, lists);
-                const split = svbSplitAssetDisplayName(rendered);
-                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
-                if (ref.kind === 'emotion') {
-                    const nextName = svbMakeUniqueLooseAssetName(split.base || rendered || beforeName, usedNames, 'emotion');
-                    if (nextName !== beforeName) {
-                        asset.name = nextName;
-                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
-                        markChanged(ref, beforeName, nextName, 'rename');
-                    }
-                } else {
-                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
-                    const nextName = svbMakeUniqueAssetName(split.base || rendered || beforeName, usedNames);
-                    const nextExt = split.ext ? svbNormalizeAssetExtValue(split.ext) : (beforeExt || svbNormalizeAssetExtValue(svbGetFileExt(asset.path), 'png'));
-                    if (nextName !== beforeName || nextExt !== beforeExt) {
-                        asset.name = nextName;
-                        asset.ext = nextExt;
-                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
-                        markChanged(ref, beforeName, nextName, `rename/ext:${beforeExt || '-'}>${nextExt}`);
-                    }
-                }
-            });
-        } else if (operation === 'delete') {
-            const byKind = {
-                additional: [...new Set(refs.filter(ref => ref.kind === 'additional').map(ref => ref.idx))].sort((a, b) => b - a),
-                emotion: [...new Set(refs.filter(ref => ref.kind === 'emotion').map(ref => ref.idx))].sort((a, b) => b - a)
-            };
-            byKind.additional.forEach((idx) => {
-                const asset = lists.additionalAssets[idx];
-                if (!asset) return;
-                const beforeName = asset.name;
-                svbSetAssetStudioFolder(lists.meta, 'additional', beforeName, '');
-                lists.additionalAssets.splice(idx, 1);
-                markChanged({ kind: 'additional', idx }, beforeName, '', 'delete');
-            });
-            byKind.emotion.forEach((idx) => {
-                const asset = lists.emotionAssets[idx];
-                if (!asset) return;
-                const beforeName = asset.name;
-                svbSetAssetStudioFolder(lists.meta, 'emotion', beforeName, '');
-                lists.emotionAssets.splice(idx, 1);
-                markChanged({ kind: 'emotion', idx }, beforeName, '', 'delete');
-            });
-        }
-
-        if (changed <= 0) {
-            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 ${refs.length}개를 확인했지만 변경할 내용이 없었습니다.`;
-            await addBotMessage(`↪ ${detail}`);
-            return { success: true, requested: refs.length, changed: 0, skipped: refs.length, detail };
-        }
-
-        lists.meta = svbCleanAssetStudioMeta(lists.meta, lists.emotionAssets, lists.additionalAssets);
-        assertKeroActionNotTimedOut(action, '이미지 에셋 관리 저장');
-        if (typeof options.abortCheck === 'function' && options.abortCheck()) {
-            throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 관리 저장을 중단했습니다.');
-        }
-        try {
-            await backupCharacterBeforeSave(char, 'kero-asset-manage', { strict: true });
-        } catch (error) {
-            await addBotMessage(`❌ 에셋 관리 전 백업에 실패해서 작업을 중단했습니다: ${error.message || error}`);
-            return { success: false, failed: 1, requested: refs.length, changed: 0, detail: error?.message || String(error), keepProposal: true };
-        }
-        setCharacterField(char, 'emotionImages', svbEmotionTuples(lists.emotionAssets));
-        setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(lists.additionalAssets));
-        svbWriteAssetStudioMetaToCharacter(char, lists.meta);
-        const ok = await setCharacterData(char, {
-            ...options,
-            skipBackup: true,
-            label: 'kero-asset-manage'
-        });
-        if (!ok) {
-            const detail = '캐릭터 저장에 실패했습니다.';
-            await addBotMessage(`❌ ${detail}`);
-            return { success: false, failed: 1, requested: refs.length, changed: 0, detail, keepProposal: true };
-        }
-        updateKeroProgress(refs.length, refs.length, `${getKeroAssetManageOperationLabel(operation)} 완료`, actionProgressOptions);
-        const detail = `이미지 에셋 ${getKeroAssetManageOperationLabel(operation)} ${changed}개 변경 완료`;
-        await addBotMessage(`✅ ${detail}`);
-        return { success: true, requested: refs.length, changed, failed: 0, detail, changedAssets };
+        const detail = 'bulk_create execution is disabled in v1.5.96. Use create actions with payload arrays instead.';
+        const progressOptions = resolveKeroActionProgressOptions(options);
+        addKeroWorkstreamEvent('bulk_create disabled', detail, 'warning', progressOptions);
+        return { success: 0, failed: 1, skipped: 0, detail };
     }
 
     async function executeKeroAction(action, options = {}) {
@@ -34366,11 +30989,10 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         Object.assign(baseKeroOptions, actionAbortOptions);
 
         if (type === 'bulk_create') {
-            return await runKeroBulkCreate(action, {
-                ...baseKeroOptions,
-                silent: action.silent === true || action.autoBulkResume === true,
-                progressOptions: actionProgressOptions
-            });
+            const detail = 'bulk_create 작업 큐는 v1.5.96부터 실행하지 않습니다. 여러 항목은 create payload 배열로 바로 저장합니다.';
+            addKeroWorkstreamEvent('bulk_create 차단', detail, 'warning', actionProgressOptions);
+            await addBotMessage(`⚠️ ${detail}`);
+            return { success: false, failed: 1, detail };
         }
 
         if (type === 'create') {
@@ -34740,8 +31362,8 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             return { success: false, detail: '텍스트 필드 지원 타입 아님' };
         }
 
-        // create/bulk_create 타입은 즉시 실행 (생성은 바로 진행)
-        if (type === 'create' || type === 'bulk_create') {
+        // create 타입은 payload 배열을 바로 저장한다. 별도 대량 생성 job은 만들지 않는다.
+        if (type === 'create') {
             return await executeKeroAction(action, options);
         }
 
@@ -35211,56 +31833,21 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         }
         const char = await getCharacterData();
         const storageId = await getKeroCharId(char);
-        let restoredBulkTargets = [];
-        let restoredMission = null;
         currentKeroPersistentStorageId = storageId || null;
         if (storageId) {
             keroWorkstreamEvents = await loadKeroWorkstreamEvents(storageId);
             keroQueuedUserInputs = await loadKeroInputQueue(storageId);
-            bulkEditState = await loadKeroBulkEditState(storageId);
-            restoredBulkTargets = Object.keys(bulkEditState || {});
-            if (restoredBulkTargets.length) {
-                addKeroWorkstreamEvent('일괄 개선 결과 복원', restoredBulkTargets.map(getTargetLabel).join(', '), 'context');
-            }
-            restoredMission = await restoreKeroMission(char);
-            const recoveredActionJobs = await recoverOrphanedKeroActionJobs(storageId, restoredMission?.id || '');
-            if (recoveredActionJobs.recovered > 0) {
-                addKeroWorkstreamEvent('액션 job 복구', `처리 중으로 남아 있던 액션 job ${recoveredActionJobs.recovered}개를 중단 감지 상태로 정리했습니다.`, 'queued');
-            }
-            const reconciledBulkWarnings = await reconcileCompletedKeroBulkWarningActionJobs(storageId, restoredMission?.id || '');
-            if (reconciledBulkWarnings.reconciled > 0) {
-                addKeroWorkstreamEvent('대량 생성 경고 정리', `남은 범위가 없는 대량 생성 warning job ${reconciledBulkWarnings.reconciled}개를 완료로 정리했습니다.`, 'verified');
-            }
-            const recoveredQueue = recoverStaleKeroInputQueue(keroQueuedUserInputs, { force: true });
-            if (recoveredQueue.recovered > 0) {
-                keroQueuedUserInputs = recoveredQueue.queue;
-                await saveKeroInputQueue(storageId, keroQueuedUserInputs);
-                addKeroWorkstreamEvent('대기 요청 복구', `처리 중으로 남아 있던 요청 ${recoveredQueue.recovered}개를 대기열로 되돌렸습니다.`, 'queued');
-            }
-            const recoveryNoticeShown = await announceKeroRecoverySnapshotIfNeeded(storageId, restoredMission, keroQueuedUserInputs, { addBotMessage });
-            if (restoredMission?.status === 'interrupted' && !recoveryNoticeShown) {
-                await addBotMessage(`이전 작업이 중단된 상태로 복원됐어. 개굴.
-
-목표: ${safeString(restoredMission.objective).slice(0, 180)}${safeString(restoredMission.objective).length > 180 ? '...' : ''}
-
-"계속 진행"이라고 말하면 이 미션 상태와 작업 흐름을 기준으로 이어서 진행할게.`);
-            }
-        } else {
             bulkEditState = {};
+            await restoreKeroMission(char);
+        } else {
+            keroWorkstreamEvents = [];
+            keroQueuedUserInputs = [];
+            bulkEditState = {};
+            currentKeroMission = null;
         }
-        const shouldAutoDrainQueuedInputs = keroQueuedUserInputs.length > 0
-            && !currentKeroMission
-            && !keroChatTaskRunning
-            && !keroProcessingQueuedInput;
         await renderChatHistory(char);
         if (!chatHistory.length) {
             addWelcomeMessage();
-        }
-        if (restoredBulkTargets.length) {
-            await addBotMessage(`이전 작업에서 저장된 일괄 개선 결과를 복원했어: ${restoredBulkTargets.map(getTargetLabel).join(', ')}. 필요하면 보기로 확인하고 적용할 수 있어.`);
-            restoredBulkTargets.forEach((target) => {
-                addKeroActionMessage({ target, showImprove: false, showApply: true, clearOnDeny: true });
-            });
         }
         await renderKeroMemorySelect(char);
         await renderKeroActiveMemories(char);
@@ -35270,11 +31857,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         updateWorkTargetModeUI();
         await renderKeroWorkstream();
         updateKeroQueuedInputUi();
-        if (shouldAutoDrainQueuedInputs) {
-            setTimeout(() => {
-                drainKeroQueuedInputs().catch((error) => Logger.warn('Kero queued input auto-drain failed:', error?.message || error));
-            }, 350);
-        }
     }
 
     function openKeroToolsPanel(which) {
@@ -35478,104 +32060,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             keroWorkstreamEvents = [];
             await renderKeroWorkstream();
         }, 'kero-workstream-clear-btn');
-
-        const buildRuntimeDiagnosticLocals = () => ({
-            addBotMessage,
-            handleKeroActionRequest,
-            renderKeroWorkstream,
-            openKeroToolsPanel,
-            bindKeroToolsEvents,
-            runKeroBulkCreate,
-            autoResumeKeroBulkJobsUntilSettled,
-            parseKeroAction,
-            normalizeKeroActionTargetName,
-            getKeroWorkTargetActionFilterResult,
-            isKeroMixedWorkTargetsEnabledForRequest,
-            resolveKeroAssetLoraTrainingOptions
-        });
-
-        bindSafeClick(document.getElementById('kero-runtime-diagnostics-btn'), async () => {
-            const result = runSvbRuntimeSelfCheck({ localFunctions: buildRuntimeDiagnosticLocals() });
-            addKeroWorkstreamEvent('런타임 진단', `오류 ${result.failed}개 · 경고 ${result.warnings}개`, result.failed ? 'error' : result.warnings ? 'warning' : 'ok');
-            await renderKeroWorkstream();
-        }, 'kero-runtime-diagnostics-btn');
-
-        bindSafeClick(document.getElementById('kero-runtime-recover-btn'), async () => {
-            const result = await recoverSvbRuntimeDiagnostics({ localFunctions: buildRuntimeDiagnosticLocals() });
-            addKeroWorkstreamEvent('대기 복구 확인', `오류 ${result.failed}개 · 경고 ${result.warnings}개`, result.failed ? 'error' : result.warnings ? 'warning' : 'ok');
-            await renderKeroWorkstream();
-        }, 'kero-runtime-recover-btn');
-
-        bindSafeClick(document.getElementById('kero-runtime-continue-btn'), async () => {
-            if (keroChatTaskRunning || keroProcessingQueuedInput) {
-                await queueKeroInputDuringTask('계속 진행', {
-                    queueAfterTask: true,
-                    resumeOnly: true,
-                    keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
-                    workTargetMode: currentWorkTargetMode
-                });
-                return;
-            }
-            addKeroWorkstreamEvent('사용자 계속 진행', '작업 흐름 패널에서 안전한 미완료 작업 이어가기를 요청했습니다.', 'queued');
-            await renderKeroWorkstream();
-            await runKeroChatTask('계속 진행', {
-                skipUserEcho: true,
-                visibleUserInput: '계속 진행',
-                resumeOnly: true,
-                keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
-                workTargetMode: currentWorkTargetMode
-            });
-            await renderKeroWorkstream();
-        }, 'kero-runtime-continue-btn');
-
-        bindSafeClick(document.getElementById('kero-runtime-retry-btn'), async () => {
-            if (keroChatTaskRunning || keroProcessingQueuedInput) {
-                await queueKeroInputDuringTask('재시도', {
-                    queueAfterTask: true,
-                    retryOnly: true,
-                    keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
-                    workTargetMode: currentWorkTargetMode
-                });
-                return;
-            }
-            const retryStorageId = currentKeroPersistentStorageId || await getKeroCharId(await getCharacterData()).catch(() => '');
-            const retryMissionId = safeString(currentKeroMission?.id || '');
-            const retryAvailability = retryStorageId && currentKeroMission
-                ? await getKeroMissionResumeAvailability(retryStorageId, retryMissionId).catch(() => null)
-                : null;
-            const hasRetryableQueue = getKeroReadyQueuedInputCount(keroQueuedUserInputs, retryMissionId || '') > 0
-                || getKeroFailedInputCount(keroQueuedUserInputs, retryMissionId || '') > 0
-                || (!currentKeroMission && (getKeroReadyQueuedInputCount(keroQueuedUserInputs, '') > 0 || getKeroFailedInputCount(keroQueuedUserInputs, '') > 0));
-            const hasRecoverableMissionObjective = Boolean(
-                currentKeroMission
-                && !['done', 'cancelled'].includes(safeString(currentKeroMission.status || ''))
-                && getKeroMissionObjectiveText(currentKeroMission)
-            );
-            const hasRetryableWork = Boolean(
-                retryAvailability?.hasResumableWork
-                || retryAvailability?.hasWarningWork
-                || retryAvailability?.hasRetryQueueWork
-                || hasRetryableQueue
-                || hasRecoverableMissionObjective
-            );
-            if (!hasRetryableWork) {
-                const detail = '재시도할 확인필요/실패 작업이나 대기 요청이 없습니다.';
-                addKeroWorkstreamEvent('재시도할 작업 없음', detail, 'warning');
-                await addBotMessage(detail);
-                await renderKeroWorkstream();
-                return;
-            }
-            addKeroWorkstreamEvent('사용자 재시도', '작업 흐름 패널에서 확인필요/실패 작업 재시도를 요청했습니다.', 'retry');
-            await renderKeroWorkstream();
-            await runKeroChatTask('재시도', {
-                skipUserEcho: true,
-                visibleUserInput: '재시도',
-                retryOnly: true,
-                keroMode: isKeroExecutionMode(currentKeroMode) ? currentKeroMode : normalizeKeroMode(currentKeroMission?.keroMode || 'work'),
-                workTargetMode: currentWorkTargetMode
-            });
-            await renderKeroWorkstream();
-        }, 'kero-runtime-retry-btn');
 
         bindKeroRuntimeControlButton(document.getElementById('kero-runtime-stop-btn'), handleKeroRuntimeStopButtonClick, 'kero-runtime-stop-btn');
 
@@ -36169,689 +32653,17 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (!text) return;
         const inputId = `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const steeringNote = addKeroMissionSteeringNote(text, inputId);
-        const shouldQueueFollowup = shouldQueueKeroFollowupDuringTask(text, options);
         const inputEl = document.getElementById('risu-trans-chat-input');
         if (inputEl) {
             inputEl.value = '';
             inputEl.style.height = 'auto';
         }
-        await addUserMessage(text, { kind: shouldQueueFollowup ? 'queued-user' : 'steering', sourceInputId: inputId });
-        if (!shouldQueueFollowup) {
-            if (steeringNote) {
-                addKeroWorkstreamEvent('스티어링 메모 접수', text.slice(0, 220), 'queued');
-            }
-            updateKeroQueuedInputUi();
-            await addBotMessage('작업 중이라 이 내용은 현재 미션 스티어링으로 반영해둘게. 같은 요청을 완료 후 다시 실행하지는 않을게.', { kind: 'queue', sourceInputId: inputId });
-            return;
+        await addUserMessage(text, { kind: 'steering', sourceInputId: inputId });
+        if (steeringNote) {
+            addKeroWorkstreamEvent('작업 중 입력 메모', text.slice(0, 220), 'context');
         }
-        const baseQueue = currentKeroPersistentStorageId
-            ? await loadKeroInputQueue(currentKeroPersistentStorageId).catch((error) => {
-                Logger.warn('Kero input queue append refresh failed:', error?.message || error);
-                return keroQueuedUserInputs;
-            })
-            : keroQueuedUserInputs;
-        keroQueuedUserInputs = capKeroInputQueue([
-            ...baseQueue,
-            {
-                id: inputId,
-                text,
-                status: 'queued',
-                queuedAt: Date.now(),
-                retryCount: 0,
-                missionId: currentKeroMission?.id || '',
-                storageId: currentKeroPersistentStorageId || '',
-                keroMode: safeString(options.keroMode || currentKeroMode),
-                workTargetMode: normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode),
-                resumeOnly: options.resumeOnly === true,
-                retryOnly: options.retryOnly === true,
-                queueKind: 'followup_action',
-                followupAction: true,
-                steeringApplied: Boolean(steeringNote),
-                steeringNoteId: safeString(steeringNote?.id || '')
-            }
-        ]);
-        if (currentKeroPersistentStorageId) {
-            await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-        }
-        if (markKeroQueueDrainAgainIfProcessing('queued_input_append')) {
-            addKeroWorkstreamEvent('대기열 추가 처리 예약', '현재 대기열 처리 중 새 후속 요청이 들어와 이번 처리 뒤 한 번 더 이어갑니다.', 'queued');
-        }
-        addKeroWorkstreamEvent(steeringNote ? '후속 작업 예약' : '대기 요청 예약', text.slice(0, 220), 'queued');
         updateKeroQueuedInputUi();
-        await addBotMessage(`작업 중이라 이 요청은 현재 미션 스티어링에 반영하고, 작업이 끝나면 후속 작업으로 이어서 처리할게. 대기 ${getKeroReadyQueuedInputCount()}개.`, { kind: 'queue', sourceInputId: inputId });
-    }
-
-    function startKeroInputQueueHeartbeat(storageId, inputId) {
-        const targetStorageId = safeString(storageId || '');
-        const targetInputId = safeString(inputId || '');
-        if (!targetStorageId || !targetInputId) return null;
-        let active = true;
-        let pendingBeat = Promise.resolve();
-        const beat = () => {
-            if (!active) return;
-            pendingBeat = pendingBeat.then(async () => {
-                if (!active) return;
-                let changed = false;
-                const now = Date.now();
-                const latestQueue = await loadKeroInputQueue(targetStorageId);
-                const patchedQueue = normalizeKeroInputQueue(latestQueue).map((item) => {
-                    if (safeString(item.id) !== targetInputId || safeString(item.status) !== 'processing') return item;
-                    const owner = safeString(item.runtimeSessionId || '');
-                    if (owner && owner !== keroRuntimeSessionId) return item;
-                    changed = true;
-                    return {
-                        ...item,
-                        heartbeatAt: now,
-                        runtimeSessionId: keroRuntimeSessionId
-                    };
-                });
-                keroQueuedUserInputs = patchedQueue;
-                if (changed) {
-                    await saveKeroInputQueue(targetStorageId, patchedQueue);
-                    updateKeroQueuedInputUi();
-                } else {
-                    updateKeroQueuedInputUi();
-                }
-            }).catch((error) => {
-                Logger.warn('Kero input queue heartbeat failed:', error?.message || error);
-            });
-        };
-        const timer = setInterval(beat, KERO_INPUT_QUEUE_HEARTBEAT_MS);
-        return async () => {
-            active = false;
-            clearInterval(timer);
-            try {
-                await pendingBeat;
-            } catch (error) {
-                Logger.warn('Kero input queue heartbeat stop failed:', error?.message || error);
-            }
-        };
-    }
-
-    function normalizeKeroTaskRunResult(result) {
-        if (result && typeof result === 'object') {
-            const rawStatus = safeString(result.status || result.finalStatus || result.missionStatus || '').toLowerCase();
-            const status = rawStatus || (result.success === false ? 'error' : 'done');
-            const explicitFailure = result.success === false || result.ok === false;
-            const queueDisposition = safeString(result.queueDisposition || result.disposition || '').toLowerCase()
-                || (['warning', 'blocked', 'interrupted', 'attention'].includes(status)
-                    ? 'attention'
-                    : (explicitFailure || ['error', 'failed'].includes(status) ? 'failed' : 'done'));
-            return {
-                ...result,
-                status,
-                success: !explicitFailure && (result.success === true || status === 'done'),
-                queueDisposition,
-                detail: safeString(result.detail || result.message || '')
-            };
-        }
-        if (result === false) {
-            return { success: false, status: 'error', queueDisposition: 'failed', detail: '대기 요청 처리 실패' };
-        }
-        if (result === true) {
-            return { success: true, status: 'done', queueDisposition: 'done', detail: '' };
-        }
-        return { success: false, status: 'error', queueDisposition: 'failed', detail: '작업 결과 상태를 받지 못했습니다.' };
-    }
-
-    async function drainKeroQueuedInputs() {
-        if (keroProcessingQueuedInput || keroChatTaskRunning) return;
-        keroProcessingQueuedInput = true;
-        try {
-            const recoveredQueue = recoverStaleKeroInputQueue(keroQueuedUserInputs, { force: true });
-            if (recoveredQueue.recovered > 0) {
-                keroQueuedUserInputs = recoveredQueue.queue;
-                if (currentKeroPersistentStorageId) {
-                    await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                }
-                addKeroWorkstreamEvent('대기 요청 복구', `처리 중으로 남아 있던 요청 ${recoveredQueue.recovered}개를 다시 대기열로 되돌렸습니다.`, 'queued');
-            }
-            const drainMissionId = safeString(currentKeroMission?.id || '');
-            const drainSnapshotIds = getKeroQueuedDrainSnapshot(keroQueuedUserInputs, drainMissionId);
-            if (drainSnapshotIds.size > 0) {
-                addKeroWorkstreamEvent('대기열 처리 시작', `이번 실행에서는 현재 스냅샷 ${drainSnapshotIds.size}개만 처리합니다. 새로 들어온 요청은 다음 턴으로 넘깁니다.`, 'queued');
-            }
-            while (!keroChatTaskRunning && keroQueuedUserInputs.length > 0 && drainSnapshotIds.size > 0) {
-                if (currentKeroPersistentStorageId) {
-                    try {
-                        keroQueuedUserInputs = await loadKeroInputQueue(currentKeroPersistentStorageId);
-                    } catch (error) {
-                        Logger.warn('Kero input queue refresh before drain failed:', error?.message || error);
-                    }
-                }
-                keroQueuedUserInputs = normalizeKeroInputQueue(keroQueuedUserInputs);
-                const nextIndex = keroQueuedUserInputs.findIndex((item) => (
-                    safeString(item?.status || 'queued') === 'queued'
-                    && drainSnapshotIds.has(safeString(item?.id || ''))
-                ));
-                if (nextIndex < 0) break;
-                const next = {
-                    ...keroQueuedUserInputs[nextIndex],
-                    status: 'processing',
-                    processingAt: Date.now(),
-                    heartbeatAt: Date.now(),
-                    runtimeSessionId: keroRuntimeSessionId,
-                    lastError: ''
-                };
-                keroQueuedUserInputs[nextIndex] = next;
-                if (currentKeroPersistentStorageId) {
-                    await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                    const freshQueue = await loadKeroInputQueue(currentKeroPersistentStorageId);
-                    const claimed = freshQueue.find((item) => safeString(item.id) === safeString(next.id));
-                    if (
-                        !claimed
-                        || safeString(claimed.status) !== 'processing'
-                        || safeString(claimed.runtimeSessionId) !== safeString(keroRuntimeSessionId)
-                    ) {
-                        keroQueuedUserInputs = freshQueue;
-                        drainSnapshotIds.delete(next.id);
-                        updateKeroQueuedInputUi();
-                        addKeroWorkstreamEvent('대기 요청 선점 보류', `${safeString(next.text).slice(0, 160)} · 다른 창/세션에서 먼저 가져간 요청이라 이번 실행에서는 건너뜁니다.`, 'queued');
-                        continue;
-                    }
-                    keroQueuedUserInputs = freshQueue;
-                }
-                updateKeroQueuedInputUi();
-                const text = safeString(next?.text).trim();
-                if (!text) {
-                    drainSnapshotIds.delete(next.id);
-                    keroQueuedUserInputs = normalizeKeroInputQueue(keroQueuedUserInputs)
-                        .filter((item) => item.id !== next.id);
-                    if (currentKeroPersistentStorageId) {
-                        await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                    }
-                    continue;
-                }
-                addKeroWorkstreamEvent('대기 요청 실행', text.slice(0, 220), 'queued');
-                await addBotMessage(`대기 중이던 요청을 이어서 진행할게: ${text.slice(0, 120)}${text.length > 120 ? '...' : ''}`, { kind: 'queue', sourceInputId: next.id });
-                const modelText = next.steeringApplied === true
-                    ? buildKeroSteeringFollowupInput(text, next)
-                    : text;
-                let stopInputHeartbeat = null;
-                try {
-                    stopInputHeartbeat = startKeroInputQueueHeartbeat(currentKeroPersistentStorageId, next.id);
-                    const handled = await runKeroChatTask(modelText, {
-                        skipUserEcho: true,
-                        fromQueue: true,
-                        queuedInput: next,
-                        visibleUserInput: text,
-                        resumeOnly: next.resumeOnly === true,
-                        retryOnly: next.retryOnly === true,
-                        keroMode: next.keroMode || currentKeroMode,
-                        workTargetMode: next.workTargetMode || currentWorkTargetMode
-                    });
-                    const taskResult = normalizeKeroTaskRunResult(handled);
-                    if (!taskResult.success && taskResult.queueDisposition !== 'attention') {
-                        throw new Error(taskResult.detail || '대기 요청 처리 실패');
-                    }
-                    if (taskResult.queueDisposition === 'attention') {
-                        const attentionDetail = taskResult.detail || getKeroRecoveryMissionLabel(taskResult.status);
-                        addKeroWorkstreamEvent(
-                            '대기 요청 확인 필요',
-                            `${text.slice(0, 160)} · ${attentionDetail}`,
-                            'warning'
-                        );
-                        if (typeof stopInputHeartbeat === 'function') {
-                            await stopInputHeartbeat();
-                            stopInputHeartbeat = null;
-                        }
-                        drainSnapshotIds.delete(next.id);
-                        keroQueuedUserInputs = normalizeKeroInputQueue(keroQueuedUserInputs).map((item) => (
-                            item.id === next.id
-                                ? {
-                                    ...item,
-                                    status: 'failed',
-                                    retryCount: Number(item.retryCount || 0),
-                                    lastTaskStatus: taskResult.status,
-                                    lastError: attentionDetail,
-                                    processingAt: 0,
-                                    heartbeatAt: 0,
-                                    runtimeSessionId: ''
-                                }
-                                : item
-                        ));
-                        if (currentKeroPersistentStorageId) {
-                            await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                        }
-                        updateKeroQueuedInputUi();
-                        break;
-                    }
-                    if (typeof stopInputHeartbeat === 'function') {
-                        await stopInputHeartbeat();
-                        stopInputHeartbeat = null;
-                    }
-                    drainSnapshotIds.delete(next.id);
-                    keroQueuedUserInputs = normalizeKeroInputQueue(keroQueuedUserInputs)
-                        .filter((item) => item.id !== next.id);
-                    if (currentKeroPersistentStorageId) {
-                        await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                    }
-                } catch (error) {
-                    if (typeof stopInputHeartbeat === 'function') {
-                        await stopInputHeartbeat();
-                        stopInputHeartbeat = null;
-                    }
-                    const nextRetryCount = Number(next.retryCount || 0) + 1;
-                    const failedPermanently = nextRetryCount >= 3;
-                    keroQueuedUserInputs = normalizeKeroInputQueue(keroQueuedUserInputs).map((item) => (
-                        item.id === next.id
-                            ? { ...item, status: failedPermanently ? 'failed' : 'queued', retryCount: nextRetryCount, lastError: error?.message || String(error), processingAt: 0, heartbeatAt: 0, runtimeSessionId: '' }
-                            : item
-                    ));
-                    if (currentKeroPersistentStorageId) {
-                        await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                    }
-                    addKeroWorkstreamEvent(
-                        failedPermanently ? '대기 요청 실패 격리' : '대기 요청 보류',
-                        `${text.slice(0, 160)} · ${error?.message || error}${failedPermanently ? ' · 3회 실패로 뒤 요청을 계속 처리합니다.' : ''}`,
-                        'warning'
-                    );
-                    drainSnapshotIds.delete(next.id);
-                    if (!failedPermanently) break;
-                    continue;
-                } finally {
-                    if (typeof stopInputHeartbeat === 'function') {
-                        await stopInputHeartbeat();
-                    }
-                }
-            }
-        } finally {
-            keroProcessingQueuedInput = false;
-            updateKeroQueuedInputUi();
-            if (keroAssistantStateRefreshPending && !keroChatTaskRunning) {
-                await initializeKeroAssistantState();
-            }
-            if (keroQueueDrainAgainRequested && !keroChatTaskRunning) {
-                keroQueueDrainAgainRequested = false;
-                if (getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '') > 0
-                    || getKeroReadyQueuedInputCount(keroQueuedUserInputs, '') > 0) {
-                    addKeroWorkstreamEvent('대기열 재시도 이어가기', '재시도로 다시 올라온 대기 요청을 이어서 처리합니다.', 'queued');
-                    setTimeout(() => {
-                        drainKeroQueuedInputs().catch((error) => Logger.warn('Kero queued retry drain failed:', error?.message || error));
-                    }, 80);
-                }
-            }
-        }
-    }
-
-    async function resumeKeroStoredActionJobs(options = {}) {
-        const storageId = currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
-        if (!storageId || !currentKeroMission) return { handled: false, resumed: false, success: false };
-        const missionId = currentKeroMission.id || '';
-        const resumeProgressOptions = resolveKeroActionProgressOptions(options);
-        const resumeSignal = options.signal || null;
-        const isResumeAbortRequested = () => {
-            if (resumeSignal?.aborted) return true;
-            if (typeof options.abortCheck !== 'function') return false;
-            try {
-                return options.abortCheck() === true;
-            } catch (error) {
-                if (isSvbAbortError(error) || resumeSignal?.aborted) return true;
-                throw error;
-            }
-        };
-        const throwIfResumeAbortRequested = () => {
-            throwIfSvbAborted(resumeSignal, '미션 재개가 사용자 요청으로 중단되었습니다.');
-            if (isResumeAbortRequested()) {
-                throw createSvbAbortError('미션 재개가 사용자 요청으로 중단되었습니다.');
-            }
-        };
-        const isResumeMissionCurrent = () => isCurrentKeroMissionContext(missionId, storageId);
-        throwIfResumeAbortRequested();
-        const recoveredActionJobs = await recoverOrphanedKeroActionJobs(storageId, missionId);
-        throwIfResumeAbortRequested();
-        if (recoveredActionJobs.recovered > 0) {
-            addKeroWorkstreamEvent('재개 전 액션 job 복구', `오래 실행 중으로 남아 있던 액션 job ${recoveredActionJobs.recovered}개를 중단 감지 상태로 정리했습니다.`, 'queued', resumeProgressOptions);
-        }
-        const reconciledBulkWarnings = await reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId);
-        throwIfResumeAbortRequested();
-        if (reconciledBulkWarnings.reconciled > 0) {
-            addKeroWorkstreamEvent('재개 전 대량 생성 경고 정리', `남은 범위가 없는 대량 생성 warning job ${reconciledBulkWarnings.reconciled}개를 완료로 정리했습니다.`, 'verified', resumeProgressOptions);
-        }
-        const retryWarnings = options.retryWarnings === true;
-        const bulkOnly = options.bulkOnly === true;
-        const autoBulkResume = options.autoBulkResume === true;
-        const silentResume = options.silent === true || autoBulkResume;
-        const allJobs = bulkOnly ? [] : await getResumableKeroActionJobs(storageId, missionId, { includeWarnings: true });
-        const warningJobs = allJobs.filter((job) => safeString(job.status || 'queued') === 'warning');
-        const replayableWarningJobs = retryWarnings ? warningJobs.filter(isKeroWarningActionJobSafeReplay) : [];
-        const blockedWarningJobs = retryWarnings
-            ? warningJobs.filter((job) => !isKeroWarningActionJobSafeReplay(job))
-            : warningJobs;
-        const jobs = retryWarnings
-            ? allJobs.filter((job) => safeString(job.status || 'queued') !== 'warning' || isKeroWarningActionJobSafeReplay(job))
-            : allJobs.filter((job) => safeString(job.status || 'queued') !== 'warning');
-        const resumableBulkJobs = (await getResumableKeroBulkCreateJobs(storageId, missionId))
-            .filter((job) => !autoBulkResume || Math.max(0, Math.floor(Number(job.autoResumeCount) || 0)) < KERO_BULK_AUTO_RESUME_MAX_ROUNDS);
-        const warningBulkSourceIdsByBulkId = new Map();
-        if (!retryWarnings && warningJobs.length && resumableBulkJobs.length) {
-            warningJobs.forEach((job) => {
-                const action = job?.action || {};
-                if (safeString(action?.type) !== 'bulk_create') return;
-                const matchedBulkJob = resumableBulkJobs.find((bulkJob) => isSameKeroBulkCreateRequest(action, bulkJob));
-                const bulkId = safeString(matchedBulkJob?.id);
-                const sourceId = safeString(job?.id || job?.actionJobId || job?.stepId);
-                if (!bulkId || !sourceId) return;
-                const sourceIds = warningBulkSourceIdsByBulkId.get(bulkId) || [];
-                sourceIds.push(sourceId);
-                warningBulkSourceIdsByBulkId.set(bulkId, sourceIds);
-            });
-        }
-        const actions = jobs
-            .map((job) => {
-                const action = makeCloneableData(job.action || {});
-                action.stepId = action.stepId || job.stepId || job.id;
-                action.actionJobId = action.actionJobId || job.id;
-                action.jobId = action.jobId || job.id;
-                action._sourceActionJobId = job.id;
-                const matchedBulkJob = safeString(action.type) === 'bulk_create'
-                    ? resumableBulkJobs.find((bulkJob) => isSameKeroBulkCreateRequest(action, bulkJob))
-                    : null;
-                if (matchedBulkJob?.id) {
-                    action.bulkJobId = matchedBulkJob.id;
-                    action.jobId = matchedBulkJob.id;
-                }
-                return action;
-            })
-            .filter((action) => action && typeof action === 'object' && action.type && action.target);
-        const actionBulkIds = new Set(actions.map((action) => safeString(action.bulkJobId || action.jobId || action.actionJobId || action.stepId)).filter(Boolean));
-        const bulkJobs = resumableBulkJobs
-            .filter((job) => !actionBulkIds.has(safeString(job.id)));
-        const bulkActions = bulkJobs.map(buildKeroBulkCreateResumeAction);
-        if (autoBulkResume) {
-            bulkActions.forEach((action) => {
-                action.autoBulkResume = true;
-                action.silent = true;
-            });
-        }
-        const resumeActions = bulkOnly ? bulkActions : [...actions, ...bulkActions];
-        if (!isResumeMissionCurrent()) {
-            await markKeroActionsStale(resumeActions, missionId, storageId, '재개 준비 중 현재 미션이 바뀌어 이전 재개 액션을 실행하지 않았습니다.');
-            return { handled: true, resumed: false, success: false, stale: true };
-        }
-        if (!resumeActions.length) {
-            if (blockedWarningJobs.length) {
-                if (!isResumeMissionCurrent()) {
-                    return { handled: true, resumed: false, success: false, stale: true };
-                }
-                const detail = retryWarnings
-                    ? `검증 경고 상태 작업 ${blockedWarningJobs.length}개는 같은 저장 작업을 반복하면 롤백/중복 적용 위험이 있어 자동 재실행하지 않았습니다. 현재 상태를 확인한 뒤 새 요청으로 이어가세요.`
-                    : `검증 경고 상태 작업 ${blockedWarningJobs.length}개는 일반 계속 진행에서 자동 재실행하지 않았습니다. 같은 저장 job을 바로 반복하지 않고 현재 상태 확인을 우선합니다.`;
-                updateKeroMissionState({ status: 'interrupted', resumedAt: new Date().toISOString() }, {
-                    title: '검증 경고 보류',
-                    detail,
-                    status: 'warning'
-                });
-                addKeroWorkstreamEvent('검증 경고 보류', detail, 'warning', resumeProgressOptions);
-                if (!silentResume) {
-                    await addBotMessage(`⚠️ ${detail}`);
-                }
-                const jobSummary = await verifyKeroActionJobsForMission(storageId, missionId);
-                const bulkSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-                return { handled: true, resumed: false, skippedWarnings: blockedWarningJobs.length, jobSummary, bulkSummary, success: false };
-            }
-            const jobSummary = await summarizeKeroActionJobsForMission(storageId, missionId);
-            if (Number(jobSummary.pending || 0) > 0) {
-                if (!isResumeMissionCurrent()) {
-                    return { handled: true, resumed: false, success: false, stale: true };
-                }
-                const detail = `최근 실행 중으로 기록된 액션 job ${jobSummary.pending}개가 아직 정리 대기 상태입니다. 중복 적용을 막기 위해 바로 재실행하지 않았습니다. 잠시 후 "계속 진행"을 다시 요청하면 멈춘 job을 확인해서 이어갑니다.`;
-                updateKeroMissionState({ status: 'interrupted', resumedAt: new Date().toISOString(), lastError: detail }, {
-                    title: '최근 실행 job 대기',
-                    detail,
-                    status: 'warning'
-                });
-                addKeroWorkstreamEvent('최근 실행 job 대기', detail, 'warning', resumeProgressOptions);
-                if (!silentResume) {
-                    await addBotMessage(`⚠️ ${detail}`);
-                }
-                const bulkSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-                return { handled: true, resumed: false, jobSummary, bulkSummary, success: false };
-            }
-            return { handled: false, resumed: false, success: false };
-        }
-        for (const action of actions) {
-            const sourceId = safeString(action._sourceActionJobId);
-            const migratedId = safeString(action.bulkJobId || action.jobId);
-            if (sourceId && migratedId && sourceId !== migratedId) {
-                await updateKeroActionJob(storageId, sourceId, {
-                    status: 'superseded',
-                    finishedAt: new Date().toISOString(),
-                    lastError: `bulk_create jobId를 ${migratedId}로 이관했습니다.`
-                }).catch((error) => Logger.warn('Kero legacy bulk action job migration failed:', error?.message || error));
-            }
-        }
-        for (const action of bulkActions) {
-            const bulkId = safeString(action.bulkJobId || action.jobId || action.actionJobId || action.stepId);
-            const sourceIds = warningBulkSourceIdsByBulkId.get(bulkId) || [];
-            for (const sourceId of sourceIds) {
-                await updateKeroActionJob(storageId, sourceId, {
-                    status: 'superseded',
-                    finishedAt: new Date().toISOString(),
-                    lastError: `bulk_create jobId ${bulkId}를 완료 범위 보존 재개 작업으로 이관했습니다.`
-                }).catch((error) => Logger.warn('Kero warning bulk action job migration failed:', error?.message || error));
-            }
-        }
-        if (!isResumeMissionCurrent()) {
-            await markKeroActionsStale(resumeActions, missionId, storageId, '재개 실행 직전 현재 미션이 바뀌어 이전 재개 액션을 실행하지 않았습니다.');
-            return { handled: true, resumed: false, success: false, stale: true };
-        }
-        updateKeroMissionState({ status: 'running', resumedAt: new Date().toISOString() }, {
-            title: '미션 재개',
-            detail: `${actions.length}개 미완료 액션, ${bulkActions.length}개 대량 생성 job을 다시 실행합니다.${blockedWarningJobs.length ? ` 검증 경고 ${blockedWarningJobs.length}개는 중복/롤백 위험 때문에 직접 재실행하지 않았습니다.` : ''}${replayableWarningJobs.length ? ` 안전 재개 가능한 경고 ${replayableWarningJobs.length}개만 재실행합니다.` : ''}`,
-            status: 'running'
-        });
-        if (!silentResume) {
-            await addBotMessage(
-                `중단된 미션에서 미완료 작업 ${resumeActions.length}개를 다시 실행할게.`
-                + (bulkActions.length ? ` 대량 생성 ${bulkActions.length}개는 완료 범위를 건너뛰고 이어갑니다.` : '')
-                + (blockedWarningJobs.length ? `\n⚠️ 검증 경고 ${blockedWarningJobs.length}개는 같은 작업 반복을 막기 위해 직접 재실행하지 않았어. 현재 상태를 기준으로 새 요청으로 이어가야 해.` : '')
-                + (replayableWarningJobs.length ? `\n안전 재개 가능한 경고 ${replayableWarningJobs.length}개만 다시 실행합니다.` : '')
-            );
-        }
-        await handleKeroActionRequests(resumeActions, { missionId, storageId, workTargetMode: currentWorkTargetMode, progressOptions: resumeProgressOptions, signal: resumeSignal, abortCheck: isResumeAbortRequested });
-        if (!isResumeMissionCurrent()) {
-            return { handled: true, resumed: true, success: false, stale: true };
-        }
-        await reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId);
-        const jobSummary = await verifyKeroActionJobsForMission(storageId, missionId);
-        const bulkSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-        if (bulkSummary.remaining || bulkSummary.failed) {
-            addKeroWorkstreamEvent(
-                '대량 작업 잔여 확인',
-                `대량 생성 job ${bulkSummary.total}개 · 남음 ${bulkSummary.remaining}개 · 실패/재시도 ${bulkSummary.failed}개`,
-                'warning',
-                resumeProgressOptions
-            );
-        }
-        return {
-            handled: true,
-            resumed: true,
-            skippedWarnings: blockedWarningJobs.length,
-            jobSummary,
-            bulkSummary,
-            success: !(jobSummary.failed || jobSummary.warning || jobSummary.pending || jobSummary.interrupted || jobSummary.blocked || bulkSummary.remaining || bulkSummary.failed)
-        };
-    }
-
-    function getKeroBulkRemainderCount(summary = {}) {
-        const remaining = Math.max(0, Math.floor(Number(summary?.remaining) || 0));
-        const failed = Math.max(0, Math.floor(Number(summary?.failed) || 0));
-        return remaining > 0 ? remaining : failed;
-    }
-
-    function hasKeroBulkRemainder(summary = {}) {
-        return getKeroBulkRemainderCount(summary) > 0;
-    }
-
-    function hasKeroBulkNoProgressRetryBudget(jobs = []) {
-        return ensureArray(jobs).some((job) => {
-            const failedRanges = normalizeKeroBulkFailedRanges(job?.failedRanges, job?.completedRanges);
-            return failedRanges.some((range) =>
-                Math.max(0, Math.floor(Number(range.retryCount || 0))) < KERO_BULK_NO_PROGRESS_RETRY_LIMIT
-            );
-        });
-    }
-
-    async function getKeroMissionResumeAvailability(storageId, missionId = '') {
-        const actionSummary = await summarizeKeroActionJobsForMission(storageId, missionId);
-        const bulkSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-        const readyQueue = getKeroReadyQueuedInputCount(keroQueuedUserInputs, missionId);
-        const attentionQueue = getKeroAttentionInputCount(keroQueuedUserInputs, missionId);
-        const failedQueue = getKeroHardFailedInputCount(keroQueuedUserInputs, missionId);
-        const retryQueue = attentionQueue + failedQueue;
-        const hasActionWork = Number(actionSummary.failed || 0) > 0
-            || Number(actionSummary.pending || 0) > 0
-            || Number(actionSummary.interrupted || 0) > 0
-            || Number(actionSummary.blocked || 0) > 0;
-        const hasBulkWork = Number(bulkSummary.remaining || 0) > 0
-            || Number(bulkSummary.failed || 0) > 0;
-        const hasQueueWork = readyQueue > 0;
-        const hasRetryQueueWork = retryQueue > 0;
-        const hasWarningWork = Number(actionSummary.warning || 0) > 0;
-        return {
-            actionSummary,
-            bulkSummary,
-            readyQueue,
-            attentionQueue,
-            failedQueue,
-            retryQueue,
-            hasActionWork,
-            hasBulkWork,
-            hasQueueWork,
-            hasRetryQueueWork,
-            hasWarningWork,
-            hasResumableWork: hasActionWork || hasBulkWork || hasQueueWork
-        };
-    }
-
-    function getKeroBulkAutoResumeRuntimeKey() {
-        return `${safeString(currentKeroPersistentStorageId || currentKeroMission?.storageId || 'unknown')}::${safeString(currentKeroMission?.id || 'mission')}`;
-    }
-
-    async function autoResumeKeroBulkJobsUntilSettled(initialSummary = {}, options = {}) {
-        const storageId = currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
-        if (!storageId || !currentKeroMission || keroBulkAutoResumeRunning) {
-            return { resumed: false, rounds: 0, bulkSummary: initialSummary, reason: 'busy_or_missing_context' };
-        }
-        const missionId = safeString(currentKeroMission.id || '');
-        const autoResumeProgressOptions = resolveKeroActionProgressOptions(options);
-        const autoResumeSignal = options.signal || null;
-        const isAutoResumeAbortRequested = () => {
-            if (autoResumeSignal?.aborted) return true;
-            if (typeof options.abortCheck !== 'function') return false;
-            try {
-                return options.abortCheck() === true;
-            } catch (error) {
-                if (isSvbAbortError(error) || autoResumeSignal?.aborted) return true;
-                throw error;
-            }
-        };
-        const throwIfAutoResumeAbortRequested = () => {
-            throwIfSvbAborted(autoResumeSignal, '대량 작업 자동 이어가기가 사용자 요청으로 중단되었습니다.');
-            if (isAutoResumeAbortRequested()) {
-                throw createSvbAbortError('대량 작업 자동 이어가기가 사용자 요청으로 중단되었습니다.');
-            }
-        };
-        let bulkSummary = initialSummary;
-        if (!hasKeroBulkRemainder(bulkSummary)) {
-            return { resumed: false, rounds: 0, bulkSummary, reason: 'no_remainder' };
-        }
-        throwIfAutoResumeAbortRequested();
-
-        const runtimeKey = getKeroBulkAutoResumeRuntimeKey();
-        keroBulkAutoResumeRunning = true;
-        let rounds = 0;
-        let lastRemainder = getKeroBulkRemainderCount(bulkSummary);
-        let backgroundId = null;
-        try {
-            backgroundId = createKeroBackgroundJob('대량 작업 자동 이어가기', `${lastRemainder}개 잔여`, { silent: true });
-        } catch (error) {
-            Logger.warn('Kero bulk auto-resume background job failed:', error?.message || error);
-        }
-
-        try {
-            while (hasKeroBulkRemainder(bulkSummary)) {
-                throwIfAutoResumeAbortRequested();
-                if (!isCurrentKeroMissionContext(missionId, storageId)) {
-                    return { resumed: rounds > 0, rounds, bulkSummary, reason: 'stale_mission' };
-                }
-                const runtimeRounds = Math.max(0, Math.floor(Number(keroBulkAutoResumeRounds[runtimeKey]) || 0));
-                if (runtimeRounds >= KERO_BULK_AUTO_RESUME_MAX_ROUNDS) {
-                    addKeroWorkstreamEvent('대량 작업 자동 이어가기 보류', `자동 재개 ${KERO_BULK_AUTO_RESUME_MAX_ROUNDS}회 이후에도 잔여 ${getKeroBulkRemainderCount(bulkSummary)}개가 남아 수동 확인으로 전환합니다.`, 'blocked', autoResumeProgressOptions);
-                    return { resumed: rounds > 0, rounds, bulkSummary, reason: 'max_rounds' };
-                }
-
-                const resumableJobs = await getResumableKeroBulkCreateJobs(storageId, missionId);
-                const autoResumableJobs = resumableJobs.filter((job) => Math.max(0, Math.floor(Number(job.autoResumeCount) || 0)) < KERO_BULK_AUTO_RESUME_MAX_ROUNDS);
-                if (!autoResumableJobs.length) {
-                    return { resumed: rounds > 0, rounds, bulkSummary, reason: 'no_auto_resumable_jobs' };
-                }
-
-                rounds += 1;
-                keroBulkAutoResumeRounds[runtimeKey] = runtimeRounds + 1;
-                const remainder = getKeroBulkRemainderCount(bulkSummary);
-                addKeroWorkstreamEvent('대량 작업 자동 이어가기', `${rounds}회차 · 잔여 ${remainder}개를 완료 범위 보존 상태로 이어갑니다.`, 'retry', autoResumeProgressOptions);
-                if (backgroundId) {
-                    updateKeroBackgroundJob(backgroundId, { detail: `${rounds}회차 · ${remainder}개 잔여`, silent: true });
-                }
-
-                if (rounds > 1) {
-                    await sleepSvbWithAbort(KERO_BULK_AUTO_RESUME_DELAY_MS, autoResumeSignal, '대량 작업 자동 이어가기 대기');
-                }
-                throwIfAutoResumeAbortRequested();
-                if (!isCurrentKeroMissionContext(missionId, storageId)) {
-                    return { resumed: rounds > 0, rounds, bulkSummary, reason: 'stale_mission' };
-                }
-                const resumeResult = await resumeKeroStoredActionJobs({ bulkOnly: true, autoBulkResume: true, retryWarnings: false, silent: true, progressOptions: autoResumeProgressOptions, signal: autoResumeSignal, abortCheck: isAutoResumeAbortRequested });
-                await reconcileCompletedKeroBulkWarningActionJobs(storageId, missionId);
-                bulkSummary = resumeResult?.bulkSummary || await summarizeResumableKeroBulkCreateJobs(storageId, missionId);
-                const nextRemainder = getKeroBulkRemainderCount(bulkSummary);
-                if (!nextRemainder) {
-                    addKeroWorkstreamEvent('대량 작업 자동 이어가기 완료', `${rounds}회차에 남은 대량 생성 범위를 모두 처리했습니다.`, 'done', autoResumeProgressOptions);
-                    return { resumed: true, rounds, bulkSummary, reason: 'done' };
-                }
-                if (nextRemainder >= lastRemainder) {
-                    const latestResumableJobs = await getResumableKeroBulkCreateJobs(storageId, missionId).catch(() => []);
-                    const hasRetryBudget = hasKeroBulkNoProgressRetryBudget(latestResumableJobs);
-                    if (hasRetryBudget && rounds < KERO_BULK_NO_PROGRESS_RETRY_LIMIT) {
-                        addKeroWorkstreamEvent(
-                            '대량 작업 실패 범위 재시도',
-                            `잔여 ${lastRemainder}개 → ${nextRemainder}개로 줄지 않았지만 실패 범위 재시도 여유가 남아 ${rounds + 1}회차를 계속합니다.`,
-                            'retry',
-                            autoResumeProgressOptions
-                        );
-                        await sleepSvbWithAbort(KERO_BULK_AUTO_RESUME_DELAY_MS, autoResumeSignal, '대량 작업 실패 범위 재시도 대기');
-                        lastRemainder = nextRemainder;
-                        continue;
-                    }
-                    addKeroWorkstreamEvent('대량 작업 자동 이어가기 정지', `잔여 ${lastRemainder}개 → ${nextRemainder}개로 줄지 않아 같은 실패 반복을 막고 수동 확인으로 전환합니다.`, 'warning', autoResumeProgressOptions);
-                    return { resumed: true, rounds, bulkSummary, reason: 'no_progress' };
-                }
-                lastRemainder = nextRemainder;
-            }
-            return { resumed: rounds > 0, rounds, bulkSummary, reason: 'done' };
-        } catch (error) {
-            if (isSvbAbortError(error) || autoResumeSignal?.aborted || isAutoResumeAbortRequested()) {
-                throw error;
-            }
-            Logger.warn('Kero bulk auto-resume failed:', error?.message || error);
-            addKeroWorkstreamEvent('대량 작업 자동 이어가기 오류', error?.message || String(error), 'warning', autoResumeProgressOptions);
-            return { resumed: rounds > 0, rounds, bulkSummary, reason: error?.message || String(error), error };
-        } finally {
-            keroBulkAutoResumeRunning = false;
-            if (backgroundId) {
-                const latestSummary = await summarizeResumableKeroBulkCreateJobs(storageId, missionId).catch(() => bulkSummary);
-                const remainingCount = Math.max(0, Math.floor(Number(latestSummary?.remaining) || 0));
-                const failedCount = Math.max(0, Math.floor(Number(latestSummary?.failed) || 0));
-                const remaining = remainingCount + failedCount;
-                const finalDetail = remaining
-                    ? `대량 생성 남음 ${remainingCount}개 · 실패/재시도 ${failedCount}개`
-                    : '대량 생성 자동 이어가기 완료';
-                finishKeroBackgroundJob(backgroundId, remaining ? 'warning' : 'done', finalDetail, { silent: true });
-            }
-        }
+        await addBotMessage('작업 중 추가 입력은 자동 후속 실행/재시도로 넘기지 않고 현재 작업 참고 메모로만 반영합니다.', { kind: 'queue', sourceInputId: inputId });
     }
 
     async function runKeroChatTask(userInput, options = {}) {
@@ -36952,176 +32764,26 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             };
         };
         let actionJobSummary = null;
-        let bulkJobSummary = null;
-        let bulkAutoResumeResult = null;
-        let bulkAutoResumeNotice = '';
         if (isWorkMode && currentKeroMission) {
             reconcileKeroOrphanedApprovalRequiredSteps('chat_task_preflight');
         }
-        const retryRequest = isWorkMode && isKeroExplicitRetryRequest(visibleUserInput);
-        const resumeRequest = isWorkMode && (isKeroMissionResumeRequest(visibleUserInput) || retryRequest);
         const currentMissionStatus = safeString(currentKeroMission?.status || '');
         const currentMissionId = safeString(currentKeroMission?.id || '');
         const currentMissionStorageId = safeString(currentKeroPersistentStorageId || currentKeroMission?.storageId || '');
-        const controlResumeRouting = isWorkMode
-            ? resolveKeroControlOnlyResumeRouting(visibleUserInput, currentKeroMission, {
-                resumeRequest,
-                resumeOnly: options.resumeOnly === true,
-                retryOnly: options.retryOnly === true
-            })
-            : { controlOnly: false, blocked: false, objective: '' };
-        const controlOnlyResumeRequest = !!controlResumeRouting.controlOnly;
-        const currentMissionObjective = safeString(controlResumeRouting.objective || getKeroMissionObjectiveText(currentKeroMission));
+        const controlOnlyResumeRequest = false;
+        const currentMissionObjective = getKeroMissionObjectiveText(currentKeroMission);
         const startNowFollowupObjective = isWorkMode
-            && !controlOnlyResumeRequest
             && isKeroStartNowFollowupRequest(visibleUserInput)
             && currentMissionObjective
             ? currentMissionObjective
             : '';
         const missionStartInput = approvedPlanningGoal?.objective || startNowFollowupObjective || visibleUserInput;
-        const currentMissionSettled = ['done', 'cancelled'].includes(currentMissionStatus);
-        const settledMissionRetryQueueCount = retryRequest && currentKeroMission && currentMissionSettled
-            ? getKeroFailedInputCount(keroQueuedUserInputs, currentMissionId)
-            : 0;
-        const shouldRetryQueueForSettledMission = Boolean(
-            retryRequest
-            && currentKeroMission
-            && currentMissionSettled
-            && settledMissionRetryQueueCount > 0
-            && currentKeroPersistentStorageId
-        );
-        let resumeAvailability = null;
-        let settledMissionRetryRequeued = 0;
-        let retryFailedQueueRequeued = 0;
-        if (resumeRequest && currentKeroMission && !['done', 'cancelled'].includes(currentMissionStatus)) {
-            try {
-                await reconcileCompletedKeroBulkWarningActionJobs(currentMissionStorageId, currentMissionId);
-                resumeAvailability = await getKeroMissionResumeAvailability(currentMissionStorageId, currentMissionId);
-            } catch (error) {
-                return await cleanupKeroChatTaskSetupFailure(error, 'resume-preflight');
-            }
-        }
-        const hasNormallyResumableMissionStatus = ['interrupted', 'error', 'blocked', 'running'].includes(currentMissionStatus);
-        const hasWarningResumeWork = currentMissionStatus === 'warning'
-            && (resumeAvailability?.hasResumableWork || (retryRequest && (resumeAvailability?.hasWarningWork || resumeAvailability?.hasRetryQueueWork)));
-        const hasStoredResumeWork = Boolean(
-            resumeAvailability?.hasResumableWork
-            || (retryRequest && (resumeAvailability?.hasWarningWork || resumeAvailability?.hasRetryQueueWork))
-        );
-        const shouldResumeMission = Boolean(
-            resumeRequest
-            && currentKeroMission
-            && !['done', 'cancelled'].includes(currentMissionStatus)
-            && ((hasNormallyResumableMissionStatus && hasStoredResumeWork) || hasWarningResumeWork)
-        );
-        const shouldRetryWarningJobs = shouldResumeMission && retryRequest;
-        const shouldReportActiveMissionNoStoredWork = Boolean(
-            resumeRequest
-            && currentKeroMission
-            && !shouldResumeMission
-            && !shouldRetryQueueForSettledMission
-            && hasNormallyResumableMissionStatus
-            && (!currentMissionStorageId || !resumeAvailability || !hasStoredResumeWork)
-        );
-        const shouldReportSettledMissionNoWork = Boolean(
-            resumeRequest
-            && currentKeroMission
-            && !shouldResumeMission
-            && !shouldRetryQueueForSettledMission
-            && (['done', 'cancelled'].includes(currentMissionStatus)
-                || (currentMissionStatus === 'warning' && resumeAvailability && !resumeAvailability.hasResumableWork && !(retryRequest && resumeAvailability.hasWarningWork)))
-        );
-        const hasQueueWithoutMission = getKeroReadyQueuedInputCount(keroQueuedUserInputs, '') > 0
-            || getKeroFailedInputCount(keroQueuedUserInputs, '') > 0;
-        const shouldHandleQueueWithoutMission = isWorkMode
-            && !shouldResumeMission
-            && !currentKeroMission
-            && isKeroMissionResumeRequest(visibleUserInput)
-            && currentKeroPersistentStorageId
-            && hasQueueWithoutMission;
-        const shouldRetryFailedQueueWithoutMission = isWorkMode
-            && !shouldResumeMission
-            && !currentKeroMission
-            && isKeroExplicitRetryRequest(visibleUserInput)
-            && getKeroFailedInputCount(keroQueuedUserInputs, '') > 0
-            && currentKeroPersistentStorageId;
-        const shouldReportNoRetryableWorkWithoutMission = Boolean(
-            isWorkMode
-            && !currentKeroMission
-            && resumeRequest
-            && !hasQueueWithoutMission
-        );
-        let retryFailedQueueNotice = '';
         if (backgroundJobId) currentKeroRequestJobId = backgroundJobId;
-        if (shouldRetryQueueForSettledMission) {
-            const attentionRetryCount = getKeroAttentionInputCount(keroQueuedUserInputs, currentMissionId);
-            const hardFailedRetryCount = getKeroHardFailedInputCount(keroQueuedUserInputs, currentMissionId);
-            const requeuedInputs = requeueFailedKeroInputQueue(keroQueuedUserInputs, currentMissionId);
-            if (requeuedInputs.requeued > 0) {
-                settledMissionRetryRequeued = requeuedInputs.requeued;
-                keroQueueDrainAgainRequested = true;
-                keroQueuedUserInputs = requeuedInputs.queue;
-                try {
-                    await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                } catch (error) {
-                    return await cleanupKeroChatTaskSetupFailure(error, 'settled-mission-requeue-save');
-                }
-                const retryParts = [];
-                if (attentionRetryCount > 0) retryParts.push(`확인필요 ${attentionRetryCount}개`);
-                if (hardFailedRetryCount > 0) retryParts.push(`실패 ${hardFailedRetryCount}개`);
-                retryFailedQueueNotice = `완료된 미션에 남아 있던 ${retryParts.join(', ') || `대기 요청 ${requeuedInputs.requeued}개`}를 다시 대기열로 올렸습니다.`;
-                addKeroWorkstreamEvent('대기 요청 재시도', retryFailedQueueNotice, 'queued', taskProgressOptions);
-            }
-        }
-        if (shouldRetryFailedQueueWithoutMission) {
-            const attentionRetryCount = getKeroAttentionInputCount(keroQueuedUserInputs, '');
-            const hardFailedRetryCount = getKeroHardFailedInputCount(keroQueuedUserInputs, '');
-            const requeuedInputs = requeueFailedKeroInputQueue(keroQueuedUserInputs, '');
-            if (requeuedInputs.requeued > 0) {
-                retryFailedQueueRequeued = requeuedInputs.requeued;
-                keroQueueDrainAgainRequested = true;
-                keroQueuedUserInputs = requeuedInputs.queue;
-                try {
-                    await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                } catch (error) {
-                    return await cleanupKeroChatTaskSetupFailure(error, 'orphan-queue-retry-save');
-                }
-                const retryParts = [];
-                if (attentionRetryCount > 0) retryParts.push(`확인필요 ${attentionRetryCount}개`);
-                if (hardFailedRetryCount > 0) retryParts.push(`실패 ${hardFailedRetryCount}개`);
-                retryFailedQueueNotice = `미션은 없지만 ${retryParts.join(', ') || `대기 요청 ${requeuedInputs.requeued}개`}를 다시 대기열로 올렸습니다.`;
-                addKeroWorkstreamEvent('대기 요청 재시도', retryFailedQueueNotice, 'queued', taskProgressOptions);
-            }
-        }
-        if (isWorkMode && !controlOnlyResumeRequest && !shouldResumeMission && !shouldRetryQueueForSettledMission && !shouldRetryFailedQueueWithoutMission && !shouldHandleQueueWithoutMission && !shouldReportActiveMissionNoStoredWork && !shouldReportSettledMissionNoWork && !shouldReportNoRetryableWorkWithoutMission) {
+        if (isWorkMode) {
             try {
                 await startKeroMission(missionStartInput, { ...options, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode });
             } catch (error) {
                 Logger.warn('Kero mission start failed:', error?.message || error);
-            }
-        } else if (shouldResumeMission) {
-            updateKeroMissionState({ status: 'running', resumedAt: new Date().toISOString() }, {
-                title: '미션 이어가기 요청',
-                detail: visibleUserInput.slice(0, 180),
-                status: 'running'
-            });
-            if (shouldRetryWarningJobs && currentKeroPersistentStorageId) {
-                const attentionRetryCount = getKeroAttentionInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                const hardFailedRetryCount = getKeroHardFailedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                const requeuedInputs = requeueFailedKeroInputQueue(keroQueuedUserInputs, currentKeroMission?.id || '');
-                if (requeuedInputs.requeued > 0) {
-                    keroQueueDrainAgainRequested = true;
-                    keroQueuedUserInputs = requeuedInputs.queue;
-                    try {
-                        await saveKeroInputQueue(currentKeroPersistentStorageId, keroQueuedUserInputs);
-                    } catch (error) {
-                        return await cleanupKeroChatTaskSetupFailure(error, 'warning-retry-requeue-save');
-                    }
-                    const retryParts = [];
-                    if (attentionRetryCount > 0) retryParts.push(`확인필요 ${attentionRetryCount}개`);
-                    if (hardFailedRetryCount > 0) retryParts.push(`실패 ${hardFailedRetryCount}개`);
-                    addKeroWorkstreamEvent('대기 요청 재시도', `${retryParts.join(', ') || `대기 요청 ${requeuedInputs.requeued}개`}를 다시 대기열로 올렸습니다.`, 'queued', taskProgressOptions);
-                }
             }
         }
         const taskMissionId = isWorkMode ? safeString(currentKeroMission?.id || '') : '';
@@ -37164,257 +32826,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             addLoadingMessage({ mode: taskKeroMode });
 
             updateKeroProgress(1, 4, 'RisuAI 자료와 참고 자료를 읽는 중...', taskProgressOptions);
-            if (shouldRetryQueueForSettledMission) {
-                removeLoadingMessage();
-                const queuedInputCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentMissionId);
-                const detail = retryFailedQueueNotice || `완료된 미션에 남아 있던 확인필요/실패 대기 요청을 다시 대기열로 올렸습니다.`;
-                await addBotMessage(`${detail}${queuedInputCount ? ` 대기 ${queuedInputCount}개를 이어서 처리합니다.` : ''}`);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, settledMissionRetryRequeued > 0 ? 'done' : 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: settledMissionRetryRequeued > 0,
-                    status: settledMissionRetryRequeued > 0 ? 'done' : 'warning',
-                    queueDisposition: settledMissionRetryRequeued > 0 ? 'done' : 'attention',
-                    detail
-                };
-            }
-            if (shouldReportNoRetryableWorkWithoutMission) {
-                removeLoadingMessage();
-                const detail = retryRequest
-                    ? '재시도할 확인필요/실패 작업이나 대기 요청이 없습니다.'
-                    : '이어갈 작업이나 대기 요청이 없습니다. 새 작업을 원하면 구체적으로 요청해주세요.';
-                addKeroWorkstreamEvent('재개할 작업 없음', detail, 'warning', taskProgressOptions);
-                await addBotMessage(detail);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: true,
-                    status: 'done',
-                    queueDisposition: 'done',
-                    detail
-                };
-            }
-            if (shouldReportActiveMissionNoStoredWork) {
-                removeLoadingMessage();
-                const detail = retryRequest
-                    ? '이전 미션은 중단 상태지만 다시 실행할 저장된 액션, 대량 생성 job, 확인필요/실패 대기 요청이 없습니다. 같은 목표를 새로 시작하려면 작업 내용을 다시 구체적으로 요청해주세요.'
-                    : '이전 미션은 남아 있지만 이어갈 저장 작업이 없습니다. 원래 큰 요청을 그대로 다시 호출하면 같은 타임아웃이 반복될 수 있어 중단했습니다. 새 작업 내용을 구체적으로 요청해주세요.';
-                updateKeroMissionState({ status: 'interrupted', lastError: detail, resumedAt: new Date().toISOString() }, {
-                    title: '재개할 저장 작업 없음',
-                    detail,
-                    status: 'warning'
-                });
-                addKeroWorkstreamEvent('재개할 저장 작업 없음', detail, 'warning', taskProgressOptions);
-                await addBotMessage(detail);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: true,
-                    status: 'done',
-                    queueDisposition: 'done',
-                    detail
-                };
-            }
-            if (shouldReportSettledMissionNoWork) {
-                removeLoadingMessage();
-                const attentionInputCount = getKeroAttentionInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                const hardFailedInputCount = getKeroHardFailedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                const retryQueueDetail = attentionInputCount || hardFailedInputCount
-                    ? ` 확인필요 대기 요청 ${attentionInputCount}개, 실패 대기 요청 ${hardFailedInputCount}개는 "재시도"라고 말하면 다시 대기열로 올립니다.`
-                    : '';
-                const detail = currentMissionStatus === 'warning'
-                    ? `이전 작업은 확인 필요 상태지만 "계속 진행"으로 다시 실행할 남은 액션이나 대량 생성 범위는 없습니다.${retryQueueDetail} 경고 작업 자체를 다시 실행하려면 "재시도" 또는 "다시 해봐"라고 말해주세요.`
-                    : '이전 작업은 이미 완료되어 다시 실행할 남은 작업이 없습니다. 새 작업을 원하면 구체적으로 요청해주세요.';
-                addKeroWorkstreamEvent('재개할 작업 없음', detail, currentMissionStatus === 'warning' ? 'warning' : 'done', taskProgressOptions);
-                await addBotMessage(detail);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, currentMissionStatus === 'warning' ? 'warning' : 'done', detail);
-                }
-                backgroundJobClosed = true;
-                const settledStatus = currentMissionStatus === 'warning' ? 'warning' : 'done';
-                return {
-                    handled: true,
-                    success: settledStatus === 'done',
-                    status: settledStatus,
-                    queueDisposition: settledStatus === 'done' ? 'done' : 'attention',
-                    detail
-                };
-            }
-            if (shouldRetryFailedQueueWithoutMission) {
-                removeLoadingMessage();
-                const queuedInputCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, '');
-                const detail = retryFailedQueueNotice || `실패한 대기 요청을 다시 대기열로 올렸습니다.`;
-                await addBotMessage(`${detail}${queuedInputCount ? ` 대기 ${queuedInputCount}개를 이어서 처리합니다.` : ''}`);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, retryFailedQueueRequeued > 0 ? 'done' : 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: retryFailedQueueRequeued > 0,
-                    status: retryFailedQueueRequeued > 0 ? 'done' : 'warning',
-                    queueDisposition: retryFailedQueueRequeued > 0 ? 'done' : 'attention',
-                    detail
-                };
-            }
-            if (shouldHandleQueueWithoutMission) {
-                removeLoadingMessage();
-                const queuedInputCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, '');
-                const attentionInputCount = getKeroAttentionInputCount(keroQueuedUserInputs, '');
-                const hardFailedInputCount = getKeroHardFailedInputCount(keroQueuedUserInputs, '');
-                const detail = queuedInputCount > 0
-                    ? `미션은 없지만 대기 요청 ${queuedInputCount}개가 남아 있어 대기열부터 이어갑니다.`
-                    : `미션은 없고 확인필요 대기 요청 ${attentionInputCount}개, 실패 대기 요청 ${hardFailedInputCount}개만 남아 있습니다. 다시 처리하려면 "재시도" 또는 "다시 해봐"라고 말해주세요.`;
-                addKeroWorkstreamEvent(queuedInputCount > 0 ? '대기열 이어가기' : '대기 요청 확인 필요', detail, queuedInputCount > 0 ? 'queued' : 'warning', taskProgressOptions);
-                await addBotMessage(detail);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: false,
-                    status: 'warning',
-                    queueDisposition: 'attention',
-                    detail
-                };
-            }
-            if (shouldResumeMission) {
-                const resumeResult = await resumeKeroStoredActionJobs({ retryWarnings: shouldRetryWarningJobs, progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
-                if (resumeResult?.handled) {
-                    if (resumeResult.stale || !isTaskMissionStillCurrent()) {
-                        removeLoadingMessage();
-                        return stopStaleTaskFinalization('재개 처리 중 현재 미션이 바뀌어 이전 재개 요청의 후처리를 중단했습니다.');
-                    }
-                    let resumeSummary = resumeResult.jobSummary || {};
-                    let resumeBulkSummary = resumeResult.bulkSummary || {};
-                    let resumeAutoBulkNotice = '';
-                    if (hasKeroBulkRemainder(resumeBulkSummary) && !keroBulkAutoResumeRunning) {
-                        const autoResult = await autoResumeKeroBulkJobsUntilSettled(resumeBulkSummary, { reason: 'manual_resume_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
-                        if (autoResult?.reason === 'stale_mission' || !isTaskMissionStillCurrent()) {
-                            removeLoadingMessage();
-                            return stopStaleTaskFinalization('대량 작업 자동 이어가기 도중 현재 미션이 바뀌어 이전 재개 요청의 후처리를 중단했습니다.');
-                        }
-                        if (autoResult?.resumed) {
-                            resumeBulkSummary = autoResult.bulkSummary || resumeBulkSummary;
-                            resumeSummary = await verifyKeroActionJobsForMission(taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null, taskMissionId || currentKeroMission?.id || '');
-                            resumeBulkSummary = await summarizeResumableKeroBulkCreateJobs(taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null, taskMissionId || currentKeroMission?.id || '')
-                                .catch((summaryError) => {
-                                    const detail = `재개 후 대량 생성 job 요약을 다시 읽지 못했습니다: ${summaryError?.message || summaryError}`;
-                                    Logger.warn(detail);
-                                    addKeroWorkstreamEvent('재개 대량 작업 최종 확인 실패', detail, 'warning', taskProgressOptions);
-                                    return { total: 0, remaining: 0, failed: 1, details: [detail] };
-                                });
-                            const autoRemaining = Math.max(0, Math.floor(Number(resumeBulkSummary?.remaining) || 0));
-                            const autoFailed = Math.max(0, Math.floor(Number(resumeBulkSummary?.failed) || 0));
-                            resumeAutoBulkNotice = autoRemaining || autoFailed
-                                ? ` 대량 생성 자동 이어가기 ${autoResult.rounds || 0}회 실행 후 남음 ${autoRemaining}개, 실패/재시도 ${autoFailed}개.`
-                                : ` 대량 생성 자동 이어가기 ${autoResult.rounds || 0}회 실행 후 잔여 없음.`;
-                            addKeroWorkstreamEvent('수동 재개 후 대량 작업 자동 이어가기', resumeAutoBulkNotice.trim(), autoRemaining || autoFailed ? 'warning' : 'done', taskProgressOptions);
-                        }
-                    }
-                    if (!isTaskMissionStillCurrent()) {
-                        removeLoadingMessage();
-                        return stopStaleTaskFinalization('재개 작업 도중 현재 미션이 바뀌어 이전 재개 요청의 최종 상태 반영을 중단했습니다.');
-                    }
-                    removeLoadingMessage();
-                    const hasBulkRemainder = Number(resumeBulkSummary.remaining || 0) > 0 || Number(resumeBulkSummary.failed || 0) > 0;
-                    const bulkResumeDetail = hasBulkRemainder
-                        ? ` 대량 생성 잔여 ${Number(resumeBulkSummary.remaining || 0)}개, 실패/재시도 ${Number(resumeBulkSummary.failed || 0)}개가 남아 있습니다.${resumeAutoBulkNotice}`
-                        : resumeAutoBulkNotice;
-                    const hasResumeError = hasKeroMissionFailedSteps(currentKeroMission, { allowActiveRecovery: true }) || Number(resumeSummary.failed || 0) > 0;
-                    const hasResumeWarning = hasKeroMissionAttentionSteps()
-                        || Number(resumeSummary.warning || 0) > 0
-                        || Number(resumeSummary.pending || 0) > 0
-                        || hasBulkRemainder;
-                    const resumeDetail = resumeResult.resumed === false && resumeResult.skippedWarnings
-                        ? `검증 경고 ${resumeResult.skippedWarnings}개를 보류했습니다.${bulkResumeDetail}`
-                        : (hasResumeError
-                        ? `일부 재개 액션 실패${bulkResumeDetail}`
-                        : (Number(resumeSummary.pending || 0) > 0
-                            ? `재개 액션 중 대기/진행 ${resumeSummary.pending}개가 남아 있습니다.${bulkResumeDetail}`
-                            : (hasResumeWarning ? `재개 액션에 검증 경고가 있습니다.${bulkResumeDetail}` : '중단된 액션 재개 완료')));
-                    if (backgroundJobId) {
-                        finishKeroBackgroundJob(backgroundJobId, hasResumeError ? 'error' : (hasResumeWarning ? 'warning' : 'done'), resumeDetail);
-                    }
-                    await finishKeroMission(hasResumeError ? 'error' : (hasResumeWarning ? 'warning' : 'done'), resumeDetail);
-                    if (hasResumeWarning && !hasResumeError) {
-                        await addBotMessage(`⚠️ 재개 작업 확인 필요\n${resumeDetail}`);
-                    }
-                    backgroundJobClosed = true;
-                    const resumeStatus = hasResumeError ? 'error' : (hasResumeWarning ? 'warning' : 'done');
-                    return {
-                        handled: true,
-                        success: resumeStatus === 'done',
-                        status: resumeStatus,
-                        queueDisposition: resumeStatus === 'done' ? 'done' : (resumeStatus === 'warning' ? 'attention' : 'failed'),
-                        detail: resumeDetail
-                    };
-                }
-                const queuedInputCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                if (queuedInputCount > 0) {
-                    removeLoadingMessage();
-                    const detail = `재개할 미완료 액션은 없고 대기 요청 ${queuedInputCount}개가 남아 있어 대기열부터 이어갑니다.`;
-                    addKeroWorkstreamEvent('대기열 이어가기', detail, 'queued', taskProgressOptions);
-                    await addBotMessage(detail);
-                    if (backgroundJobId) {
-                        finishKeroBackgroundJob(backgroundJobId, 'warning', detail);
-                    }
-                    backgroundJobClosed = true;
-                    return {
-                        handled: true,
-                        success: false,
-                        status: 'warning',
-                        queueDisposition: 'attention',
-                        detail
-                    };
-                }
-            }
             let modelUserInput = effectiveUserInput;
             let modelVisibleUserInput = visibleUserInput;
             if (startNowFollowupObjective) {
                 modelUserInput = startNowFollowupObjective;
                 modelVisibleUserInput = startNowFollowupObjective;
-                addKeroWorkstreamEvent(
-                    '이전 목표 실행 연결',
-                    `"${visibleUserInput.slice(0, 40)}" 입력을 직전 작업 목표 실행 지시로 처리합니다.`,
-                    'context',
-                    taskProgressOptions
-                );
-            } else if (controlOnlyResumeRequest && !controlResumeRouting.blocked && controlResumeRouting.modelUserInput) {
-                modelUserInput = controlResumeRouting.modelUserInput;
-                modelVisibleUserInput = controlResumeRouting.visibleUserInput || controlResumeRouting.modelUserInput;
-                addKeroWorkstreamEvent(
-                    '제어어 라우팅',
-                    `"${visibleUserInput.slice(0, 40)}" 입력을 새 작업으로 보내지 않고 이전 미션 목표로 이어갑니다.`,
-                    'context',
-                    taskProgressOptions
-                );
-            } else if (controlOnlyResumeRequest && controlResumeRouting.blocked) {
-                removeLoadingMessage();
-                const detail = controlResumeRouting.detail || '이전 미션 목표를 찾지 못해 재시도할 수 없습니다. 새 작업 내용을 다시 입력해주세요.';
-                addKeroWorkstreamEvent('재개 목표 없음', detail, 'warning', taskProgressOptions);
-                await addBotMessage(detail);
-                if (backgroundJobId) {
-                    finishKeroBackgroundJob(backgroundJobId, 'warning', detail);
-                }
-                backgroundJobClosed = true;
-                return {
-                    handled: true,
-                    success: false,
-                    status: 'warning',
-                    queueDisposition: 'attention',
-                    detail
-                };
+                addKeroWorkstreamEvent('이전 목표 실행 연결', '직전 작업 목표 실행 지시로 처리합니다.', 'context', taskProgressOptions);
             }
             const response = await processUserRequest(modelUserInput, { ...options, signal: taskAbortSignal, keroMode: taskKeroMode, workTargetMode: taskWorkTargetMode, approvedPlanningGoal: !!approvedPlanningGoal, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
             if (!isTaskMissionStillCurrent()) {
@@ -37557,53 +32974,9 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     }
                     const verificationStorageId = taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
                     const verificationMissionId = taskMissionId || currentKeroMission?.id || '';
-                    await reconcileCompletedKeroBulkWarningActionJobs(verificationStorageId, verificationMissionId);
                     actionJobSummary = await verifyKeroActionJobsForMission(verificationStorageId, verificationMissionId);
                 } else {
                     await addBotMessage('지금은 일상모드라서 실제 수정 액션은 멈춰둘게. 상단의 "일상" 버튼을 눌러 작업모드로 바꾸면 바로 진행할 수 있어.');
-                }
-            }
-            if (isWorkMode) {
-                if (!isTaskMissionStillCurrent()) {
-                    return stopStaleTaskFinalization('현재 미션이 바뀌어 이전 요청의 대량 작업 요약/완료 처리를 중단했습니다.');
-                }
-                bulkJobSummary = await summarizeResumableKeroBulkCreateJobs(taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null, taskMissionId || currentKeroMission?.id || '');
-                if (bulkJobSummary.remaining || bulkJobSummary.failed) {
-                    const shouldAutoResumeBulk = !shouldResumeMission && !options.fromQueue && !keroBulkAutoResumeRunning;
-                    if (shouldAutoResumeBulk) {
-                        bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'post_action_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
-                        bulkJobSummary = bulkAutoResumeResult?.bulkSummary || bulkJobSummary;
-                        if (bulkAutoResumeResult?.resumed) {
-                            if (!isTaskMissionStillCurrent()) {
-                                return stopStaleTaskFinalization('대량 작업 자동 이어가기 뒤 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
-                            }
-                            const verificationStorageId = taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
-                            const verificationMissionId = taskMissionId || currentKeroMission?.id || '';
-                            await reconcileCompletedKeroBulkWarningActionJobs(verificationStorageId, verificationMissionId);
-                            actionJobSummary = await verifyKeroActionJobsForMission(verificationStorageId, verificationMissionId);
-                            const autoRemaining = Math.max(0, Math.floor(Number(bulkJobSummary?.remaining) || 0));
-                            const autoFailed = Math.max(0, Math.floor(Number(bulkJobSummary?.failed) || 0));
-                            bulkAutoResumeNotice = autoRemaining || autoFailed
-                                ? `대량 생성 자동 이어가기 ${bulkAutoResumeResult.rounds || 0}회 실행 · 남음 ${autoRemaining}개 · 실패/재시도 ${autoFailed}개`
-                                : `대량 생성 자동 이어가기 ${bulkAutoResumeResult.rounds || 0}회 실행 · 잔여 없음`;
-                            addKeroWorkstreamEvent('대량 작업 자동 이어가기 결과', bulkAutoResumeNotice, autoRemaining || autoFailed ? 'warning' : 'done', taskProgressOptions);
-                        }
-                    }
-                }
-                bulkJobSummary = await summarizeResumableKeroBulkCreateJobs(taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null, taskMissionId || currentKeroMission?.id || '')
-                    .catch((error) => {
-                        const detail = `대량 생성 job 최종 요약을 다시 읽지 못했습니다: ${error?.message || error}`;
-                        Logger.warn(detail);
-                        addKeroWorkstreamEvent('대량 작업 최종 확인 실패', detail, 'warning', taskProgressOptions);
-                        return { total: 0, remaining: 0, failed: 1, details: [detail] };
-                    });
-                if (bulkJobSummary.remaining || bulkJobSummary.failed) {
-                    addKeroWorkstreamEvent(
-                        '대량 작업 잔여 확인',
-                        `대량 생성 job ${bulkJobSummary.total}개 · 남음 ${bulkJobSummary.remaining}개 · 실패/재시도 ${bulkJobSummary.failed}개`,
-                        'warning',
-                        taskProgressOptions
-                    );
                 }
             }
             let finalJobStatus = 'done';
@@ -37616,31 +32989,19 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 const hasJobWarning = Number(actionJobSummary?.warning || 0) > 0;
                 const hasJobPending = Number(actionJobSummary?.pending || 0) > 0;
                 const hasJobInterrupted = Number(actionJobSummary?.interrupted || 0) > 0;
-                const hasBulkRemainder = Number(bulkJobSummary?.remaining || 0) > 0 || Number(bulkJobSummary?.failed || 0) > 0;
-                const autoResumeDetail = bulkAutoResumeResult?.resumed
-                    ? ` 대량 생성 자동 이어가기 ${bulkAutoResumeResult.rounds || 0}회 실행.`
-                    : '';
-                const bulkDetail = hasBulkRemainder
-                    ? ` 대량 생성 잔여 ${Number(bulkJobSummary?.remaining || 0)}개, 실패/재시도 ${Number(bulkJobSummary?.failed || 0)}개가 남아 있습니다.${autoResumeDetail}`
-                    : autoResumeDetail;
                 const hasMissionError = hasKeroMissionFailedSteps(currentKeroMission, { allowActiveRecovery: true }) || hasJobFailed;
-                const hasMissionWarning = hasKeroMissionAttentionSteps() || hasJobWarning || hasJobPending || hasJobInterrupted || hasBulkRemainder;
+                const hasMissionWarning = hasKeroMissionAttentionSteps() || hasJobWarning || hasJobPending || hasJobInterrupted;
                 const errorSummary = summarizeKeroMissionStepsByStatus(['error', 'failed']);
                 const warningSummary = summarizeKeroMissionStepsByStatus(['warning', 'blocked']);
                 finalJobStatus = hasMissionError ? 'error' : (hasMissionWarning ? 'warning' : 'done');
                 finalJobDetail = hasMissionError
-                    ? `일부 작업 오류가 기록되었습니다.${errorSummary ? ` ${errorSummary}` : ''}${hasJobFailed ? ` 액션 job 실패 ${actionJobSummary.failed}개.` : ''}${bulkDetail}`
+                    ? `일부 작업 오류가 기록되었습니다.${errorSummary ? ` ${errorSummary}` : ''}${hasJobFailed ? ` 액션 job 실패 ${actionJobSummary.failed}개` : ''}`
                     : (hasMissionWarning
-                        ? `${hasJobPending ? `대기/진행 중인 액션 job ${actionJobSummary.pending}개가 남아 있습니다. ` : ''}${hasJobInterrupted ? `중단 감지된 액션 job ${actionJobSummary.interrupted}개가 남아 있습니다. ` : ''}검증 경고가 있어 확인이 필요합니다.${warningSummary ? ` ${warningSummary}` : ''}${bulkDetail} "재시도" 또는 "다시 해봐"로 경고 작업을 다시 실행할 수 있습니다.`
-                        : `요청 처리가 끝났습니다.${bulkDetail}`);
+                        ? `검증 경고가 있어 확인이 필요합니다.${warningSummary ? ` ${warningSummary}` : ''}${hasJobPending ? ` 대기/진행 중인 액션 job ${actionJobSummary.pending}개.` : ''}${hasJobInterrupted ? ` 중단 감지된 액션 job ${actionJobSummary.interrupted}개.` : ''} 자동 재시도는 실행하지 않습니다. 필요한 수정 내용을 새 요청으로 입력해주세요.`
+                        : '요청 처리가 끝났습니다.');
                 await finishKeroMission(hasMissionError ? 'error' : (hasMissionWarning ? 'warning' : 'done'), finalJobDetail);
                 if (finalJobStatus === 'warning') {
-                    const autoResumeSuffix = bulkAutoResumeNotice && !finalJobDetail.includes('대량 생성 자동 이어가기')
-                        ? `\n${bulkAutoResumeNotice}`
-                        : '';
-                    await addBotMessage(`⚠️ 작업 확인 필요\n${finalJobDetail}${autoResumeSuffix}`);
-                } else if (bulkAutoResumeNotice) {
-                    await addBotMessage(`✅ ${bulkAutoResumeNotice}`);
+                    await addBotMessage(`⚠️ 작업 확인 필요\n${finalJobDetail}`);
                 }
                 if (cleaned && shouldDeferAssistantText) {
                     if (finalJobStatus === 'done') {
@@ -37722,7 +33083,6 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             const hasActionWarning = Number(actionJobSummary?.warning || 0) > 0;
             const hasActionPending = Number(actionJobSummary?.pending || 0) > 0;
             const hasActionInterrupted = Number(actionJobSummary?.interrupted || 0) > 0;
-            const hasBulkRemainder = Number(bulkJobSummary?.remaining || 0) > 0 || Number(bulkJobSummary?.failed || 0) > 0;
             const shouldPreserveAppliedActions = isWorkMode
                 && hasActionSummary
                 && !hasActionFailure
@@ -37730,97 +33090,13 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     || Number(actionJobSummary?.done || 0) > 0
                     || hasActionWarning
                     || hasActionPending
-                    || hasActionInterrupted
-                    || hasBulkRemainder);
+                    || hasActionInterrupted);
             const catchStatus = shouldPreserveAppliedActions
                 ? 'warning'
                 : 'error';
             const catchDetail = shouldPreserveAppliedActions
                 ? `작업 액션은 기록/적용됐지만 후처리 표시 중 오류가 발생했습니다. 액션 총 ${actionJobSummary.total}개 · 완료 ${actionJobSummary.done || 0}개 · 경고 ${actionJobSummary.warning || 0}개 · 대기 ${actionJobSummary.pending || 0}개 · 중단 ${actionJobSummary.interrupted || 0}개. 후처리 오류: ${friendlyMessage}`
                 : friendlyMessage;
-            const shouldAttemptFinalChunkQueueRecovery = isWorkMode
-                && !hasActionSummary
-                && (isProviderGatewayTimeoutError(error) || isKeroModelHardTimeoutError(error) || isProviderOutputLimitError(error));
-            if (shouldAttemptFinalChunkQueueRecovery) {
-                try {
-                    const fallbackSource = (controlOnlyResumeRequest && currentMissionObjective) ? currentMissionObjective : visibleUserInput;
-                    const fallbackResponse = buildKeroLlmChunkQueueFallbackResponse(fallbackSource, {
-                        userRequest: fallbackSource,
-                        allowSmallCreate: true,
-                        actionReason: isProviderOutputLimitError(error) ? 'outer_catch_output_limit_llm_chunk_queue' : 'outer_catch_gateway_llm_chunk_queue',
-                        reasonText: '메인 모델 복구 응답까지 실패해'
-                    });
-                    const fallbackParsed = parseKeroAction(fallbackResponse || '');
-                    if (fallbackParsed.actions?.length) {
-                        addKeroWorkstreamEvent(
-                            '최종 LLM 청크 큐 실행',
-                            `${fallbackParsed.actions.length}개 bulk_create 작업 큐를 구성해 실행합니다.`,
-                            'retry',
-                            taskProgressOptions
-                        );
-                        if (backgroundJobId) {
-                            updateKeroProgress(1, fallbackParsed.actions.length, '최종 LLM 청크 큐를 실행하는 중...', taskProgressOptions);
-                        }
-                        await handleKeroActionRequests(fallbackParsed.actions, { missionId: taskMissionId, storageId: taskStorageId, workTargetMode: taskWorkTargetMode, userRequest: taskRequestText, signal: taskAbortSignal, abortCheck: taskAbortCheck, ...(backgroundJobId ? { jobId: backgroundJobId } : {}) });
-                        if (!isTaskMissionStillCurrent()) {
-                            return stopStaleTaskFinalization('최종 LLM 청크 큐 실행 뒤 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
-                        }
-                        const verificationStorageId = taskStorageId || currentKeroPersistentStorageId || currentKeroMission?.storageId || null;
-                        const verificationMissionId = taskMissionId || currentKeroMission?.id || '';
-                        await reconcileCompletedKeroBulkWarningActionJobs(verificationStorageId, verificationMissionId);
-                        actionJobSummary = await verifyKeroActionJobsForMission(verificationStorageId, verificationMissionId);
-                        bulkJobSummary = await summarizeResumableKeroBulkCreateJobs(verificationStorageId, verificationMissionId);
-                        if ((bulkJobSummary.remaining || bulkJobSummary.failed) && !keroBulkAutoResumeRunning) {
-                            bulkAutoResumeResult = await autoResumeKeroBulkJobsUntilSettled(bulkJobSummary, { reason: 'final_llm_chunk_queue_remainder', progressOptions: taskProgressOptions, signal: taskAbortSignal, abortCheck: taskAbortCheck });
-                            if (bulkAutoResumeResult?.reason === 'stale_mission' || !isTaskMissionStillCurrent()) {
-                                return stopStaleTaskFinalization('최종 LLM 청크 큐의 대량 작업 자동 이어가기 중 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
-                            }
-                            bulkJobSummary = bulkAutoResumeResult?.bulkSummary || bulkJobSummary;
-                            await reconcileCompletedKeroBulkWarningActionJobs(verificationStorageId, verificationMissionId);
-                            actionJobSummary = await verifyKeroActionJobsForMission(verificationStorageId, verificationMissionId);
-                            bulkJobSummary = await summarizeResumableKeroBulkCreateJobs(verificationStorageId, verificationMissionId)
-                                .catch((summaryError) => {
-                                    const detail = `최종 LLM 청크 큐 실행 후 대량 생성 job 요약을 다시 읽지 못했습니다: ${summaryError?.message || summaryError}`;
-                                    Logger.warn(detail);
-                                    addKeroWorkstreamEvent('최종 LLM 청크 큐 대량 확인 실패', detail, 'warning', taskProgressOptions);
-                                    return { total: 0, remaining: 0, failed: 1, details: [detail] };
-                                });
-                        }
-                        const recoveryHasError = hasKeroMissionFailedSteps(currentKeroMission, { allowActiveRecovery: true }) || Number(actionJobSummary?.failed || 0) > 0;
-                        const recoveryHasWarning = hasKeroMissionAttentionSteps()
-                            || Number(actionJobSummary?.warning || 0) > 0
-                            || Number(actionJobSummary?.pending || 0) > 0
-                            || Number(actionJobSummary?.interrupted || 0) > 0
-                            || Number(bulkJobSummary?.remaining || 0) > 0
-                            || Number(bulkJobSummary?.failed || 0) > 0;
-                        const recoveryDetail = recoveryHasError
-                            ? `모델 응답 실패 후 LLM 청크 큐를 실행했지만 일부 작업 오류가 남았습니다.`
-                            : (recoveryHasWarning
-                                ? `모델 응답 실패 후 LLM 청크 큐를 실행했습니다. 확인 필요 항목이 남아 있습니다.`
-                                : `모델 응답 실패 후 LLM 청크 큐로 요청을 처리했습니다.`);
-                        await finishKeroMission(recoveryHasError ? 'error' : (recoveryHasWarning ? 'warning' : 'done'), recoveryDetail);
-                        if (backgroundJobId) {
-                            finishKeroBackgroundJob(backgroundJobId, recoveryHasError ? 'error' : (recoveryHasWarning ? 'warning' : 'done'), recoveryDetail);
-                        }
-                        backgroundJobClosed = true;
-                        await addBotMessage(`${recoveryHasError || recoveryHasWarning ? '⚠️' : '✅'} ${recoveryDetail}`);
-                        const recoveryStatus = recoveryHasError ? 'error' : (recoveryHasWarning ? 'warning' : 'done');
-                        return {
-                            handled: true,
-                            success: recoveryStatus === 'done',
-                            status: recoveryStatus,
-                            queueDisposition: recoveryStatus === 'done' ? 'done' : (recoveryStatus === 'warning' ? 'attention' : 'failed'),
-                            detail: recoveryDetail
-                        };
-                    }
-                } catch (recoveryError) {
-                    if (!isTaskMissionStillCurrent()) {
-                        return stopStaleTaskFinalization('최종 LLM 청크 큐 오류 처리 중 현재 미션이 바뀌어 이전 요청의 완료 처리를 중단했습니다.');
-                    }
-                    Logger.warn('Kero final LLM chunk queue recovery failed:', recoveryError?.message || recoveryError);
-                    addKeroWorkstreamEvent('최종 LLM 청크 큐 실패', recoveryError?.message || String(recoveryError), 'warning', taskProgressOptions);
-                }
-            }
             if (backgroundJobId) {
                 finishKeroBackgroundJob(backgroundJobId, catchStatus, catchDetail.replace(/\s+/g, ' ').slice(0, 220) || '알 수 없는 오류');
             }
@@ -37887,35 +33163,8 @@ ${catchDetail}
             updateKeroQueuedInputUi();
             if (!hasNewerRuntimeJob) {
                 inputEl?.focus?.();
-                if (taskAbortRequestedInFinally) {
+                if (taskAbortRequestedInFinally || keroSuppressNextQueueDrainReason) {
                     keroSuppressNextQueueDrainReason = '';
-                    const readyQueuedCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                    if (readyQueuedCount > 0) {
-                        addKeroWorkstreamEvent(
-                            taskCancelRequestedInFinally ? '취소 후 대기열 보류' : '중지 후 대기열 보류',
-                            `사용자 ${taskCancelRequestedInFinally ? '취소' : '중지'} 요청으로 대기 요청 ${readyQueuedCount}개를 자동 실행하지 않았습니다. 필요하면 "계속 진행"으로 이어갈 수 있습니다.`,
-                            'blocked'
-                        );
-                    }
-                } else if (keroSuppressNextQueueDrainReason) {
-                    const suppressReason = keroSuppressNextQueueDrainReason;
-                    keroSuppressNextQueueDrainReason = '';
-                    const readyQueuedCount = getKeroReadyQueuedInputCount(keroQueuedUserInputs, currentKeroMission?.id || '');
-                    if (readyQueuedCount > 0) {
-                        addKeroWorkstreamEvent(
-                            options.fromQueue ? '대기열 계속 진행' : '대기열 자동 진행',
-                            `${suppressReason} · 같은 액션 묶음의 후속 액션만 보류하고, 사용자가 남긴 대기 요청 ${readyQueuedCount}개는 이어서 처리합니다.`,
-                            'queued'
-                        );
-                        if (!options.fromQueue) {
-                            await new Promise(resolve => setTimeout(resolve, KERO_QUEUE_DRAIN_AFTER_TIMEOUT_DELAY_MS));
-                            await drainKeroQueuedInputs();
-                        }
-                    } else {
-                        addKeroWorkstreamEvent('대기열 자동 진행 보류', `${suppressReason} · 후속 액션은 보류됐고 대기 요청은 없습니다. 상태 확인 뒤 "계속 진행" 또는 "재시도"로 이어갈 수 있습니다.`, 'blocked');
-                    }
-                } else if (!options.fromQueue) {
-                    await drainKeroQueuedInputs();
                 }
                 if (keroAssistantStateRefreshPending && !keroProcessingQueuedInput && !keroChatTaskRunning) {
                     await initializeKeroAssistantState();
@@ -38359,7 +33608,7 @@ ${metaBlock}
 
 ### 형식
 응답의 맨 마지막 영역에 단독으로 작성:
-        @action {"type":"improve|apply|create|asset_manage|bulk_create|update|patch|delete", "target":"...", ...}
+        @action {"type":"improve|apply|create|asset_manage|update|patch|delete", "target":"...", ...}
 복합 작업이면 하나의 JSON 배열로 여러 액션을 순서대로 담는다:
         @action [{"type":"update","target":"character","payload":{...}}, {"type":"create","target":"lorebook","payload":[...]}]
 
@@ -38379,12 +33628,9 @@ ${metaBlock}
 ### create (생성)
 - 생성은 "만들어줘/추가해줘/생성해줘"뿐 아니라 리메이크, 재구성, 빈 봇 채우기, 세계관/인물/역사/관계 보강처럼 저장 대상과 실행 의도가 명확한 작업에도 사용한다. 실제 실행은 시스템의 수정 전 확인 설정을 따른다.
 - 단일 생성: @action {"type":"create","target":"lorebook|regex|trigger","payload":{...}}
-- 여러 항목 생성: 응답 안에 안정적으로 담길 만큼만 create payload 배열로 담고, 길거나 많은 작업은 bulk_create job으로 넘겨 저장 완료 범위를 보존하며 계속 진행한다.
-- 대량 생성: 모델 최대 응답 한계를 넘길 것 같으면 payload 배열을 억지로 출력하지 말고 bulk_create를 사용한다.
-- bulk_create: @action {"type":"bulk_create","target":"lorebook","count":100,"chunkSize":25,"userRequest":"사용자가 요청한 생성 조건 전체"}
-- bulk_create는 슈바봇이 완료 범위를 저장하면서 마지막 처리 지점부터 자동으로 이어간다. "첫 번째만 만들고 나머지는 나중에"라고 말하지 말고 bulk_create를 출력한다.
-- bulk_create는 기본적으로 여러 항목을 한 번에 처리한다. 사용자가 더 큰 chunkSize를 지정하면 보존하고, 실패하거나 실제 응답 크기를 넘길 때만 슈바봇 런타임이 완료 범위를 보존하며 더 작은 청크로 나눈다.
-- 매우 큰 생성도 임의 상한으로 자르지 않는다. 요청 수량을 bulk_create count에 보존하고, 모델/전송 한계에 닿으면 완료 범위를 기준으로 이어간다.
+- 여러 항목 생성: 응답 안에 안정적으로 담기는 만큼 create payload 배열로 직접 담는다. 로컬 bulk_create 대량 job으로 넘기지 않는다.
+- 큰 작업: 이번 응답에서 실제로 완성 가능한 저장 단위를 @action으로 만들고, 남은 범위는 설명/TODO가 아니라 다음 저장 단위로 이어서 진행할 작업으로 짧게 표시한다. 로어북/정규식/트리거 개수 부족분을 런타임이 자동 생성한다고 가정하지 않는다.
+- 매우 큰 생성도 임의 상한으로 품질을 낮추지 않는다. 한 번의 payload가 너무 크면 핵심 필드와 높은 우선순위 항목부터 완성본으로 저장하고, 다음 응답에서 이어갈 범위를 명시한다.
 - 예시는 형식 설명용이며 분량 기준이 아니다. 실제 payload의 desc, firstMessage, lorebooks.content는 사용자가 요청한 품질과 분량을 충족하는 완성본문으로 작성한다.
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 로어북 폴더 생성: 폴더는 별도 항목으로 {"comment":"인물","key":"folder:characters","content":"","mode":"folder"}를 먼저 만들고, 하위 항목에는 "folder":"folder:characters"를 넣는다. 사용자가 "인물 폴더에 넣어줘"처럼 자연어로 말하면 folder:"인물"처럼 써도 시스템이 같은 배치 안에서 folder key로 보정한다.
@@ -38392,10 +33638,10 @@ ${metaBlock}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
-- 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt에는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 안정적인 2D anime tag로 쓰고, 각 assets[].prompt에는 표정/포즈/장면 차이를 쓴다. 예: @action {"type":"create","target":"asset","payload":{"identityName":"문아진","identityPrompt":"1girl, solo, distinct oval face, sharp amber eyes, short black hair with violet inner color, ...","identityNegative":"different character, wrong hair color, wrong eye color","assets":[{"assetType":"emotion","name":"neutral","prompt":"neutral expression, upper body, looking at viewer"},{"assetType":"emotion","name":"happy","prompt":"soft smile, bright eyes, upper body"}]}}
+- 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt에는 설정에 맞는 성별 태그(남성은 1boy/male focus, 여성은 1girl/female focus, 불명은 solo character), 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 안정적인 2D anime tag로 쓴다. 각 assets[].prompt에는 표정/포즈/장면 차이를 쓴다. 예: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"solo character, character-accurate gender tag, distinct face shape, specific eye color, specific hair style, signature outfit, ...","identityNegative":"different character, wrong gender, wrong hair color, wrong eye color","assets":[{"assetType":"emotion","name":"neutral","prompt":"neutral expression, upper body, looking at viewer"},{"assetType":"emotion","name":"happy","prompt":"soft smile, bright eyes, upper body"}]}}
 - Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 이미지 생성 직후 Wellspring LoRA 학습까지 필요하면 같은 create asset payload에 trainLora:true, loraName, trainingSteps, waitForTraining:false를 넣는다. 생성된 이미지의 Wellspring gallery job id 또는 저장 에셋을 학습 데이터로 재사용한다.
-- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"문아진","identityPrompt":"1girl, solo, short black hair with violet inner color, sharp amber eyes, Korean military cadet uniform, ...","trainLora":true,"loraName":"문아진_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"moon_ajin_profile","prompt":"upper body, neutral expression, white background"},{"assetType":"emotion","name":"moon_ajin_smile","prompt":"soft smile, upper body, white background"}]}}
+- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"character-accurate gender tag, solo, specific hair style, specific eye color, signature outfit, consistent face, ...","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"character_profile","prompt":"upper body, neutral expression, white background"},{"assetType":"emotion","name":"character_smile","prompt":"soft smile, upper body, white background"}]}}
 - 이미 등록된 에셋으로 Wellspring LoRA를 학습하려면 asset_manage train_lora를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"train_lora","identityName":"문아진","loraName":"문아진_identity","kind":"all","names":["moon_ajin_profile","moon_ajin_smile"],"trainingSteps":600,"waitForTraining":false}
 - 완료된 Wellspring LoRA를 identity에 연결하려면 asset_manage refresh_loras를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"refresh_loras","identityName":"문아진","loraName":"문아진_identity","loraStrength":0.8}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
@@ -38412,7 +33658,7 @@ ${metaBlock}
 - assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
 - //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch에서 본문이 실제로 반환되어야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com URL을 쓰되, 현재 Range 응답이 최신 버전을 반환하는 경로를 직접 검증해 사용한다.
-- SuperVibeBot ??? update-url? ??? ?? URL? ????. ?? GitHub/CDN/?? update-url? ???? ???.
+- SuperVibeBot 업데이트 URL은 검증된 기존 raw URL을 유지한다. 임의 GitHub/CDN/대체 update-url로 바꾸지 않는다.
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 에셋 prompt는 영어 중심으로 쓴다. 이름/고유명은 그대로 두되, 외형/의상/구도/표정/조명/배경/스타일을 구체적으로 작성한다.
@@ -38431,6 +33677,7 @@ ${metaBlock}
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
 - "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
+- 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. 남성 캐릭터에 1girl/female focus를 쓰거나, 여성 캐릭터에 1boy/male focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo character와 외형 단서를 중심으로 쓴다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, framing 순서로 명료하게 쓴다. profile image는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
@@ -38482,15 +33729,15 @@ ${metaBlock}
 - 캐릭터/봇의 이름, desc, firstMessage, globalNote, lorebooks, regexScripts, backgroundHTML처럼 같은 캐릭터에 저장되는 여러 필드 작업은 가능하면 하나의 character update @action으로 묶는다.
 - 캐릭터 전체 제작/변환 요청에서 desc improve 하나만 출력하는 것은 실패다. 필요한 필드와 자료를 payload에 담아 실제 저장되게 한다.
 - 캐릭터 제작/재작성 요청에서는 100토큰짜리 요약으로 끝내지 않는다. desc는 정체성, 외형, 말투, 관계, 갈등, 운용 단서를 담고, 로어북은 핵심 항목별로 바로 주입 가능한 상세 설정을 제공한다.
-- 서로 다른 대상/시스템을 건드리는 작업은 @action JSON 배열로 순서대로 담는다. 예: character update 후 lorebook bulk_create, plugin update 후 검토용 regex create 등.
+- 서로 다른 대상/시스템을 건드리는 작업은 @action JSON 배열로 순서대로 담는다. 예: character update 후 lorebook create 배열, plugin update 후 검토용 regex create 등.
 - 상태창/HTML/CSS를 만들면 프리뷰용 <ui-design>을 보여줄 수 있지만, 반드시 같은 결과를 적절한 @action payload(backgroundHTML, regexScripts 등)에도 넣어 실제 저장되게 한다.
 - 상태창/배경HTML/프로필 패널/인터페이스/지도/문장/아이템 카드/타이틀 화면처럼 이미지가 품질을 올리는 작업이면 에셋 요청이 따로 없었더라도 target:"asset" create @action을 먼저 넣고, 뒤따르는 저장 액션에서 {{asset::이름}} 또는 {{image::이름}}으로 참조한다.
 - 이미지 에셋을 만들면 프롬프트 설명만 하지 말고 target:"asset" create @action에 assets 배열을 담아 실제 생성/등록되게 한다.
-- 여러 항목 생성이 주목적인 요청이면 create payload 배열 또는 bulk_create를 사용한다. 여러 항목 삭제는 delete @action 배열/idx 배열로 묶는다.
+- 여러 항목 생성이 주목적인 요청이면 create payload 배열을 사용한다. 여러 항목 삭제는 delete @action 배열/idx 배열로 묶는다.
 - 사용자가 "먼저 계획만", "먼저 TODO", "요구사항 정리", "아직 기획", "제안만", "확인 받고"라고 말한 경우에는 저장/수정/생성 @action을 내지 않는다. 큰 작업이라는 이유만으로 멈추지는 않되, 사용자가 현재 입력에서 정리/기획을 요구하면 그 의도가 실행보다 우선이다.
 - 사용자가 "알아서", "알잘딱", "싹 다", "최종완료", "끝까지", "전부 다 해"처럼 위임하면 실행 권한을 이미 준 것이다. 선호 확인/승인 질문을 하지 말고 LLM이 최선의 결정을 내려 @action으로 저장 작업을 시작한다. 단, 기획모드 또는 기획형 입력에서는 적용하지 않는다.
 - 저장/수정/생성 요청에서 계획, 방향성, 질문만 말하고 @action을 빼는 응답은 실패다. 가능한 최소 실행 단위라도 반드시 @action으로 낸다. 단, 기획모드/기획형 입력/질문형 입력은 예외이며 @action을 내면 실패다.
-- payload가 너무 커질 것 같으면 모델 응답 한계에 맞춰 저장 가능한 첫 단위부터 실행하고, 남은 작업은 이어서 진행할 작업 큐/다음 단계로 명시한다. "첫 번째만 하고 끝"내지 않는다.
+- payload가 너무 커질 것 같으면 모델 응답 한계에 맞춰 저장 가능한 첫 단위부터 실행하고, 남은 작업은 다음 저장 단위 범위로 짧게 명시한다. 로컬 작업 큐가 자동으로 이어간다고 쓰지 않는다.
 - 대형 요청은 내부적으로 KeroTaskPlan처럼 계획/실행/검증 단계를 나눠 생각한다. @action 배열에는 가능하면 stepId, phase, acceptance, verifyAfter를 붙인다.
 - 검증 단계가 없거나 저장 결과를 확인하지 못한 대형 요청은 "완료"라고 말하지 않는다. "첫 저장 단위 완료, 다음 단계 진행"처럼 현재 상태를 정확히 말한다.
 - 진행 설명의 간결성은 사용자에게 보이는 말에만 적용한다. @action payload 안의 desc, firstMessage, globalNote, lorebooks.content, regex out, module cjs, plugin script 같은 실제 저장 콘텐츠는 요청 품질에 맞게 충분히 작성한다.
@@ -38557,25 +33804,6 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
 
         if (wantsUIDesign) {
             systemPrompt += UI_DESIGN_FORMAT;
-        }
-
-        const preplannedLargeRequest = await buildKeroPreplannedLargeRequestExecutionResponse(userInput, {
-            ...keroContextOptions,
-            fromKero: true,
-            userRequest: userInput,
-            visibleUserInput,
-            workTargetMode: currentWorkTargetMode,
-            signal: options.signal || keroContextOptions.signal || null
-        });
-        if (preplannedLargeRequest) {
-            addKeroWorkstreamEvent(
-                '대형 요청 선분해',
-                '거대 컨텍스트를 직접 던지지 않고 작은 모델 생성 단위와 청크 작업으로 먼저 분해했습니다.',
-                'action',
-                requestProgressOptions
-            );
-            updateKeroProgress(5, 5, '대형 요청을 작은 실행 단위로 분해했습니다. 결과를 정리하는 중...', requestProgressOptions);
-            return preplannedLargeRequest;
         }
 
         const conversationalPlanningRequest = !requestAllowsMutation || requestIsPlanningMode;
@@ -38657,15 +33885,12 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
     });
     await initializeKeroAssistantState();
     registerKeroRuntimeLocalOps({
-        drainQueuedInputs: drainKeroQueuedInputs,
         renderWorkstream: renderKeroWorkstream,
         updateQueuedInputUi: updateKeroQueuedInputUi,
         addBotMessage,
         handleKeroActionRequest,
         openKeroToolsPanel,
-        bindKeroToolsEvents,
-        runKeroBulkCreate,
-        autoResumeKeroBulkJobsUntilSettled
+        bindKeroToolsEvents
     });
     Logger.debug('=== Event Binding Check ===');
     Logger.debug(`Chat send: ${document.getElementById('risu-trans-chat-send') ? '✅' : '❌'}`);
@@ -45843,7 +41068,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.95 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.96 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -48434,12 +43659,7 @@ function svbNormalizeSubAgentList(value, maxItems = 6, itemLimit = 260) {
 }
 
 function shouldAttemptKeroGatewayRecovery(options = {}) {
-    const mode = normalizeKeroMode(options.keroMode || currentKeroMode);
-    return isKeroExecutionMode(mode)
-        && options.fromKero === true
-        && options.allowGatewayRecovery !== false
-        && options.gatewayRecovery !== true
-        && !isKeroPlanningOnlyRequest(getKeroRecoverySourceText(options));
+    return false;
 }
 
 function getKeroRecoverySourceText(options = {}) {
@@ -48743,6 +43963,39 @@ function shouldAttemptKeroMissingActionFallback(userText = '', options = {}) {
     return hasKeroExplicitMutationIntent(request) || isKeroGatewayFullCharacterBuildRequest(request);
 }
 
+function normalizeKeroRecoveryActionResponseText(response = '') {
+    const source = safeString(response).trim();
+    if (!source) return '';
+    const parsed = parseKeroAction(source);
+    if (parsed.actions?.length) return source;
+    try {
+        const json = JSON.parse(stripAiCodeFence(source).trim());
+        const actions = Array.isArray(json) ? json : [json];
+        if (actions.some((entry) => entry && typeof entry === 'object')) {
+            return `@action ${JSON.stringify(Array.isArray(json) ? json : json)}`;
+        }
+    } catch (_) {}
+    return source;
+}
+
+function isKeroRecoveryActionSetSafe(actions = [], options = {}) {
+    const allowedTargets = new Set(['character', 'lorebook', 'regex', 'trigger', 'asset']);
+    const normalizedActions = ensureArray(actions);
+    if (!normalizedActions.length) return false;
+    return normalizedActions.every((action) => {
+        if (!action || typeof action !== 'object') return false;
+        const type = safeString(action.type);
+        const target = normalizeKeroActionTargetName(action.target);
+        if (!['create', 'update', 'patch'].includes(type)) return false;
+        if (!allowedTargets.has(target)) return false;
+        if (target === 'character') {
+            const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+            if (payload.personality || payload.scenario) return false;
+        }
+        return true;
+    });
+}
+
 function isKeroAutonomousExecutionRequest(text = '') {
     const source = safeString(text);
     if (!source.trim()) return false;
@@ -48812,10 +44065,6 @@ function getKeroPlannedCreateCountForTargetFromActions(actions = [], target = 'l
         if (!action || typeof action !== 'object') return;
         const type = safeString(action.type);
         const actionTarget = normalizeKeroActionTargetName(action.target);
-        if (actionTarget === normalizedTarget && type === 'bulk_create') {
-            count += clampKeroBulkCreateCount(action.count ?? action.total ?? action.requestedCount ?? action.amount ?? action.payload?.count ?? action.payload?.total);
-            return;
-        }
         if (actionTarget === normalizedTarget && type === 'create') {
             const payloadCount = normalizeKeroCreatePayloads(action.payload).length;
             count += payloadCount || clampKeroBulkCreateCount(action.count ?? action.total ?? action.requestedCount ?? action.amount);
@@ -49217,97 +44466,6 @@ function compactKeroGatewayFallbackSourceRequest(request = '', limit = 5200) {
     ].join('\n');
 }
 
-function buildKeroGatewayBulkCreateUserRequest(request, spec = {}, options = {}) {
-    const source = compactKeroGatewayFallbackSourceRequest(request, spec?.target === 'lorebook' ? 5200 : 3600);
-    const referenceDigest = compactKeroExecutionText(options.referenceDigest || '', 4200);
-    const targetLabel = spec?.target === 'regex'
-        ? '정규식'
-        : (spec?.target === 'trigger' ? '트리거' : '로어북');
-    return [
-        source,
-        referenceDigest ? `[참고 자료 다이제스트]\n${referenceDigest}` : '',
-        '',
-        `[이번 ${targetLabel} 생성 기준]`,
-        '사용자 요청과 참고 자료 다이제스트만 기준으로 작성한다.',
-        '플러그인 내장 세계관명, 예시명, 고정 템플릿 앵커를 사용하지 않는다.',
-        '이 요청은 LLM이 다음 청크에서 실제 내용을 설계하기 위한 작업 큐다. 큐 구성 단계의 추정 내용을 확정 설정처럼 취급하지 않는다.',
-        spec?.target === 'lorebook'
-            ? '세계관/역사/인물/관계 항목은 서로 다른 기능과 갈등을 가진 완성 설정으로 작성한다. 기존 참고작품이 있으면 큰 축은 보존하되 이름, 명칭, 문장은 새로 만든다. 번호만 다른 복제품이나 한두 문장 요약은 금지한다.'
-            : '생성 항목은 실제 RisuAI 사용성을 기준으로 작성한다.'
-    ].filter((line) => line !== '').join('\n');
-}
-
-function buildKeroLlmChunkQueueFallbackResponse(userText, options = {}) {
-    const request = safeString(options.userRequest || userText).trim();
-    if (!request) return '';
-    const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
-    if (['module', 'plugin'].includes(fallbackMode)) return '';
-    if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return '';
-    const allowSmallCreate = options.allowSmallCreate === true;
-    const isFullCharacterBuild = isKeroGatewayFullCharacterBuildRequest(request);
-    const referenceDigest = compactKeroExecutionText(
-        options.referenceDigest || buildKeroReferenceDigestForExecution(options.keroContextPayload || options.contextPayload || {}),
-        7200
-    );
-    const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate, fullBuild: isFullCharacterBuild });
-    const minBulkCount = allowSmallCreate ? 1 : 10;
-    const runnableSpecs = bulkSpecs.filter((spec) => spec?.target && Number(spec.count) >= minBulkCount);
-    if (!runnableSpecs.length) return '';
-    const useSubmodelsForBulk = isExplicitKeroSubmodelRequest(request)
-        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels());
-    const labelForTarget = (target) => target === 'regex'
-        ? '정규식'
-        : (target === 'trigger' ? '트리거' : '로어북');
-    const actions = [];
-    runnableSpecs.forEach((spec, index) => {
-        const target = spec.target;
-        const count = clampKeroBulkCreateCount(spec.count);
-        const bulkId = `gateway-bulk-${target}-${Date.now()}-${index}`;
-        const bulkAction = {
-            type: 'bulk_create',
-            target,
-            count,
-            chunkSize: resolveKeroBulkCreateFallbackChunkSize(count, 12),
-            userRequest: buildKeroGatewayBulkCreateUserRequest(request, spec, { referenceDigest }),
-            jobId: bulkId,
-            bulkJobId: bulkId,
-            actionJobId: bulkId,
-            stepId: bulkId,
-            reason: safeString(options.actionReason || 'gateway_timeout_llm_chunk_queue') || 'gateway_timeout_llm_chunk_queue',
-            fullBuild: isFullCharacterBuild,
-            coverageFullBuild: isFullCharacterBuild,
-            ...(spec.subject ? { subject: spec.subject } : {}),
-            ...(spec.perEntity === true ? { perEntity: true } : {}),
-            ...(spec.qualityProfile ? { qualityProfile: spec.qualityProfile } : {}),
-            ...(useSubmodelsForBulk ? { useSubmodels: true } : {})
-        };
-        actions.push(bulkAction);
-    });
-    if (!actions.length) return '';
-    const actionText = actions.length === 1 ? JSON.stringify(actions[0]) : JSON.stringify(actions);
-    const bulkDetail = runnableSpecs.length
-        ? runnableSpecs.map((spec) => `${labelForTarget(spec.target)} ${spec.count}개`).join(', ')
-        : '';
-    const detail = bulkDetail
-        ? `본문을 대신 쓰지 않고 ${bulkDetail} 작업을 LLM 청크 큐로 넘깁니다.`
-        : '본문을 대신 쓰지 않고 LLM 청크 큐로 넘깁니다.';
-    const reasonText = safeString(options.reasonText || '게이트웨이가 큰 응답을 중간에서 끊어서, 같은 대형 응답을 그대로 반복하지 않고').trim();
-    return `${reasonText} ${detail}\n@action ${actionText}`;
-}
-
-function isKeroAssetCreateRequest(text = '') {
-    const source = safeString(text);
-    return /(에셋|asset|이미지|image|프로필\s*(?:에셋|이미지|사진|portrait)|스탠딩|standing|감정\s*(?:이미지|에셋)|emotion\s*image|profile\s*(?:asset|image|portrait))/i.test(source)
-        && isKeroCreateLikeRequest(source);
-}
-
-function buildKeroMissingAssetFallbackResponse(userText, assistantText = '', options = {}) {
-    const request = safeString(options.userRequest || userText).trim();
-    if (!request || !isKeroAssetCreateRequest(request)) return '';
-    if (isKeroQuestionOnlyRequest(request)) return '';
-    return '';
-}
-
 async function buildKeroMissingCharacterActionRecoveryResponse(userText, assistantText = '', options = {}) {
     const request = safeString(options.userRequest || userText).trim();
     const fallbackMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
@@ -49331,12 +44489,12 @@ Rules:
 - Do not invent canned fallback worlds or reuse plugin-internal sample names.
 - Use only the user's request, previous assistant text, and reference digest as source material.
 - If this is a full character/bot build, create the first executable save unit now: prefer one character update with at least 3 useful fields among name, desc, firstMessage, globalNote, backgroundHTML.
-- Put remaining worldbuilding, character roster, history, factions, relationships, rules, and lore into target:"lorebook" bulk_create actions.
+- If lorebook/worldbuilding work also fits in this response, use target:"lorebook" create payload arrays. Do not emit bulk_create.
 - Never use personality or scenario fields. Put those details into desc if needed.
 - If visual UI/status/background/profile quality would materially improve, include a target:"asset" create action before the character update and reference generated asset names in backgroundHTML/regexScripts with {{asset::name}} or {{image::name}}.
 - Do not generate images for pure text edits, code bugfixes, or planning-only requests.
-- If a single response is too large, emit a smaller first character update plus bulk_create jobs; do not ask the user what to do next.
-- If you cannot make a character update safely, emit bulk_create jobs that let the next LLM chunks continue the work.`;
+- If a single response is too large, emit the first complete save unit only and state the next save unit briefly in normal text.
+- If you cannot make a character update safely, output no @action and explain the concrete missing context.`;
     const payload = {
         userRequest: compactKeroGatewayFallbackSourceRequest(request, 5200),
         previousAssistantText: compactKeroExecutionText(assistantText, 7200),
@@ -49364,9 +44522,9 @@ Rules:
             allowGatewayRecovery: false,
             disableLargeRequestPreplan: true
         });
-        const actionResponse = normalizeKeroActionResponseText(response);
+        const actionResponse = normalizeKeroRecoveryActionResponseText(response);
         const parsed = parseKeroAction(actionResponse);
-        if (!isKeroModelPreplannedActionSetSafe(parsed.actions, { userRequest: request })) return '';
+        if (!isKeroRecoveryActionSetSafe(parsed.actions, { userRequest: request })) return '';
         if (hasKeroUnderfilledFullBuildActions(parsed.actions, request)) return '';
         return `LLM action recovery generated executable work.\n${actionResponse}`;
     } catch (error) {
@@ -49386,17 +44544,7 @@ function buildKeroMissingActionFallbackResponse(userText, assistantText = '', op
     if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return '';
     const fullBuild = isKeroGatewayFullCharacterBuildRequest(request);
     if (!request || (!isKeroCreateLikeRequest(request) && !fullBuild)) return '';
-    const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: true, fullBuild });
-    if (!bulkSpecs.length && !fullBuild) return '';
-    const fallback = buildKeroLlmChunkQueueFallbackResponse(request, {
-        ...options,
-        userRequest: request,
-        allowSmallCreate: true,
-        actionReason: 'missing_action_llm_chunk_queue',
-        reasonText: '모델 응답에 실행 액션이 없어 저장을 놓치지 않도록'
-    });
-    if (!fallback) return '';
-    return `모델 응답에 실행 가능한 @action이 없어 저장 작업을 놓치지 않도록 LLM 청크 작업 큐로 보강합니다.\n${fallback}`;
+    return '';
 }
 
 function isKeroNoApplyPlanningOnlyRequest(text = '') {
@@ -49411,172 +44559,6 @@ function isKeroPlanningOnlyRequest(text = '') {
     const deferSignal = /(아직|계속\s*기획|먼저|우선|일단|차근\s*차근|상의|논의|정리해서|정리하고|목록으로|리스트로|TODO로|todo로|해달라고|보여줘|만들어\s*줘|작성해\s*줘)/i.test(source);
     const explicitImmediateExecution = /(바로|즉시|지금|이제)\s*(?:실행|진행|저장|적용|반영|생성|만들|시작)|(?:실행|저장|적용|반영)\s*해(?:줘)?|작업\s*시작|작업\s*진행/i.test(source);
     return planningSignal && deferSignal && !explicitImmediateExecution;
-}
-
-function shouldPreplanKeroLargeCharacterRequest(userText, options = {}) {
-    const request = safeString(options.userRequest || userText).trim();
-    if (!request) return false;
-    if (isKeroExplicitSingleCharacterFieldEditRequest(request)) return false;
-    const mode = normalizeKeroMode(options.keroMode || currentKeroMode);
-    if (!isKeroExecutionMode(mode)) return false;
-    const targetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
-    if (['module', 'plugin'].includes(targetMode)) return false;
-    if (options.gatewayRecovery === true || options.disableLargeRequestPreplan === true) return false;
-    if (isKeroPlanningOnlyRequest(request)) return false;
-    if (isKeroQuestionOnlyRequest(request)) return false;
-    if (!isKeroCreateLikeRequest(request) && !isKeroGatewayFullCharacterBuildRequest(request)) return false;
-    if (isKeroGatewayFullCharacterBuildRequest(request)) return true;
-    return inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false })
-        .some((spec) => spec?.target && Number(spec.count || 0) >= 10);
-}
-
-function buildKeroPreplannedLargeRequestResponse(userText, options = {}) {
-    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
-    return buildKeroLlmChunkQueueFallbackResponse(userText, {
-        ...options,
-        userRequest: safeString(options.userRequest || userText).trim(),
-        allowSmallCreate: false,
-        actionReason: 'large_request_llm_chunk_queue',
-        reasonText: '검증 없는 전체 덮어쓰기를 하지 않고'
-    });
-}
-
-function hasKeroUnsafeEmbeddedTemplateFingerprint(text = '') {
-    return /(슈바봇\s*(?:기본|내장)\s*(?:템플릿|세계관|예시)|canned\s*fallback|fallback\s*(?:world|template|anchor))/i.test(safeString(text));
-}
-
-function normalizeKeroActionResponseText(response = '') {
-    const source = safeString(response).trim();
-    if (!source) return '';
-    const parsed = parseKeroAction(source);
-    if (parsed.actions?.length) return source;
-    try {
-        const json = JSON.parse(stripAiCodeFence(source).trim());
-        const actions = Array.isArray(json) ? json : [json];
-        if (actions.some((entry) => entry && typeof entry === 'object')) {
-            return `@action ${JSON.stringify(Array.isArray(json) ? json : json)}`;
-        }
-    } catch (_) {}
-    return source;
-}
-
-function isKeroModelPreplannedActionSetSafe(actions = [], options = {}) {
-    const request = safeString(options.userRequest || '');
-    const allowedTargets = new Set(['character', 'lorebook', 'regex', 'trigger', 'asset']);
-    const normalizedActions = ensureArray(actions);
-    if (!normalizedActions.length) return false;
-    return normalizedActions.every((action) => {
-        if (!action || typeof action !== 'object') return false;
-        const type = safeString(action.type);
-        const target = normalizeKeroActionTargetName(action.target);
-        if (!['create', 'update', 'bulk_create'].includes(type)) return false;
-        if (!allowedTargets.has(target)) return false;
-        const serialized = JSON.stringify(action);
-        if (hasKeroUnsafeEmbeddedTemplateFingerprint(serialized) && !hasKeroUnsafeEmbeddedTemplateFingerprint(request)) return false;
-        if (target === 'character') {
-            if (type !== 'update') return false;
-            const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
-            const usefulFields = ['name', 'desc', 'firstMessage', 'globalNote', 'backgroundHTML', 'lorebooks', 'regexScripts', 'triggers']
-                .filter((field) => Object.prototype.hasOwnProperty.call(payload, field));
-            if (usefulFields.length < 2) return false;
-            if (payload.personality || payload.scenario) return false;
-        }
-        if (type === 'bulk_create') {
-            const count = Number(action.count || action.total || action.totalCount || 0);
-            if (!Number.isFinite(count) || count <= 0) return false;
-            if (!safeString(action.userRequest).trim()) return false;
-        }
-        return true;
-    });
-}
-
-function mergeKeroPreplannedCoverageActions(modelActions = [], userText = '', options = {}) {
-    const request = safeString(options.userRequest || userText).trim();
-    const merged = ensureArray(modelActions).map((action) => makeCloneableData(action));
-    const hasBulk = merged.some((action) => safeString(action?.type) === 'bulk_create');
-    if (!hasBulk) {
-        const fallback = buildKeroPreplannedLargeRequestResponse(request, options);
-        const fallbackActions = parseKeroAction(fallback).actions || [];
-        fallbackActions
-            .filter((action) => safeString(action?.type) === 'bulk_create')
-            .forEach((action) => merged.push(makeCloneableData(action)));
-    }
-    return merged;
-}
-
-async function buildKeroModelAssistedPreplannedLargeRequestResponse(userText, options = {}) {
-    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
-    const request = safeString(options.userRequest || userText).trim();
-    const referenceDigest = compactKeroExecutionText(
-        options.referenceDigest || buildKeroReferenceDigestForExecution(options.keroContextPayload || options.contextPayload || {}),
-        7200
-    );
-    const bulkSpecs = inferKeroBulkCreateSpecsFromText(request, { allowSmallCreate: false, fullBuild: true });
-    const useRequestedSubmodels = isExplicitKeroSubmodelRequest(request)
-        || svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels());
-    const systemPrompt = `너는 RisuAI 대형 캐릭터/세계관 작업 선분해기다.
-목표는 거대한 원문 전체를 한 번에 처리하지 않고, 지금 즉시 저장 가능한 첫 실행 단위만 만든 뒤 나머지는 bulk_create 작업으로 이어가게 하는 것이다.
-
-절대 규칙:
-- 반드시 @action JSON 하나 또는 JSON 배열만 출력한다. 설명, 마크다운, 코드펜스 금지.
-- 사용자의 요청과 참고 자료 다이제스트를 기준으로 새 이름, 새 세계관, 새 관계 구조를 직접 설계한다.
-- 플러그인 내장 템플릿명, 예시명, 과거 fallback 이름을 쓰지 않는다.
-- 사용자가 기존 작품을 리메이크하라고 하면 참고 자료의 큰 축과 관계 기능은 보존하되 이름/명칭/문장은 새로 만든다. 원문 복붙 금지.
-- 첫 액션은 가능하면 character update로 name, desc, firstMessage, globalNote, backgroundHTML 중 최소 3개를 저장한다.
-- 방대한 세부 세계관/인물/역사/관계는 bulk_create target:"lorebook"으로 넘긴다. bulk_create.userRequest에는 요청 요약과 참고 다이제스트를 충분히 넣는다.
-- personality/scenario 필드는 절대 쓰지 말고 desc에 통합한다.
-- 현재 작업 대상이 캐릭터이고 사용자가 전체 제작/리메이크를 위임했다면 창작적 불확실성만으로 character update를 회피하지 않는다. 요청과 참고 자료 기준으로 최선의 첫 저장 단위를 만든다.
-- 대상이 불명확하거나 캐릭터가 아닌 작업모드일 때만 잘못된 target을 피한다.`;
-    const payload = {
-        userRequest: compactKeroGatewayFallbackSourceRequest(request, 5200),
-        referenceDigest,
-        inferredBulkSpecs: bulkSpecs.map((spec) => ({
-            target: spec.target,
-            count: spec.count,
-            subject: spec.subject || '',
-            perEntity: spec.perEntity === true,
-            qualityProfile: spec.qualityProfile || ''
-        }))
-    };
-    try {
-        const response = await translateSingleChunk(systemPrompt, JSON.stringify(payload, null, 2), 1, {
-            ...options,
-            fromKero: true,
-            keroMode: 'work',
-            workTargetMode: 'character',
-            disableKeroContext: true,
-            keroContextPayload: null,
-            keroContextCompression: null,
-            useSubmodels: useRequestedSubmodels,
-            allowGatewayRecovery: false,
-            disableLargeRequestPreplan: true
-        });
-        const actionResponse = normalizeKeroActionResponseText(response);
-        const parsed = parseKeroAction(actionResponse);
-        if (!isKeroModelPreplannedActionSetSafe(parsed.actions, { userRequest: request })) return '';
-        const actions = mergeKeroPreplannedCoverageActions(parsed.actions, request, { ...options, userRequest: request, referenceDigest });
-        if (!isKeroModelPreplannedActionSetSafe(actions, { userRequest: request })) return '';
-        return `대형 요청을 작은 모델 생성 단위로 먼저 분해했습니다.\n@action ${JSON.stringify(actions.length === 1 ? actions[0] : actions)}`;
-    } catch (error) {
-        Logger.warn('Kero model-assisted large request preplan failed:', error?.message || error);
-        return '';
-    }
-}
-
-async function buildKeroPreplannedLargeRequestExecutionResponse(userText, options = {}) {
-    if (!shouldPreplanKeroLargeCharacterRequest(userText, options)) return '';
-    const request = safeString(options.userRequest || userText).trim();
-    const modelResponse = await buildKeroModelAssistedPreplannedLargeRequestResponse(userText, options);
-    if (modelResponse) return modelResponse;
-    const recoveryResponse = await buildKeroMissingCharacterActionRecoveryResponse(request, '', {
-        ...options,
-        userRequest: request,
-        workTargetMode: normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode),
-        disableLargeRequestPreplan: true,
-        actionReason: 'large_request_llm_action_recovery'
-    });
-    if (recoveryResponse) return recoveryResponse;
-    return buildKeroPreplannedLargeRequestResponse(userText, options);
 }
 
 function isKeroWorkTargetMutationRequest(text = '', mode = currentWorkTargetMode) {
@@ -49726,173 +44708,9 @@ async function buildKeroMissingWorkTargetActionRecoveryResponse(userText, assist
     }
 }
 
-function summarizeKeroPayloadForRecovery(payload = {}) {
-    const lorebooks = ensureArray(payload.lorebooks);
-    const regexScripts = ensureArray(payload.regexScripts);
-    const triggers = ensureArray(payload.triggers);
-    const referenceCharacters = ensureArray(payload.referenceCharacters);
-    const referenceModules = ensureArray(payload.referenceModules);
-    const referencePlugins = ensureArray(payload.referencePlugins);
-    return {
-        workTarget: payload.workTarget ? {
-            mode: payload.workTarget.mode || payload.workTarget.modeLabel || "",
-            name: payload.workTarget.targetName || payload.workTarget.targetId || "",
-            id: payload.workTarget.targetId || "",
-            mixedWorkTargetsEnabled: payload.workTarget.mixedWorkTargetsEnabled === true,
-            mixedWriteTargets: payload.workTarget.mixedWriteTargets || {}
-        } : null,
-        basic: payload.basic || {},
-        descriptions: payload.descriptions ? {
-            hasDesc: !!safeString(payload.descriptions.desc).trim(),
-            hasFirstMessage: !!safeString(payload.descriptions.firstMessage).trim(),
-            alternateGreetingCount: ensureArray(payload.descriptions.alternateGreetings).length
-        } : null,
-        counts: {
-            lorebooks: lorebooks.length,
-            regexScripts: regexScripts.length,
-            triggers: triggers.length,
-            referenceCharacters: referenceCharacters.length,
-            referenceModules: referenceModules.length,
-            referencePlugins: referencePlugins.length
-        },
-        selectedParts: payload.partSelections ? {
-            lorebook: payload.partSelections.lorebook?.selectedIndexes || [],
-            regex: payload.partSelections.regex?.selectedIndexes || []
-        } : null
-    };
-}
-
-function buildKeroGatewayRecoveryPrompt(userText, options = {}) {
-    const summary = summarizeKeroPayloadForRecovery(options.keroContextPayload || {});
-    const workTargetMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
-    const mixedRecoveryEnabled = keroMixedWorkTargetsEnabled === true;
-    const workTargetRule = mixedRecoveryEnabled
-        ? `- MIXED WORK TARGETS ARE ENABLED. Output actions only for the current work target or selected mixedWriteTargets. Module actions need id, plugin actions need name, and character-scoped actions need targetCharacterId/characterId. If no safe selected target exists, output NO_ACTION.`
-        : ['module', 'plugin'].includes(workTargetMode)
-        ? `- CURRENT WORK TARGET MODE IS "${workTargetMode}". Do not output character/desc/lorebook/regex/trigger top-level actions. Output only ${workTargetMode} create/update/delete actions, or NO_ACTION if a safe payload is not possible.`
-        : '';
-    return `너는 RisuAI 전문 작업 에이전트 케로다.
-직전 메인 모델 호출은 대형 요청 때문에 게이트웨이 타임아웃이 발생했다. 지금 목표는 작업을 포기하지 않고, 작은 실행 단위로 바꿔 실제 저장 액션을 시작하는 것이다.
-
-규칙:
-${workTargetRule}
-- 긴 설명이나 회의록을 쓰지 말고, 바로 실행 가능한 작은 @action을 만든다.
-- 한 응답에서 모든 로어북/코드/설정을 완성하려 하지 않는다.
-- 로어북/정규식/트리거 생성이 응답 한계를 넘길 수 있으면 개수 기준으로 자르지 말고 bulk_create를 사용한다.
-- bulk_create의 chunkSize는 기본 25개 단위 이상의 다중 항목 처리로 잡는다. 사용자가 더 큰 chunkSize를 지정하면 보존하고, 요약/압축 요청이 없으면 itemCharLimit을 낮게 박아 내용을 줄이지 않는다. 실제 실패나 응답 크기 초과 때만 런타임이 청크를 나눈다.
-- 캐릭터 전체 제작/변환 요청이면 character update로 name, desc, firstMessage, globalNote, backgroundHTML/상태창의 첫 완성 단위를 저장하고, 큰 로어북 묶음은 bulk_create로 넘긴다.
-- personality/성격, scenario/시나리오 필드는 쓰지 말고 desc에 통합한다.
-- 상태창/HTML/CSS를 만들면 프리뷰만 보여주지 말고 backgroundHTML 또는 regexScripts에 실제 저장 payload를 넣는다.
-- 상태창, 배경, 프로필 패널, 인터페이스, 지도, 문장, 아이템 카드, 타이틀/스플래시처럼 이미지가 품질을 올리는 작업이면 target:"asset" create 액션을 먼저 만들고, 뒤따르는 character/background/regex 액션에서 {{asset::name}} 또는 {{image::name}}으로 참조한다.
-- 순수 텍스트 수정, 코드 버그수정, 설정 변경, 기획/분석 전용 요청에서는 이미지 생성을 끼워 넣지 않는다.
-- 작업이 매우 크면 "이번 응답에서 첫 저장 단위를 적용하고, 나머지는 bulk_create/작업 큐가 이어간다"는 짧은 안내 후 @action을 출력한다.
-- @action은 응답 마지막에 단독으로 둔다. 복합 작업은 JSON 배열로 묶는다.
-
-현재 작업 요약:
-${JSON.stringify(summary, null, 2)}
-
-사용자 요청:
-다음 user message의 복구용 축약 요청을 기준으로 처리한다. 원문 전체를 다시 요구하지 말고, 축약 요청과 현재 작업 요약만으로 저장 가능한 첫 실행 단위를 만든다.`;
-}
-
-function buildKeroGatewayRecoveryUserText(userText, options = {}) {
-    const request = safeString(options.userRequest || userText).trim();
-    if (!request) return "";
-    const limit = Math.max(1200, Number(options.gatewayRecoveryUserTextLimit) || KERO_GATEWAY_RECOVERY_USER_TEXT_LIMIT);
-    const targetLabel = (target) => {
-        if (target === "regex") return "정규식";
-        if (target === "trigger") return "트리거";
-        if (target === "lorebook") return "로어북";
-        return safeString(target || "작업");
-    };
-    let inferredSpecs = [];
-    try {
-        inferredSpecs = inferKeroBulkCreateSpecsFromText(request, {
-            allowSmallCreate: true,
-            fullBuild: isKeroGatewayFullCharacterBuildRequest(request)
-        });
-    } catch (_) {
-        inferredSpecs = [];
-    }
-    const specLine = inferredSpecs.length
-        ? inferredSpecs.map((spec) => `${targetLabel(spec.target)} ${spec.count}개`).join(", ")
-        : "";
-    const compactRequest = [
-        specLine ? `[복구 추론 작업] ${specLine}` : "",
-        request
-    ].filter(Boolean).join("\n\n");
-    if (compactRequest.length <= limit) {
-        return compactRequest;
-    }
-    const headLimit = Math.max(800, Math.floor(limit * 0.65));
-    const tailLimit = Math.max(400, limit - headLimit - 240);
-    return [
-        "[게이트웨이 복구용 축약 요청]",
-        `원문 길이: ${request.length}자 / 전달 한도: ${limit}자`,
-        specLine ? `추론된 대량 작업: ${specLine}` : "",
-        "원문 전체를 다시 보내면 같은 524가 반복될 수 있어 앞/뒤 핵심만 전달한다. 이 축약본으로 저장 가능한 작은 @action을 만든다.",
-        "",
-        "[원문 앞부분]",
-        request.slice(0, headLimit),
-        "",
-        "[원문 뒷부분]",
-        request.slice(-tailLimit)
-    ].filter((line) => line !== "").join("\n");
-}
-
 async function runKeroGatewayRecovery(userText, options = {}, error = null) {
     const friendly = getFriendlyModelErrorMessage(error).replace(/\s+/g, ' ').slice(0, 260);
-    const recoveryProgressOptions = normalizeKeroProgressOptions(options);
-    addKeroWorkstreamEvent('장시간 작업 복구 전환', `${friendly} · 작은 실행 단위로 다시 요청합니다.`, 'retry', recoveryProgressOptions);
-    markKeroGatewayRecoveryActive(`${friendly} · 작은 실행 단위로 다시 요청합니다.`);
-    updateKeroProgress(1, 2, '대형 요청을 작은 실행 단위로 전환하는 중...', recoveryProgressOptions);
-    const recoveryMode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
-    if (['module', 'plugin'].includes(recoveryMode)) {
-        const workTargetFallback = await buildKeroMissingWorkTargetActionRecoveryResponse(userText, '', {
-            ...options,
-            workTargetMode: recoveryMode,
-            progressOptions: recoveryProgressOptions
-        });
-        if (workTargetFallback) {
-            addKeroWorkstreamEvent('모듈/플러그인 복구 액션 생성', '현재 작업 대상 전용 저장 액션으로 복구했습니다.', 'action', recoveryProgressOptions);
-            return workTargetFallback;
-        }
-        addKeroWorkstreamEvent('모듈/플러그인 복구 보류', '안전한 모듈/플러그인 저장 액션을 만들 수 없어 캐릭터 작업으로 전환하지 않습니다.', 'warning', recoveryProgressOptions);
-    }
-    const recoveryPrompt = buildKeroGatewayRecoveryPrompt(userText, options);
-    const recoveryOptions = {
-        ...options,
-        useSubmodels: svbToBoolean(options.useSubmodels ?? options.useSubAgents ?? options.subagents, hasEnabledKeroSubmodels()),
-        gatewayRecovery: true,
-        allowGatewayRecovery: false,
-        disableKeroContext: true,
-        keroContextPayload: null,
-        keroContextCompression: null,
-        timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs : 180000
-    };
-    const recoveryUserText = buildKeroGatewayRecoveryUserText(userText, recoveryOptions);
-    let response = '';
-    try {
-        response = await translateSingleChunk(recoveryPrompt, recoveryUserText, 1, recoveryOptions);
-        updateKeroProgress(2, 2, '작은 실행 단위 응답 수신 완료', recoveryProgressOptions);
-        const actionResponse = normalizeKeroActionResponseText(response);
-        const parsed = parseKeroAction(actionResponse);
-        if (parsed.actions?.length) return actionResponse;
-    } catch (recoveryError) {
-        Logger.warn('Kero gateway LLM recovery failed:', recoveryError?.message || recoveryError);
-        addKeroWorkstreamEvent('LLM 복구 응답 실패', recoveryError?.message || String(recoveryError), 'warning', recoveryProgressOptions);
-    }
-    const queueFallback = buildKeroLlmChunkQueueFallbackResponse(userText, {
-        ...options,
-        actionReason: 'gateway_recovery_llm_chunk_queue',
-        reasonText: 'LLM 복구 응답이 실행 액션을 만들지 못해'
-    });
-    if (queueFallback) {
-        addKeroWorkstreamEvent('LLM 청크 작업 큐 구성', '본문 생성 없이 다음 LLM 청크가 처리할 bulk_create 작업만 구성했습니다.', 'action', recoveryProgressOptions);
-        markKeroGatewayRecoveryActive('LLM 청크 작업 큐를 만들어 작은 실행 단위로 계속 진행합니다.');
-        return queueFallback;
-    }
-    return response;
+    throw new Error(friendly || '모델 호출이 실패했습니다.');
 }
 
 function svbResolveContextPayloadPath(contextPayload, path) {
@@ -51312,6 +46130,9 @@ async function translateSingleChunk(systemPrompt, userText, retries = 3, options
     }
     effectiveOptions.progressOptions = effectiveProgressOptions;
     const effectiveKeroMode = normalizeKeroMode(effectiveOptions.keroMode || currentKeroMode);
+    retries = isKeroExecutionMode(effectiveKeroMode)
+        ? 1
+        : Math.max(1, Math.floor(Number(retries) || 1));
     if (isKeroExecutionMode(effectiveKeroMode)) {
         effectiveOptions.timeoutMs = resolveKeroWorkModelCallTimeoutMs(effectiveOptions);
         effectiveSystemPrompt = appendKeroSteeringBlockToPrompt(effectiveSystemPrompt, effectiveOptions.keroSteeringBlock);
