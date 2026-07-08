@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.105
-//@version 1.5.105
+//@display-name 🐸 SuperVibeBot v1.5.106
+//@version 1.5.106
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.105는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.106는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.106 Release Notes
+ * - v1.5.106: detects underfilled all/each-character image asset requests before execution by comparing planned asset actions against known lorebook/character identities
+ * - v1.5.106: asks the main model to add only the missing asset create actions when a request like "각 인물들 기본 스텐딩 에셋" returns only part of the character list
+ * - v1.5.106: matches romanized English asset filenames such as seo_jaeyun_profile back to Korean identity names and defines the missing asset fallback hook safely
+ *
  * SuperVibeBot v1.5.105 Release Notes
  * - v1.5.105: turns Asset Studio module export into an API-assisted Risu module package with modulePayload, assets, lorebook, regex, and importable module create/update actions
  * - v1.5.105: classifies exported image assets by character, situation, background, UI, item, expression, and NSFW while normalizing asset names and preserving source names in the asset index
@@ -12561,6 +12566,32 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
         const fullBuildProbe = isKeroGatewayFullCharacterBuildRequest('make this bot fantasy lorebook');
         const assetOnlyRequest = '각 인물들 흰 배경 상체 기본 스텐딩 에셋 하나씩 만들어주고 각 인물들 감정 에셋도 다양하게 만들어줘';
         const assetOnlyBulkSpecs = inferKeroBulkCreateSpecsFromText(assetOnlyRequest, { allowSmallCreate: true, fullBuild: false });
+        const assetCoverageChar = {
+            globalLore: ['백서하', '강태성', '유민재', '박준모', '서재윤', '정요한', '최가람', '문아진', '한시율', '이도경']
+                .map((name) => ({ comment: name, key: name, content: `${name} 인물 설정` }))
+        };
+        const underfilledAssetActions = [{
+            type: 'create',
+            target: 'asset',
+            payload: {
+                assets: [
+                    ['baek_seoha_profile', 'upper_body, white_background'],
+                    ['gang_taeseong_profile', 'upper_body, white_background'],
+                    ['yu_minjae_profile', 'upper_body, white_background'],
+                    ['park_junmo_profile', 'upper_body, white_background'],
+                    ['seo_jaeyun_profile', 'upper_body, white_background']
+                ].map(([name, prompt]) => ({
+                    assetType: 'additional',
+                    name,
+                    prompt
+                }))
+            }
+        }];
+        const assetUnderfillPlan = getKeroAssetUnderfillPlan(
+            '각 인물들 기본 흰배경 상반신 스텐딩 에셋 만들어줘 파일명은 영어 이름으로',
+            underfilledAssetActions,
+            assetCoverageChar
+        );
         return {
             generated: typeof response === 'string',
             hasAction: /@action/.test(response),
@@ -12591,7 +12622,10 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             fullBuildProbeType: typeof fullBuildProbe === 'boolean',
             assetOnlyFocused: isKeroAssetFocusedRequest(assetOnlyRequest) === true,
             assetOnlyNotFullBuild: isKeroGatewayFullCharacterBuildRequest(assetOnlyRequest) === false,
-            assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0
+            assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0,
+            assetUnderfillDetected: assetUnderfillPlan.shouldRecover === true,
+            assetUnderfillRemaining: assetUnderfillPlan.remainingCount,
+            assetUnderfillMissingNames: assetUnderfillPlan.missingCandidateNames
         };
     });
     if (!result.ok) {
@@ -12630,6 +12664,8 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.assetOnlyFocused) problems.push('asset-only request was not detected as asset-focused');
     if (!value.assetOnlyNotFullBuild) problems.push('asset-only request was misdetected as full character build');
     if (!value.assetOnlyNoBulkSpecs) problems.push('asset-only request inferred bulk_create specs');
+    if (!value.assetUnderfillDetected || Number(value.assetUnderfillRemaining || 0) !== 5) problems.push(`asset underfill coverage failed (${value.assetUnderfillRemaining})`);
+    if (!ensureArray(value.assetUnderfillMissingNames).includes('정요한') || ensureArray(value.assetUnderfillMissingNames).includes('서재윤')) problems.push('asset underfill romanized filename matching failed');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
@@ -13194,7 +13230,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.105',
+            '//@version 1.5.106',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -30033,6 +30069,225 @@ ${currentVars || '{}'}
         return names;
     }
 
+    function normalizeKeroAssetCoverageIdentityKey(name = '') {
+        return svbNormalizeAssetIdentityName(name)
+            .toLowerCase()
+            .replace(/[\s_-]+/g, '');
+    }
+
+    function getKeroHangulRomanizationCandidates(value = '') {
+        const source = svbNormalizeAssetIdentityName(value);
+        if (!/[가-힣]/.test(source)) return [];
+        const initials = ['g', 'kk', 'n', 'd', 'tt', 'r', 'm', 'b', 'pp', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'];
+        const medials = ['a', 'ae', 'ya', 'yae', 'eo', 'e', 'yeo', 'ye', 'o', 'wa', 'wae', 'oe', 'yo', 'u', 'wo', 'we', 'wi', 'yu', 'eu', 'ui', 'i'];
+        const finals = ['', 'g', 'kk', 'ks', 'n', 'nj', 'nh', 'd', 'l', 'lg', 'lm', 'lb', 'ls', 'lt', 'lp', 'lh', 'm', 'b', 'bs', 's', 'ss', 'ng', 'j', 'ch', 'k', 't', 'p', 'h'];
+        let base = '';
+        for (const char of source) {
+            const code = char.charCodeAt(0);
+            if (code >= 0xAC00 && code <= 0xD7A3) {
+                const offset = code - 0xAC00;
+                base += initials[Math.floor(offset / 588)] + medials[Math.floor((offset % 588) / 28)] + finals[offset % 28];
+            } else if (/[A-Za-z0-9]/.test(char)) {
+                base += char.toLowerCase();
+            }
+        }
+        base = base.replace(/[^a-z0-9]+/g, '');
+        const candidates = new Set(base ? [base] : []);
+        const firstHangul = (source.match(/[가-힣]/) || [])[0] || '';
+        const surnameVariants = {
+            '김': [['gim', 'kim']],
+            '이': [['i', 'lee'], ['i', 'yi']],
+            '박': [['bak', 'park']],
+            '최': [['choe', 'choi']],
+            '정': [['jeong', 'jung']],
+            '강': [['gang', 'kang']],
+            '유': [['yu', 'yoo']],
+            '문': [['mun', 'moon']],
+            '신': [['sin', 'shin']],
+            '임': [['im', 'lim']],
+            '윤': [['yun', 'yoon']],
+            '조': [['jo', 'cho']],
+            '장': [['jang', 'chang']],
+            '오': [['o', 'oh']],
+            '백': [['baek', 'baik'], ['baek', 'paek']]
+        };
+        ensureArray(surnameVariants[firstHangul]).forEach(([from, to]) => {
+            if (base.startsWith(from)) candidates.add(`${to}${base.slice(from.length)}`);
+        });
+        return Array.from(candidates).filter(Boolean);
+    }
+
+    function getKeroAssetIdentityMatchKeys(name = '') {
+        const keys = new Set();
+        const direct = normalizeKeroAssetCoverageIdentityKey(name);
+        if (direct) keys.add(direct);
+        getKeroHangulRomanizationCandidates(name).forEach((candidate) => {
+            const key = safeString(candidate).toLowerCase().replace(/[^a-z0-9가-힣]+/g, '');
+            if (key) keys.add(key);
+        });
+        return Array.from(keys).filter((key) => key.length >= 2);
+    }
+
+    function isKeroAllIdentityAssetRequest(text = '') {
+        const source = safeString(text);
+        if (!isKeroAssetFocusedRequest(source)) return false;
+        return /(각\s*(?:인물|캐릭터)|인물들|캐릭터들|모든\s*(?:인물|캐릭터)|전체\s*(?:인물|캐릭터)|전원|each\s+character|all\s+characters?|every\s+character)/i.test(source);
+    }
+
+    function summarizeKeroPlannedAssetItems(actions = [], char = null, knownNames = []) {
+        const planned = [];
+        ensureArray(actions).forEach((action) => {
+            if (!action || typeof action !== 'object') return;
+            if (normalizeKeroActionTargetName(action.target) !== 'asset' || normalizeKeroActionTypeName(action.type) !== 'create') return;
+            const items = normalizeKeroAssetCreatePayloads(action);
+            items.forEach((item) => {
+                const identityName = svbNormalizeAssetIdentityName(
+                    item.identityName || inferKeroAssetIdentityNameFromItem(char, item, knownNames)
+                );
+                planned.push({
+                    name: safeString(item.name).trim(),
+                    label: safeString(item.label).trim(),
+                    identityName,
+                    prompt: safeString(item.prompt).replace(/\s+/g, ' ').slice(0, 260),
+                    count: Math.max(1, Math.floor(Number(item.count) || 1)),
+                    stylePreset: safeString(item.stylePreset).trim(),
+                    presetId: safeString(item.presetId).trim(),
+                    profileId: safeString(item.profileId).trim()
+                });
+            });
+        });
+        return planned;
+    }
+
+    function getKeroAssetUnderfillPlan(userText = '', actions = [], char = null) {
+        const expectedIdentityNames = isKeroAllIdentityAssetRequest(userText)
+            ? collectKeroAssetKnownIdentityNames(char)
+            : [];
+        const plannedItems = summarizeKeroPlannedAssetItems(actions, char, expectedIdentityNames);
+        if (expectedIdentityNames.length < 2) {
+            return { shouldRecover: false, expectedIdentityNames, plannedItems, missingCandidateNames: [], remainingCount: 0 };
+        }
+        const plannedKeys = new Set(plannedItems
+            .map(item => normalizeKeroAssetCoverageIdentityKey(item.identityName))
+            .filter(Boolean));
+        const exactMissing = plannedKeys.size
+            ? expectedIdentityNames.filter(name => !plannedKeys.has(normalizeKeroAssetCoverageIdentityKey(name)))
+            : [];
+        const plannedCount = plannedItems.reduce((sum, item) => sum + Math.max(1, Math.floor(Number(item.count) || 1)), 0);
+        const remainingCount = Math.max(0, expectedIdentityNames.length - plannedCount);
+        const missingCandidateNames = exactMissing.length && exactMissing.length < expectedIdentityNames.length
+            ? exactMissing
+            : (remainingCount > 0 ? [] : exactMissing);
+        return {
+            shouldRecover: remainingCount > 0 || (exactMissing.length > 0 && exactMissing.length < expectedIdentityNames.length),
+            expectedIdentityNames,
+            plannedItems,
+            missingCandidateNames,
+            remainingCount: remainingCount || missingCandidateNames.length
+        };
+    }
+
+    async function buildKeroUnderfilledAssetActionRecoveryResponse(userText, assistantText = '', actions = [], options = {}) {
+        const request = safeString(options.userRequest || userText).trim();
+        if (!request || !isKeroAssetFocusedRequest(request)) return '';
+        const mode = normalizeWorkTargetMode(options.workTargetMode || currentWorkTargetMode);
+        if (mode !== 'character') return '';
+        let char = options.character || null;
+        if (!char) {
+            try {
+                char = await getCharacterData();
+            } catch (_) {
+                char = null;
+            }
+        }
+        const plan = getKeroAssetUnderfillPlan(request, actions, char);
+        if (!plan.shouldRecover || plan.expectedIdentityNames.length < 2) return '';
+        const progressOptions = normalizeKeroProgressOptions(options);
+        const missingDetail = plan.missingCandidateNames.length
+            ? `${plan.missingCandidateNames.length}명 후보`
+            : `${plan.remainingCount}장 이상 부족`;
+        addKeroWorkstreamEvent('이미지 에셋 부족분 감지', `전체 인물 ${plan.expectedIdentityNames.length}명 대비 계획 ${plan.plannedItems.length}개 · ${missingDetail}`, 'warning', progressOptions);
+
+        const missingContext = plan.expectedIdentityNames.slice(0, 80).map((identityName) => {
+            const context = collectKeroAssetContextText(char, { userRequest: request }, { identityName, name: identityName, prompt: request });
+            return {
+                identityName,
+                context: safeString(context).replace(/\s+/g, ' ').slice(0, 1200)
+            };
+        });
+        const systemPrompt = `You are SuperVibeBot's image asset action recovery layer.
+The previous action set created only part of an "all characters / each character" image asset request.
+
+Rules:
+- Return only @action JSON or a JSON action array. No markdown, no explanation, no questions.
+- Create only target:"asset", type:"create" actions.
+- Prefer one action with payload.assets containing every missing character.
+- Do not repeat already planned asset names or already planned identityName values.
+- Use only expectedIdentityNames from the payload.
+- If missingCandidateNames is non-empty, generate only those names. If it is empty, infer missing names from plannedAssetItems and generate exactly the remainingCount.
+- Each asset must be assetType:"additional".
+- If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
+- Keep prompt concise: pose/composition/background only. Put fixed appearance in identityPrompt.
+- For upper-body white-background standing assets, use prompt like "upper_body, standing pose, looking_at_viewer, white_background" plus a character-appropriate pose.
+- Keep identityPrompt short but specific from the character context: gender cue, hair, eyes, body, outfit, symbol props. Do not default everyone to 1girl.
+- Include negative prompt for image quality and wrong identity/gender avoidance.`;
+        const payload = {
+            userRequest: request,
+            previousAssistantText: safeString(assistantText).slice(0, 6000),
+            expectedIdentityNames: plan.expectedIdentityNames,
+            missingCandidateNames: plan.missingCandidateNames,
+            remainingCount: plan.remainingCount,
+            plannedAssetItems: plan.plannedItems,
+            identityContext: missingContext,
+            outputShape: {
+                type: 'create',
+                target: 'asset',
+                payload: {
+                    assets: [{
+                        assetType: 'additional',
+                        name: 'english_snake_case_profile',
+                        identityName: 'original identity name',
+                        identityPrompt: 'short stable appearance prompt',
+                        prompt: 'upper_body, standing pose, looking_at_viewer, white_background',
+                        negative: 'lowres, worst_quality, bad_anatomy, text, logo, watermark, wrong_gender, different_character'
+                    }]
+                }
+            }
+        };
+        try {
+            const response = await translateSingleChunk(systemPrompt, JSON.stringify(payload, null, 2), 1, {
+                ...options,
+                fromKero: true,
+                keroMode: 'work',
+                workTargetMode: 'character',
+                disableKeroContext: true,
+                keroContextPayload: null,
+                keroContextCompression: null,
+                useSubmodels: false,
+                allowGatewayRecovery: false,
+                disableLargeRequestPreplan: true,
+                progressOptions
+            });
+            const actionResponse = normalizeKeroRecoveryActionResponseText(response);
+            const parsed = parseKeroAction(actionResponse);
+            const assetActions = ensureArray(parsed.actions).filter((action) =>
+                normalizeKeroActionTargetName(action.target) === 'asset'
+                && normalizeKeroActionTypeName(action.type) === 'create'
+                && normalizeKeroAssetCreatePayloads(action).length > 0
+            );
+            if (!assetActions.length || !isKeroRecoveryActionSetSafe(assetActions, { userRequest: request })) return '';
+            return `LLM asset action recovery generated missing image assets.\n@action ${JSON.stringify(assetActions)}`;
+        } catch (error) {
+            Logger.warn('Kero asset underfill recovery failed:', error?.message || error);
+            addKeroWorkstreamEvent('이미지 에셋 부족분 복구 실패', error?.message || String(error), 'warning', progressOptions);
+            return '';
+        }
+    }
+
+    function buildKeroMissingAssetFallbackResponse() {
+        return '';
+    }
+
     function inferKeroAssetIdentityNameFromItem(char, item = {}, knownNames = null) {
         const candidates = ensureArray(knownNames || collectKeroAssetKnownIdentityNames(char));
         if (!candidates.length) return '';
@@ -30041,7 +30296,12 @@ ${currentVars || '{}'}
             .join('\n')
             .toLowerCase();
         if (!source.trim()) return '';
-        return candidates.find(name => source.includes(name.toLowerCase())) || '';
+        const compactSource = source.replace(/[\s_-]+/g, '').replace(/[^a-z0-9가-힣]+/g, '');
+        return candidates.find((name) =>
+            getKeroAssetIdentityMatchKeys(name).some((key) =>
+                source.includes(key.toLowerCase()) || compactSource.includes(key.toLowerCase())
+            )
+        ) || '';
     }
 
     function keroAssetPushUnique(list, value) {
@@ -34575,6 +34835,28 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                 );
                 parsed.invalidActions = [...ensureArray(parsed.invalidActions), ...ensureArray(parsed.actions).map((action) => makeCloneableData(action))];
                 parsed.actions = [];
+            }
+            if (isWorkMode && shouldRunMutationFromRequest && normalizeWorkTargetMode(taskWorkTargetMode) === 'character' && isKeroAssetFocusedRequest(taskRequestText)) {
+                const assetRecoveryResponse = await buildKeroUnderfilledAssetActionRecoveryResponse(modelUserInput, parsed.text, parsed.actions, {
+                    ...options,
+                    userRequest: taskRequestText,
+                    workTargetMode: taskWorkTargetMode,
+                    progressOptions: taskProgressOptions,
+                    signal: taskAbortSignal
+                });
+                if (assetRecoveryResponse) {
+                    const assetRecoveryParsed = parseKeroAction(assetRecoveryResponse);
+                    if (assetRecoveryParsed.actions?.length) {
+                        parsed.actions = [...ensureArray(parsed.actions), ...assetRecoveryParsed.actions];
+                        parsed.text = [parsed.text, assetRecoveryParsed.text].filter(Boolean).join('\n\n').trim();
+                        addKeroWorkstreamEvent(
+                            '이미지 에셋 누락분 복구',
+                            `${assetRecoveryParsed.actions.length}개 asset create 액션을 추가했습니다.`,
+                            'action',
+                            taskProgressOptions
+                        );
+                    }
+                }
             }
             const noExecutableActions = !parsed.actions || parsed.actions.length === 0;
             const modelAskedInsteadOfActing = delegatedCharacterExecution && noExecutableActions && isKeroClarificationOrApprovalResponse(parsed.text);
@@ -42780,7 +43062,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.105 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.106 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
