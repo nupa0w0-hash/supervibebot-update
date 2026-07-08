@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.98
-//@version 1.5.98
+//@display-name 🐸 SuperVibeBot v1.5.99
+//@version 1.5.99
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.98는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.99는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.99 Release Notes
+ * - v1.5.99: restores the missing executeKeroWorkTargetAction runtime bridge so asset actions no longer fail before reaching the image asset executor
+ * - v1.5.99: restores module/plugin work-target failure artifact helpers used by the bridge error path
+ *
  * SuperVibeBot v1.5.98 Release Notes
  * - v1.5.98: replaces the shallow Kero asset prompt helper with a Danbooru-style tag library for subject, age, hair, eyes, body, outfit, prop, genre, composition, expression, background, quality, and negative tags
  * - v1.5.98: keeps military/genre references such as soldier, officer, and Girls' Frontline out of gender detection so character sex is inferred from actual character text instead of role words
@@ -13233,7 +13237,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.98',
+            '//@version 1.5.99',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -29657,6 +29661,190 @@ ${currentVars || '{}'}
         ]);
     }
 
+    function getWorkTargetArtifactName(name, fallback = 'work-target-draft') {
+        const cleaned = safeString(name || fallback)
+            .trim()
+            .replace(/[\\/:*?"<>|]+/g, '_')
+            .slice(0, 96);
+        return cleaned || fallback;
+    }
+
+    async function getWorkTargetActionArtifacts(action) {
+        const target = normalizeKeroActionTargetName(action?.target);
+        const payload = action?.payload && typeof action.payload === 'object' ? action.payload : {};
+        const actionSnapshot = {
+            target,
+            type: normalizeKeroActionTypeName(action?.type),
+            id: action?.id || action?.moduleId || action?.pluginName || action?.name || null,
+            payload: action?.payload ?? null
+        };
+        const artifacts = [];
+
+        if (target === 'plugin') {
+            const pluginName = getWorkTargetArtifactName(payload.name || action?.name || action?.pluginName || action?.id, 'plugin-draft');
+            const script = safeString(payload.script || action?.script || '');
+            if (script) {
+                artifacts.push({ type: 'code', name: `${pluginName}.js`, language: 'javascript', content: script });
+            }
+            if (actionSnapshot.type === 'delete') {
+                try {
+                    const db = await risuai.getDatabase();
+                    const plugins = Array.isArray(db?.plugins) ? db.plugins : [];
+                    const key = safeString(action?.name || action?.pluginName || action?.targetId || payload.name || manualSelectedPluginKey).trim();
+                    const index = findPluginIndexByKey(plugins, key);
+                    if (index >= 0) {
+                        const existing = makeCloneableData(plugins[index]);
+                        const existingName = getWorkTargetArtifactName(getPluginKey(existing), pluginName);
+                        artifacts.push({ type: 'code', name: `${existingName}.pending-delete-backup.js`, language: 'javascript', content: safeString(existing.script || '') });
+                        artifacts.push({ type: 'json', name: `${existingName}.pending-delete-plugin.json`, content: JSON.stringify(existing, null, 2) });
+                    }
+                } catch (error) {
+                    Logger.warn('Failed to build plugin failure artifacts:', error?.message || error);
+                }
+            }
+            artifacts.push({ type: 'json', name: `${pluginName}.plugin-action.json`, content: JSON.stringify(actionSnapshot, null, 2) });
+            return artifacts;
+        }
+
+        const moduleName = getWorkTargetArtifactName(payload.name || payload.id || action?.name || action?.id || action?.moduleId, 'module-draft');
+        if (target === 'module' && actionSnapshot.type === 'delete') {
+            try {
+                const db = await risuai.getDatabase();
+                const modules = Array.isArray(db?.modules) ? db.modules : [];
+                const id = safeString(action?.id || action?.moduleId || action?.targetId || payload.id || manualSelectedModuleId).trim();
+                const index = findModuleIndexById(modules, id);
+                if (index >= 0) {
+                    const existing = makeCloneableData(modules[index]);
+                    const existingName = getWorkTargetArtifactName(getModuleDisplayName(existing), moduleName);
+                    artifacts.push({ type: 'json', name: `${existingName}.pending-delete-module.json`, content: JSON.stringify(existing, null, 2) });
+                }
+            } catch (error) {
+                Logger.warn('Failed to build module failure artifacts:', error?.message || error);
+            }
+        }
+        artifacts.push({ type: 'json', name: `${moduleName}.module-action.json`, content: JSON.stringify(actionSnapshot, null, 2) });
+        return artifacts;
+    }
+
+    async function persistWorkTargetFailureArtifacts(action, artifacts = []) {
+        const record = {
+            timestamp: Date.now(),
+            target: normalizeKeroActionTargetName(action?.target),
+            type: normalizeKeroActionTypeName(action?.type),
+            artifacts: normalizeKeroArtifacts(artifacts)
+        };
+        try {
+            const existing = await Storage.get(WORK_TARGET_FAILURE_ARTIFACT_KEY);
+            const list = Array.isArray(existing) ? existing : [];
+            list.unshift(record);
+            await Storage.set(WORK_TARGET_FAILURE_ARTIFACT_KEY, list.slice(0, WORK_TARGET_BACKUP_LIMIT));
+            return true;
+        } catch (error) {
+            Logger.warn('Failed to persist work target failure artifacts:', error?.message || error);
+        }
+        try {
+            if (typeof localStorage === 'undefined') return false;
+            const raw = localStorage.getItem(WORK_TARGET_FAILURE_ARTIFACT_KEY);
+            const existing = raw ? JSON.parse(raw) : [];
+            const list = Array.isArray(existing) ? existing : [];
+            list.unshift(record);
+            localStorage.setItem(WORK_TARGET_FAILURE_ARTIFACT_KEY, JSON.stringify(list.slice(0, WORK_TARGET_BACKUP_LIMIT)));
+            return true;
+        } catch (fallbackError) {
+            Logger.warn('Failed to persist work target failure artifacts fallback:', fallbackError?.message || fallbackError);
+            return false;
+        }
+    }
+
+    async function executeKeroWorkTargetAction(action, options = {}) {
+        const target = normalizeKeroActionTargetName(action?.target);
+        const type = normalizeKeroActionTypeName(action?.type);
+        if (!['module', 'plugin'].includes(target)) return false;
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        if (!['create', 'update', 'delete'].includes(type)) {
+            await addBotMessage(`${getTargetLabel(target)}은 create/update/delete 작업만 지원합니다.`);
+            return { handled: true, success: false, keepProposal: true };
+        }
+
+        const label = getTargetLabel(target);
+        const preview = getWorkTargetActionPreview(action);
+
+        if (type === 'delete') {
+            const targetPreview = preview && preview !== '미리보기 없음' ? ` · ${preview.slice(0, 120)}` : '';
+            const confirmed = confirmUnlessKeroApprovalBypass(
+                `${label} 삭제는 중요한 작업입니다. 정말 진행할까요?\n\n` +
+                `${preview.slice(0, 900)}\n\n` +
+                '취소하면 저장된 데이터는 변경하지 않습니다.'
+            );
+            if (!confirmed) {
+                await addBotMessage(`${label} 삭제를 취소했습니다. 저장된 데이터는 변경하지 않았습니다.`);
+                addKeroWorkstreamEvent('삭제 취소', `${label} 삭제 사용자 취소`, 'cancelled', actionProgressOptions);
+                return { handled: true, success: false, keepProposal: false };
+            }
+            addKeroWorkstreamEvent('삭제 자동 진행', `${label} 삭제${targetPreview} · 백업 후 적용`, 'action', actionProgressOptions);
+        }
+
+        addKeroWorkstreamEvent('저장 준비', `${label} ${getKeroActionLabel(type)} · 백업 후 적용`, 'pending', actionProgressOptions);
+        let result;
+        try {
+            result = target === 'module'
+                ? await applyModuleWorkTargetAction(action, options)
+                : await applyPluginWorkTargetAction(action, options);
+        } catch (error) {
+            Logger.error(`${target} action failed:`, error);
+            addKeroWorkstreamEvent('저장 실패', `${label} ${getKeroActionLabel(type)} 실패: ${error.message}`, 'error', actionProgressOptions);
+            let failureArtifacts = [];
+            try {
+                failureArtifacts = await getWorkTargetActionArtifacts(action);
+            } catch (artifactError) {
+                Logger.warn('Failed to build work target failure artifacts:', artifactError?.message || artifactError);
+                failureArtifacts = [{
+                    type: 'json',
+                    name: 'work-target-failed-action.json',
+                    content: JSON.stringify({
+                        target,
+                        type,
+                        preview: getWorkTargetActionPreview(action)
+                    }, null, 2)
+                }];
+            }
+            const artifactsPersisted = await persistWorkTargetFailureArtifacts(action, failureArtifacts);
+            try {
+                await addBotMessage(
+                    `❌ ${label} ${getKeroActionLabel(type)} 실패: ${error.message}\n\n` +
+                    '저장은 적용하지 않았어. 백업/저장 문제를 해결한 뒤 다시 실행하거나 아래 작업물을 복사해서 보관할 수 있어.',
+                    { artifacts: failureArtifacts }
+                );
+            } catch (messageError) {
+                Logger.warn('Work target failure message failed:', messageError?.message || messageError);
+                const artifactText = artifactsPersisted
+                    ? '실패 아티팩트는 유지했습니다.'
+                    : '실패 아티팩트 저장은 실패했습니다. 표시된 내용을 복사해 주세요.';
+                alert(`${label} ${getKeroActionLabel(type)} 실패: ${error.message}\n\n${artifactText}`);
+            }
+            return { handled: true, success: false, keepProposal: true };
+        }
+
+        addKeroWorkstreamEvent('저장 완료', result.message, 'done', actionProgressOptions);
+        try {
+            await refreshCharacterList();
+        } catch (error) {
+            Logger.warn('Work target refresh after save failed:', error?.message || error);
+        }
+        try {
+            updateWorkTargetButtonLabel();
+        } catch (error) {
+            Logger.warn('Work target label update after save failed:', error?.message || error);
+        }
+        try {
+            await addBotMessage(result.message, { artifacts: result.artifacts });
+        } catch (error) {
+            Logger.warn('Work target success message failed after save:', error?.message || error);
+            alert(`${result.message}\n\n저장은 완료됐지만 케로 대화창 메시지 표시에 실패했습니다.`);
+        }
+        return { handled: true, success: true, keepProposal: false };
+    }
+
     // 미리보기 생성 함수 - 개선된 결과가 캐시에 있으면 해당 결과를 표시
     function getKeroAssetPayloadObject(action = {}) {
         return isPlainObject(action?.payload) ? action.payload : {};
@@ -42549,7 +42737,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.98 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.99 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
