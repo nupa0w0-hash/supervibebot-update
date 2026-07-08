@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js"
+          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js"
 
           for file in SuperVibeBot.update.js SuperVibeBot.js SuperVibeBot.auto.js; do
             test -s "$file"
@@ -40,7 +40,7 @@ jobs:
             grep -q "SUPER_VIBE_BOT_UPDATE_URL = SUPER_VIBE_BOT_CANONICAL_UPDATE_URL" "$file"
 
             header="$(sed -n '1,20p' "$file")"
-            ! grep -E 'releases/latest/download|cdn\.jsdelivr\.net|github\.com/.*/raw/|raw\.githubusercontent\.com/[^/]+/[^/]+/main/SuperVibeBot\.js|SuperVibeBot\.(update|auto)\.js' <<< "$header"
+            ! grep -E 'releases/latest/download|cdn\.jsdelivr\.net|github\.com/.*/raw/|raw\.githubusercontent\.com/[^/]+/[^/]+/refs/heads/main/SuperVibeBot\.js|SuperVibeBot\.(update|auto)\.js' <<< "$header"
           done
 
           cmp -s SuperVibeBot.update.js SuperVibeBot.js
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js"
+          expected_url="https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js"
           local_version="$(sed -n 's|^//@version ||p' SuperVibeBot.update.js | head -n 1)"
 
           for attempt in $(seq 1 12); do
