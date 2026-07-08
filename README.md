@@ -2,14 +2,14 @@
 
 SuperVibeBot for RisuAI.
 
-Latest version: `1.5.107`
+Latest version: `1.5.112`
 
 ## Official Update URL
 
 There is exactly one canonical RisuAI auto-update URL:
 
 ```text
-https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
+https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 ```
 
 Do not change `//@update-url` to any other host, file, redirect, or alias unless the repository itself is moved and the new channel is verified end to end.
@@ -29,7 +29,7 @@ These must not be used in `//@update-url`:
 - GitHub Releases `latest/download` URLs.
 - Versioned GitHub release asset URLs.
 - `github.com/.../raw/...` compatibility URLs.
-- `raw.githubusercontent.com/.../main/...` short raw URLs.
+- `raw.githubusercontent.com/.../refs/heads/main/...` for this repository, because a `refs` branch can make GitHub raw resolve stale content.
 - jsDelivr or other CDN mirrors.
 - `SuperVibeBot.update.js` or `SuperVibeBot.auto.js` alias files.
 
