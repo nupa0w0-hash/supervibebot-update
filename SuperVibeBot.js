@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.103
-//@version 1.5.103
+//@display-name 🐸 SuperVibeBot v1.5.104
+//@version 1.5.104
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.103는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.104는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.104 Release Notes
+ * - v1.5.104: removes the visible Asset Studio generation tab and direct emotion-image registration controls so the studio opens as one asset management surface
+ * - v1.5.104: replaces the mobile-clipping header management dropdown with a compact native management selector and tightens the mobile header controls
+ * - v1.5.104: changes Asset Studio folders into a thin horizontal chip shelf and treats legacy emotionImages as normal listed assets instead of a separate visible category
+ *
  * SuperVibeBot v1.5.103 Release Notes
  * - v1.5.103: merges Asset Studio additional assets and emotion images into one folder-first asset library with type filters, folder chips, unified selection, and gallery/list views
  * - v1.5.103: auto-assigns generated assets to identity/background folders and lets mixed selected assets move, rename, replace, delete, and seed Wellspring LoRA training together
@@ -13184,7 +13189,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.103',
+            '//@version 1.5.104',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -35336,10 +35341,10 @@ ${metaBlock}
 - 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 넣는다. identityPrompt는 짧게 쓴다: 남성은 1boy, solo, male_focus + 머리/눈/체형/복식, 여성은 1girl, solo, female_focus + 머리/눈/체형/복식. 불명확하면 1girl로 밀지 말고 solo와 외형 단서만 쓴다. 각 assets[].prompt에는 표정/포즈/배경 차이만 쓴다.
 - Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D character illustration, polished SDXL character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 이미지 생성 직후 Wellspring LoRA 학습까지 필요하면 같은 create asset payload에 trainLora:true, loraName, trainingSteps, waitForTraining:false를 넣는다. 생성된 이미지의 Wellspring gallery job id 또는 저장 에셋을 학습 데이터로 재사용한다.
-- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"1girl, solo, female_focus, black_hair, long_hair, blue_eyes, school_uniform","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"character_profile","prompt":"upper_body, neutral expression, white_background"},{"assetType":"emotion","name":"character_smile","prompt":"soft smile, upper_body, white_background"}]}}
+- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"1girl, solo, female_focus, black_hair, long_hair, blue_eyes, school_uniform","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"character_profile","prompt":"upper_body, neutral expression, white_background"},{"assetType":"additional","name":"character_smile","prompt":"soft smile, upper_body, white_background"}]}}
 - 이미 등록된 에셋으로 Wellspring LoRA를 학습하려면 asset_manage train_lora를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"train_lora","identityName":"문아진","loraName":"문아진_identity","kind":"all","names":["moon_ajin_profile","moon_ajin_smile"],"trainingSteps":600,"waitForTraining":false}
 - 완료된 Wellspring LoRA를 identity에 연결하려면 asset_manage refresh_loras를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"refresh_loras","identityName":"문아진","loraName":"문아진_identity","loraStrength":0.8}
-- 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
+- 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI 에셋 필드에 등록한다. 신규 이미지는 기본적으로 additional asset으로 저장한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
 - 에셋 prompt는 세 층으로 단순 분리한다: stylePrompt/artistTags는 같은 봇 전체의 고정 그림체, identityPrompt는 인물별 고정 외형/성별/복식/상징, assets[].prompt는 해당 컷의 표정/포즈/구도다. danbooruTags는 사용자가 명시한 태그팩이 있을 때만 짧게 쓴다. 생성 후 시스템은 최종 positive/negative prompt를 Asset Studio 이미지별 기록에 저장한다.
@@ -35348,10 +35353,10 @@ ${metaBlock}
 - 에셋 확장자 정리: @action {"type":"asset_manage","target":"asset","operation":"normalize_extensions","kind":"all","all":true}
 - 에셋 폴더 이동: @action {"type":"asset_manage","target":"asset","operation":"move_folder","kind":"additional","names":["profile_main"],"folder":"profiles"}
 - 에셋 패턴 변경: @action {"type":"asset_manage","target":"asset","operation":"pattern_rename","kind":"additional","folder":"profiles","pattern":"{folder}_{nn}_{base}"}
-- 에셋 삭제: @action {"type":"asset_manage","target":"asset","operation":"delete","kind":"emotion","names":["old_happy"]}
+- 에셋 삭제: @action {"type":"asset_manage","target":"asset","operation":"delete","kind":"all","names":["old_happy"]}
 - 파일 선택이 필요한 이미지 ZIP 가져오기/일괄 교체는 케로가 로컬 파일을 직접 선택할 수 없다. 그런 경우에는 에셋 스튜디오의 "이미지 ZIP 가져오기" 또는 "일괄 교체" 버튼을 사용하라고 안내하고, 저장형 JSON 액션으로 위장하지 않는다.
 - 인물 기본 프로필 에셋, 대표 인물 프로필 이미지, 스탠딩 이미지처럼 캐릭터가 아닌 이미지 파일을 만드는 요청은 lorebook/regex/trigger가 아니라 target:"asset"이다.
-- assetType:"additional"은 {{image::에셋명}}으로 쓰는 추가 에셋, assetType:"emotion"은 감정 이미지 슬롯이다. 프로필/인물 카드/스탠딩 기본 이미지는 기본적으로 additional을 사용한다.
+- assetType:"additional"은 {{image::에셋명}} 또는 {{asset::에셋명}}으로 쓰는 일반 에셋이다. 신규 프로필/인물 카드/스탠딩/표정 이미지는 additional을 사용한다. assetType:"emotion"은 기존 Risu emotionImages 호환이 꼭 필요하다고 사용자가 명시한 경우에만 쓴다.
 - 플러그인 자동 업데이트를 요청받으면 script 상단 512바이트 안에 //@version을 두고, 배포 URL이 확인된 경우에만 //@update-url에 https://... .js 파일 URL을 추가한다. 임의/가짜 update-url은 넣지 않는다.
 - //@update-url은 https로 시작하는 .js 파일 URL이어야 하며 RisuAI의 Range: bytes=0-512 브라우저 fetch에서 본문이 실제로 반환되어야 한다. GitHub를 쓰는 경우 raw.githubusercontent.com URL을 쓰되, 현재 Range 응답이 최신 버전을 반환하는 경로를 직접 검증해 사용한다.
 - SuperVibeBot 업데이트 URL은 검증된 기존 raw URL을 유지한다. 임의 GitHub/CDN/대체 update-url로 바꾸지 않는다.
@@ -35361,7 +35366,7 @@ ${metaBlock}
 - 슈바봇 케로 에셋은 무조건 2D anime/illustration 계열이다. 실사/사진/현실풍을 만들지 않는다.
 - prompt와 negative 양쪽 모두에 photo, photograph, photography, photorealistic, realistic, hyperrealistic, live action, real person, cosplay, DSLR, 3D, CGI, render, cinematic 같은 실사/사진/3D 차단 유발 단어를 쓰지 않는다. 차단 회피를 위해 negative에 금지어를 넣는 방식도 금지다.
 - 그림체는 stylePreset 또는 stylePrompt로 고정할 수 있다. 내장 stylePreset: sdxl-character, clean-anime, soft-pastel, sharp-keyvisual, dark-fantasy, watercolor, ink-manhwa, retro-cel, game-card.
-- 에셋 스튜디오 프리셋의 캐릭터 고정 프롬프트(characterPrompt/identityPrompt)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 같은 인물의 프로필/감정/스탠딩 묶음을 만들 때는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 캐릭터 고정 프롬프트에 두고, 케로의 각 asset prompt에는 표정/포즈/장면 차이만 명확히 쓴다.
+- 에셋 스튜디오 프리셋의 캐릭터 고정 프롬프트(characterPrompt/identityPrompt)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 같은 인물의 프로필/표정/스탠딩 묶음을 만들 때는 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 캐릭터 고정 프롬프트에 두고, 케로의 각 asset prompt에는 표정/포즈/장면 차이만 명확히 쓴다.
 - 에셋 스튜디오 프리셋의 기본 고정 태그(promptPrefix/promptSuffix/negativePrefix/negativeSuffix)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 사용자가 그곳에 그림체 태그를 넣어둔 경우 같은 태그를 케로 prompt에 과도하게 반복하지 않는다.
 - 에셋 스튜디오 프리셋의 Wellspring 참조 이미지(referenceImagePath)가 설정되어 있으면 시스템이 최종 이미지 호출 직전에 해당 리수 에셋을 읽어 참조 이미지로 전달한다. 같은 캐릭터의 프로필/감정/스탠딩 묶음을 만들 때는 참조 이미지를 캐릭터 기준으로 보고, 케로 prompt는 표정/포즈/장면 차이에 집중한다.
 - ComfyUI/custom workflow 템플릿은 {{prompt}}에 최종 합성 프롬프트를 받는다. 캐릭터 전용 노드가 있으면 {{character_prompt}} 또는 {{identity_prompt}}, 네거티브 쪽은 {{character_negative}} 또는 {{identity_negative}}를 쓴다.
@@ -35378,14 +35383,14 @@ ${metaBlock}
 - 남성 예시: 1boy, solo, male_focus, black_hair, short_hair, brown_eyes, broad_shoulders, military_uniform, tactical_vest, upper_body, looking_at_viewer, white_background.
 - 여성 예시: 1girl, solo, female_focus, brown_hair, long_hair, green_eyes, slender, school_uniform, cardigan, upper_body, looking_at_viewer, smile, white_background.
 - 소년/소녀/청년/성인/중년 차이는 태그를 늘리는 방식이 아니라 얼굴선, 체형, 복식, 자세 설명으로 구분한다.
-- 같은 봇의 여러 인물 에셋은 하나의 기본 그림체(stylePreset/stylePrompt/artistTags)를 공유하고, identityPrompt는 인물마다 다르게 둔다. “전부 비슷한 여자/남자”가 되지 않도록 머리색, 눈색, 체형, 복식 실루엣, 상징 소품을 각 인물마다 다르게 만든다.
+- 같은 봇의 여러 인물 에셋은 하나의 기본 그림체(stylePreset/stylePrompt/artistTags)를 공유하고, identityPrompt는 인물마다 다르게 둔다. 전부 비슷한 여자/남자가 되지 않도록 머리색, 눈색, 체형, 복식 실루엣, 상징 소품을 각 인물마다 다르게 만든다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, outfit, lighting, background 순서로 짧게 쓴다. profile image는 "upper_body, looking_at_viewer, white_background", standing은 "full_body, standing" 정도로 충분하다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
 - Danbooru 태그 자료는 서버 호출 전제가 아니라 프롬프트 작성 기준으로 사용한다. 긴 문장을 그대로 쓰지 말고 "짧은 시각 단위"만 identityPrompt 또는 assets[].prompt에 반영한다. 예: black_hair, short_hair, blue_eyes, military_uniform, tactical_gear, cloak, armor.
 - Danbooru 태그는 인물 일관성 유지용 identityPrompt와 장면/표정용 assets[].prompt를 분리한다. 같은 인물 묶음 안에서는 identityName을 통일하고, identityPrompt는 매 에셋마다 다시 쓰지 않아도 런타임이 자동 합성한다. assets[].prompt에 매번 전체 외형을 다시 쓰지 말고 neutral expression, smile, angry, embarrassed, arms_crossed, salute, white_background처럼 변화 요소를 쓴다.
 - LoRA/trigger word는 사용자가 알려준 경우에만 정확히 넣는다. 모르는 LoRA trigger를 지어내지 않는다. "LoRA가 연결된 프로필을 사용" 같은 말로 prompt를 비워두면 안 된다.
-- 프로필 에셋은 additional, 감정 슬롯은 emotion을 쓴다. 감정 슬롯은 같은 캐릭터 디자인을 유지하고 expression/action만 바꾼다.
+- 신규 이미지 에셋은 additional을 쓴다. 표정/감정 변형도 같은 캐릭터 디자인을 유지한 일반 에셋으로 만들고, expression/action만 바꾼다. 기존 Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 사용한다.
 - 이미지에 글자/로고/상태창/UI가 필요한 요청이 아니면 negative에 text, logo, watermark를 넣어 이미지 안 글자를 막는다.
 
         ### update (수정)
@@ -42769,7 +42774,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.103 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.104 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -52035,13 +52040,12 @@ async function openAssetStudio() {
         thumbUrlCache.clear();
     };
 
-    let activeTab = 'assets';
     let emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
     let additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
     let assetStudioMeta = normalizeAssetStudioMeta(readAssetStudioMetaFromCharacter(char));
     let selectedAssetIds = new Set();
-    let assetViewModes = { all: 'gallery', additional: 'gallery', emotion: 'gallery' };
-    let pendingBatchReplaceKind = 'additional';
+    let assetViewModes = { all: 'gallery' };
+    let pendingBatchReplaceKind = 'all';
     let generatedImageResult = null;
     let generationRequestId = 0;
     let wellspringRemoteOptions = { presets: [], workflows: [], projects: [], loras: [], trainingJobs: [] };
@@ -52368,8 +52372,8 @@ async function openAssetStudio() {
                 ${assetThumbHtml(kind, idx, isEmotion ? { ...asset, ext } : { ...asset, ext })}
             </div>
             <div class="svb-as-card-info">
-                <strong title="${escapeHtml(name)}">${escapeHtml(name || (isEmotion ? '감정 이미지' : '추가 에셋'))}</strong>
-                <span><b class="svb-as-type-pill ${isEmotion ? 'emotion' : 'additional'}">${isEmotion ? '감정' : '에셋'}</b> ${escapeHtml(folder || '미분류')} · ${usageCount ? `사용 ${usageCount}` : '미사용'} · ${escapeHtml(ext.toUpperCase())}</span>
+                <strong title="${escapeHtml(name)}">${escapeHtml(name || '에셋')}</strong>
+                <span>${escapeHtml(folder || '미분류')} · ${usageCount ? `사용 ${usageCount}` : '미사용'} · ${escapeHtml(ext.toUpperCase())}</span>
                 <code>${escapeHtml(tag)}</code>
             </div>
             <div class="svb-as-card-actions">
@@ -52381,7 +52385,7 @@ async function openAssetStudio() {
             <details class="svb-as-card-edit">
                 <summary>이름/경로 편집</summary>
                 <div class="svb-as-row-fields">
-                    <input class="svb-as-inline ${isEmotion ? 'svb-as-emotion-name' : 'svb-as-add-name'}" data-idx="${idx}" data-prev-name="${escapeHtml(name)}" value="${escapeHtml(name)}" placeholder="${isEmotion ? '감정명' : '에셋 이름'}">
+                    <input class="svb-as-inline ${isEmotion ? 'svb-as-emotion-name' : 'svb-as-add-name'}" data-idx="${idx}" data-prev-name="${escapeHtml(name)}" value="${escapeHtml(name)}" placeholder="에셋 이름">
                     <input class="svb-as-inline ${isEmotion ? 'svb-as-emotion-path' : 'svb-as-add-path'}" data-idx="${idx}" value="${escapeHtml(path)}" placeholder="assets/... 또는 data:">
                     ${isEmotion ? '' : `<input class="svb-as-inline ext svb-as-add-ext" data-idx="${idx}" value="${escapeHtml(ext)}" placeholder="확장자">`}
                 </div>
@@ -52437,17 +52441,12 @@ async function openAssetStudio() {
     function renderSummary() {
         const summary = document.getElementById('svb-as-summary');
         if (!summary) return;
-        summary.textContent = `${getCharacterDisplayName(char)} · 감정 ${emotionAssets.length}개 · 추가 에셋 ${additionalAssets.length}개`;
+        summary.textContent = `${getCharacterDisplayName(char)} · 에셋 ${additionalAssets.length + emotionAssets.length}개`;
     }
 
     function renderTabs() {
-        studioWindow.querySelectorAll('.svb-as-tab').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === activeTab);
-        });
         const assetPanel = document.getElementById('svb-as-assets-panel');
-        const generatePanel = document.getElementById('svb-as-generate-panel');
-        if (assetPanel) assetPanel.style.display = activeTab === 'assets' ? 'flex' : 'none';
-        if (generatePanel) generatePanel.style.display = activeTab === 'generate' ? 'flex' : 'none';
+        if (assetPanel) assetPanel.style.display = 'flex';
     }
 
     function getSelectedImageProfile() {
@@ -53310,8 +53309,7 @@ async function openAssetStudio() {
     }
 
     function getPresetPartTargetLabel(part = {}) {
-        if (part.assetType === 'emotion') return `감정: ${part.emotionTarget || part.label}`;
-        return `추가 에셋: ${part.slotName || part.label}`;
+        return `에셋: ${part.assetType === 'emotion' ? (part.emotionTarget || part.label) : (part.slotName || part.label)}`;
     }
 
     function imageRatioOptionsHtml(value) {
@@ -53333,7 +53331,7 @@ async function openAssetStudio() {
                 </button>
                 <div class="svb-as-output-meta">
                     <strong>${escapeHtml(output.name || `생성본 ${outputIndex + 1}`)}</strong>
-                    <span>${escapeHtml(output.target === 'emotion' ? '감정 이미지' : '추가 에셋')}</span>
+                    <span>에셋</span>
                     <code>${escapeHtml(tag)}</code>
                 </div>
                 ${promptDetails}
@@ -53355,7 +53353,7 @@ async function openAssetStudio() {
         const totalJobs = parts.reduce((sum, part) => sum + (part.enabled === false ? 0 : Math.max(1, Number(part.count) || 1)), 0);
         if (summary) summary.textContent = `${preset.name} · 파트 ${parts.length}개 · 기본 생성 ${totalJobs}장`;
         if (!parts.length) {
-            list.innerHTML = '<div class="svb-as-empty">이 프리셋에는 아직 파트가 없습니다. 파트 추가를 눌러 감정이나 스탠딩 이미지 묶음을 직접 만들 수 있습니다.</div>';
+            list.innerHTML = '<div class="svb-as-empty">이 프리셋에는 아직 파트가 없습니다. 파트 추가로 에셋 묶음을 만들 수 있습니다.</div>';
             return;
         }
         list.innerHTML = parts.map((part, idx) => {
@@ -53365,8 +53363,8 @@ async function openAssetStudio() {
                     <input class="svb-as-part-check" type="checkbox" data-part-idx="${idx}" ${part.enabled === false ? '' : 'checked'} title="선택 생성에 포함">
                     <input class="svb-as-input svb-as-part-label" value="${escapeHtml(part.label)}" placeholder="파트 이름">
                     <select class="svb-as-input svb-as-part-target">
-                        <option value="emotion" ${part.assetType === 'emotion' ? 'selected' : ''}>감정 이미지</option>
-                        <option value="additional" ${part.assetType !== 'emotion' ? 'selected' : ''}>추가 에셋</option>
+                        <option value="additional" ${part.assetType !== 'emotion' ? 'selected' : ''}>에셋</option>
+                        <option value="emotion" ${part.assetType === 'emotion' ? 'selected' : ''}>호환 태그</option>
                     </select>
                     <input class="svb-as-input svb-as-part-asset-name" value="${escapeHtml(targetName)}" placeholder="저장 이름">
                 </div>
@@ -53699,26 +53697,24 @@ async function openAssetStudio() {
     function renderAssetLibrary() {
         const list = document.getElementById('svb-as-asset-list');
         if (!list) return;
-        const kindFilter = normalizeAssetKind(document.getElementById('svb-as-kind-filter')?.value || 'all', 'all');
         const folderFilter = renderFolderFilter('svb-as-asset-folder-filter', 'all');
         const query = safeString(document.getElementById('svb-as-asset-search')?.value).trim().toLowerCase();
         const additionalUsage = svbCollectAssetUsage(char, additionalAssets.map(item => item.name), []);
         const emotionUsage = svbCollectAssetUsage(char, [], emotionAssets.map(item => item.name));
         const allRefs = getAllAssetRefs();
-        renderAssetFolderShelf(kindFilter === 'all' ? allRefs : allRefs.filter(ref => ref.kind === kindFilter));
+        renderAssetFolderShelf(allRefs);
         updateAssetViewModeButtons('all');
         const selectedCount = document.getElementById('svb-as-asset-selected-count');
         if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind('all')}개 선택`;
         list.className = `svb-as-list svb-as-asset-grid svb-as-unified-list ${assetViewModes.all === 'list' ? 'list' : 'gallery'}`;
         const filtered = allRefs.filter(({ kind, asset }) => {
-            if (kindFilter !== 'all' && kind !== kindFilter) return false;
             const folder = getAssetFolder(kind, asset.name);
             if (folderFilter === '__none__' && folder) return false;
             if (folderFilter && folderFilter !== '__none__' && folder !== folderFilter) return false;
-            return !query || [kind === 'emotion' ? 'emotion 감정' : 'additional 추가 배경 인물', asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
+            return !query || [asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
         });
         if (!filtered.length) {
-            list.innerHTML = '<div class="svb-as-empty">표시할 에셋이 없습니다. 파일을 업로드하거나 이미지를 생성해 저장하세요.</div>';
+            list.innerHTML = '<div class="svb-as-empty">표시할 에셋이 없습니다. 파일을 업로드하거나 직접 등록하세요.</div>';
             return;
         }
         list.innerHTML = filtered.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
@@ -53732,7 +53728,6 @@ async function openAssetStudio() {
         refreshStateFromCharacter();
         renderSummary();
         renderTabs();
-        renderGenerationControls();
         renderAssetLibrary();
     }
 
@@ -53757,15 +53752,15 @@ async function openAssetStudio() {
         const name = safeString(document.getElementById('svb-as-emotion-name')?.value).trim();
         const path = safeString(document.getElementById('svb-as-emotion-path')?.value).trim();
         if (!name || !path) {
-            alert('감정명과 경로를 모두 입력해주세요.');
+            alert('에셋 이름과 경로를 모두 입력해주세요.');
             return;
         }
         const existing = emotionAssets.findIndex(item => item.name.toLowerCase() === name.toLowerCase());
-        if (existing >= 0 && !confirm('같은 감정명이 있습니다. 덮어쓸까요?')) return;
+        if (existing >= 0 && !confirm('같은 에셋 이름이 있습니다. 덮어쓸까요?')) return;
         if (existing >= 0) emotionAssets[existing] = { name, path };
         else emotionAssets.push({ name, path });
         setCharacterField(char, 'emotionImages', svbEmotionTuples(emotionAssets));
-        await saveCurrentAssets('감정 이미지를 저장했습니다.');
+        await saveCurrentAssets('에셋을 저장했습니다.');
         renderAll();
     }
 
@@ -53783,7 +53778,7 @@ async function openAssetStudio() {
         if (existing >= 0) additionalAssets[existing] = { name, path, ext };
         else additionalAssets.push({ name, path, ext });
         setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(additionalAssets));
-        await saveCurrentAssets('추가 에셋을 저장했습니다.');
+        await saveCurrentAssets('에셋을 저장했습니다.');
         renderAll();
     }
 
@@ -53809,7 +53804,7 @@ async function openAssetStudio() {
                 setStatus(`업로드 중... ${count}/${fileList.length}`, 'info');
             }
             setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(additionalAssets));
-            await saveCurrentAssets(`${count}개 파일을 추가 에셋으로 등록했습니다.`);
+            await saveCurrentAssets(`${count}개 파일을 에셋으로 등록했습니다.`);
             renderAll();
         } catch (error) {
             Logger.error('Asset upload failed:', error);
@@ -53894,7 +53889,7 @@ async function openAssetStudio() {
         }
         if (target === 'emotion') {
             const existing = emotionAssets.findIndex(item => item.name.toLowerCase() === name.toLowerCase());
-            if (existing >= 0 && !confirm('같은 감정명이 있습니다. 덮어쓸까요?')) return;
+            if (existing >= 0 && !confirm('같은 에셋 이름이 있습니다. 덮어쓸까요?')) return;
         }
         const btn = document.getElementById('svb-as-gen-save');
         try {
@@ -53919,7 +53914,7 @@ async function openAssetStudio() {
             });
             emotionAssets = saved.emotionAssets;
             additionalAssets = saved.additionalAssets;
-            setStatus(target === 'emotion' ? '생성 이미지를 감정 이미지로 저장했습니다.' : '생성 이미지를 추가 에셋으로 저장했습니다.', 'success');
+            setStatus('생성 이미지를 에셋으로 저장했습니다.', 'success');
             generatedImageResult = null;
             setGeneratedPreview(null);
             renderAll();
@@ -53964,7 +53959,7 @@ async function openAssetStudio() {
                 alert('가져올 에셋 데이터가 없습니다.');
                 return;
             }
-            if (!confirm(`감정 ${nextEmotion.length}개, 추가 에셋 ${nextAdditional.length}개를 현재 캐릭터에 병합할까요?`)) return;
+            if (!confirm(`에셋 ${nextEmotion.length + nextAdditional.length}개를 현재 캐릭터에 병합할까요?`)) return;
             const emoMap = new Map(emotionAssets.map(item => [item.name.toLowerCase(), item]));
             nextEmotion.forEach(item => emoMap.set(item.name.toLowerCase(), item));
             emotionAssets = Array.from(emoMap.values());
@@ -54532,7 +54527,7 @@ async function openAssetStudio() {
             visibleAssetIndexes(cleanKind).forEach(idx => selectedAssetIds.add(assetSelectionId(cleanKind, idx)));
         }
         renderAll();
-        setStatus(`${cleanKind === 'all' ? '에셋' : (cleanKind === 'emotion' ? '감정 이미지' : '추가 에셋')} 표시 항목을 선택했습니다.`, 'info');
+        setStatus('표시 중인 에셋을 선택했습니다.', 'info');
     }
 
     function clearSelectedAssets(kind = '') {
@@ -54795,7 +54790,7 @@ async function openAssetStudio() {
                 alert('가져올 모듈 데이터가 없습니다.');
                 return;
             }
-            if (!confirm(`감정 ${nextEmotion.length}개, 추가 에셋 ${nextAdditional.length}개, 프리셋 ${nextPresets.length}개를 병합할까요?`)) return;
+            if (!confirm(`에셋 ${nextEmotion.length + nextAdditional.length}개, 프리셋 ${nextPresets.length}개를 병합할까요?`)) return;
             const emoMap = new Map(emotionAssets.map(item => [item.name.toLowerCase(), item]));
             nextEmotion.forEach(item => emoMap.set(item.name.toLowerCase(), item));
             emotionAssets = Array.from(emoMap.values());
@@ -54828,16 +54823,10 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-btn.danger{border-color:#fecaca;color:#b91c1c}
             #svb-asset-studio-window .svb-as-btn:disabled{opacity:.6;cursor:wait}
             #svb-asset-studio-window .svb-as-close{width:32px;padding:0;font-size:18px}
-            #svb-asset-studio-window .svb-as-header-menu{position:relative}
-            #svb-asset-studio-window .svb-as-header-menu > summary{display:inline-flex;align-items:center;justify-content:center;list-style:none}
-            #svb-asset-studio-window .svb-as-header-menu > summary::-webkit-details-marker{display:none}
-            #svb-asset-studio-window .svb-as-header-menu-panel{position:absolute;right:0;top:38px;z-index:4;width:190px;border:1px solid #dbe3ef;border-radius:10px;background:#fff;box-shadow:0 16px 42px rgba(15,23,42,.18);padding:8px;display:grid;grid-template-columns:1fr;gap:6px}
-            #svb-asset-studio-window .svb-as-header-menu-panel .svb-as-btn{width:100%;justify-content:flex-start}
+            #svb-asset-studio-window .svb-as-manage-select{width:108px;height:32px;padding:0 8px;border-radius:7px;font-weight:750}
+            #svb-asset-studio-window .svb-as-hidden-actions{display:none}
             #svb-asset-studio-window .svb-as-body{flex:1;min-height:0;display:flex;background:#f8fafc}
             #svb-asset-studio-window .svb-as-left{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff}
-            #svb-asset-studio-window .svb-as-tabs{display:flex;gap:8px;padding:12px;border-bottom:1px solid #e5e7eb}
-            #svb-asset-studio-window .svb-as-tab{flex:1;border:1px solid #dbe3ef;background:#fff;color:#475569;border-radius:8px;height:34px;font-size:12px;font-weight:800;cursor:pointer}
-            #svb-asset-studio-window .svb-as-tab.active{background:#eff6ff;border-color:#2563eb;color:#1d4ed8}
             #svb-asset-studio-window .svb-as-statusbar{min-height:38px;padding:8px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;box-sizing:border-box}
             #svb-asset-studio-window .svb-as-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto;padding:12px}
             #svb-asset-studio-window .svb-as-form{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:10px;display:flex;flex-direction:column;gap:8px}
@@ -54862,9 +54851,6 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-card-info{display:flex;flex-direction:column;gap:4px;min-width:0}
             #svb-asset-studio-window .svb-as-card-info strong{font-size:13px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
             #svb-asset-studio-window .svb-as-card-info span{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-            #svb-asset-studio-window .svb-as-type-pill{display:inline-flex;align-items:center;height:18px;border-radius:999px;padding:0 6px;margin-right:4px;border:1px solid #dbe3ef;background:#f8fafc;color:#475569;font-size:10px;font-weight:900;vertical-align:1px}
-            #svb-asset-studio-window .svb-as-type-pill.emotion{border-color:#fbcfe8;background:#fdf2f8;color:#be185d}
-            #svb-asset-studio-window .svb-as-type-pill.additional{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
             #svb-asset-studio-window .svb-as-card-info code{font-size:10px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:4px 6px}
             #svb-asset-studio-window .svb-as-card-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
             #svb-asset-studio-window .svb-as-card-actions .svb-as-btn{height:30px;padding:0 6px}
@@ -54912,8 +54898,9 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-inline-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
             #svb-asset-studio-window .svb-as-view-btn.active{border-color:#0f766e;background:#ecfdf5;color:#047857}
             #svb-asset-studio-window .svb-as-selected-count{font-size:11px;color:#64748b;font-weight:750}
-            #svb-asset-studio-window .svb-as-folder-shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:7px}
-            #svb-asset-studio-window .svb-as-folder-chip{min-width:0;border:1px solid #dbe3ef;border-radius:8px;background:#fff;color:#334155;padding:8px 9px;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;text-align:left}
+            #svb-asset-studio-window .svb-as-folder-shelf{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:none}
+            #svb-asset-studio-window .svb-as-folder-shelf::-webkit-scrollbar{display:none}
+            #svb-asset-studio-window .svb-as-folder-chip{flex:0 0 auto;max-width:168px;height:28px;border:1px solid #dbe3ef;border-radius:999px;background:#fff;color:#334155;padding:0 8px;display:flex;align-items:center;justify-content:space-between;gap:7px;cursor:pointer;text-align:left}
             #svb-asset-studio-window .svb-as-folder-chip strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
             #svb-asset-studio-window .svb-as-folder-chip span{font-size:11px;color:#64748b;font-weight:900}
             #svb-asset-studio-window .svb-as-folder-chip.active{border-color:#0f766e;background:#ecfdf5;color:#047857}
@@ -54962,8 +54949,15 @@ async function openAssetStudio() {
             @media (max-width:840px){
                 #svb-asset-studio-window .svb-as-overlay{padding:0}
                 #svb-asset-studio-window .svb-as-container{width:100vw;height:100vh;border-radius:0}
-                #svb-asset-studio-window .svb-as-header{height:auto;min-height:56px;padding:10px 12px;flex-wrap:wrap}
-                #svb-asset-studio-window .svb-as-actions{width:auto;overflow:visible;flex-wrap:nowrap;padding-bottom:2px}
+                #svb-asset-studio-window .svb-as-header{height:auto;min-height:44px;padding:7px 9px;flex-wrap:nowrap}
+                #svb-asset-studio-window .svb-as-title{flex:1 1 auto}
+                #svb-asset-studio-window .svb-as-title strong{font-size:14px}
+                #svb-asset-studio-window .svb-as-title span{font-size:11px;max-width:calc(100vw - 190px)}
+                #svb-asset-studio-window .svb-as-actions{flex:0 0 auto;width:auto;overflow:visible;flex-wrap:nowrap;gap:4px;padding-bottom:0}
+                #svb-asset-studio-window .svb-as-manage-select{width:74px}
+                #svb-asset-studio-window #svb-as-refresh{width:34px;padding:0;font-size:0}
+                #svb-asset-studio-window #svb-as-refresh::before{content:"새로";font-size:11px}
+                #svb-asset-studio-window .svb-as-close{width:30px}
                 #svb-asset-studio-window .svb-as-body{display:flex}
                 #svb-asset-studio-window .svb-as-grid,#svb-asset-studio-window .svb-as-grid.three{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-quick-row{grid-template-columns:1fr 1fr}
@@ -54996,35 +54990,37 @@ async function openAssetStudio() {
                         <span id="svb-as-summary">에셋을 불러오는 중...</span>
                     </div>
                     <div class="svb-as-actions">
-                        <details class="svb-as-header-menu">
-                            <summary class="svb-as-btn">관리</summary>
-                            <div class="svb-as-header-menu-panel">
-                                <button class="svb-as-btn" id="svb-as-export" type="button">JSON 내보내기</button>
-                                <button class="svb-as-btn" id="svb-as-import" type="button">JSON 가져오기</button>
-                                <button class="svb-as-btn" id="svb-as-image-backup" type="button">이미지 ZIP 백업</button>
-                                <button class="svb-as-btn" id="svb-as-image-import" type="button">이미지 ZIP 가져오기</button>
-                                <button class="svb-as-btn" id="svb-as-normalize-ext" type="button">확장자 정리</button>
-                                <button class="svb-as-btn" id="svb-as-module-export" type="button">모듈 내보내기</button>
-                                <button class="svb-as-btn" id="svb-as-module-import" type="button">모듈 가져오기</button>
-                            </div>
-                        </details>
+                        <select class="svb-as-input svb-as-manage-select" id="svb-as-manage-select" title="관리 작업">
+                            <option value="">관리</option>
+                            <option value="export">JSON 내보내기</option>
+                            <option value="import">JSON 가져오기</option>
+                            <option value="imageBackup">이미지 ZIP 백업</option>
+                            <option value="imageImport">이미지 ZIP 가져오기</option>
+                            <option value="normalizeExt">확장자 정리</option>
+                            <option value="moduleExport">모듈 내보내기</option>
+                            <option value="moduleImport">모듈 가져오기</option>
+                        </select>
                         <button class="svb-as-btn" id="svb-as-refresh" type="button">새로고침</button>
                         <button class="svb-as-btn svb-as-close" id="svb-as-close" type="button" title="닫기">×</button>
+                        <div class="svb-as-hidden-actions">
+                            <button class="svb-as-btn" id="svb-as-export" type="button">JSON 내보내기</button>
+                            <button class="svb-as-btn" id="svb-as-import" type="button">JSON 가져오기</button>
+                            <button class="svb-as-btn" id="svb-as-image-backup" type="button">이미지 ZIP 백업</button>
+                            <button class="svb-as-btn" id="svb-as-image-import" type="button">이미지 ZIP 가져오기</button>
+                            <button class="svb-as-btn" id="svb-as-normalize-ext" type="button">확장자 정리</button>
+                            <button class="svb-as-btn" id="svb-as-module-export" type="button">모듈 내보내기</button>
+                            <button class="svb-as-btn" id="svb-as-module-import" type="button">모듈 가져오기</button>
+                        </div>
                     </div>
                     <input id="svb-as-import-file" type="file" accept=".json,application/json" style="display:none">
                     <input id="svb-as-image-import-file" type="file" accept=".zip,application/zip" style="display:none">
                     <input id="svb-as-replace-file" type="file" accept="image/*" multiple style="display:none">
                     <input id="svb-as-module-import-file" type="file" accept=".json,application/json" style="display:none">
-                    <input id="svb-as-preset-import-file" type="file" accept=".json,application/json" style="display:none">
                 </div>
                 <div class="svb-as-body">
                     <section class="svb-as-left">
-                        <div class="svb-as-tabs">
-                            <button class="svb-as-tab active" data-tab="assets" type="button">에셋</button>
-                            <button class="svb-as-tab" data-tab="generate" type="button">생성</button>
-                        </div>
                         <div class="svb-as-statusbar">
-                            <div class="svb-as-status" id="svb-as-status">에셋 이름은 CBS에서 {{image::이름}}, {{asset::이름}}, {{emotion::감정명}} 형태로 사용할 수 있습니다.</div>
+                            <div class="svb-as-status" id="svb-as-status">에셋은 CBS에서 {{image::이름}} 또는 {{asset::이름}} 형태로 사용할 수 있습니다. 기존 호환 태그도 같은 목록에서 관리됩니다.</div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-assets-panel">
                             <div class="svb-as-form">
@@ -55047,14 +55043,9 @@ async function openAssetStudio() {
                             </div>
                             <div class="svb-as-form">
                                 <div class="svb-as-folder-shelf" id="svb-as-folder-shelf"></div>
-                                <div class="svb-as-grid three">
-                                    <select class="svb-as-input" id="svb-as-kind-filter">
-                                        <option value="all">전체 타입</option>
-                                        <option value="additional">추가 에셋</option>
-                                        <option value="emotion">감정 이미지</option>
-                                    </select>
-                                    <select class="svb-as-input svb-as-folder-filter" id="svb-as-asset-folder-filter" data-kind="all"></select>
-                                    <input class="svb-as-input" id="svb-as-asset-search" placeholder="에셋/폴더/경로 검색">
+                                <div class="svb-as-grid">
+                                    <input class="svb-as-input" id="svb-as-asset-search" placeholder="에셋/폴더/경로 검색" style="grid-column:1 / -1">
+                                    <select class="svb-as-input svb-as-folder-filter" id="svb-as-asset-folder-filter" data-kind="all" style="display:none"></select>
                                 </div>
                                 <div class="svb-as-actions">
                                     <button class="svb-as-btn" data-action="pattern-rename" data-kind="all" type="button">패턴 변경</button>
@@ -55070,15 +55061,7 @@ async function openAssetStudio() {
                                     <input class="svb-as-input" id="svb-as-add-path" placeholder="assets/... 또는 data:">
                                     <input class="svb-as-input" id="svb-as-add-ext" placeholder="png">
                                 </div>
-                                <button class="svb-as-btn primary" id="svb-as-add-manual" type="button">추가 에셋 등록</button>
-                                <div class="svb-as-preset-row">
-                                    ${SVB_EMOTION_PRESETS.map(name => `<button class="svb-as-btn" data-emotion-preset="${escapeHtml(name)}" type="button">${escapeHtml(name)}</button>`).join('')}
-                                </div>
-                                <div class="svb-as-grid">
-                                    <input class="svb-as-input" id="svb-as-emotion-name" placeholder="감정명">
-                                    <input class="svb-as-input" id="svb-as-emotion-path" placeholder="assets/... 또는 data:">
-                                </div>
-                                <button class="svb-as-btn primary" id="svb-as-add-emotion" type="button">감정 이미지 저장</button>
+                                <button class="svb-as-btn primary" id="svb-as-add-manual" type="button">에셋 등록</button>
                             </details>
                             <div class="svb-as-list svb-as-unified-list" id="svb-as-asset-list"></div>
                         </div>
@@ -55199,8 +55182,8 @@ async function openAssetStudio() {
                                     <textarea class="svb-as-input" id="svb-as-gen-negative" placeholder="네거티브 프롬프트">text, logo, watermark, low quality</textarea>
                                     <div class="svb-as-grid">
                                         <select class="svb-as-input" id="svb-as-gen-target">
-                                            <option value="additional">추가 에셋으로 저장</option>
-                                            <option value="emotion">감정 이미지로 저장</option>
+                                            <option value="additional">에셋으로 저장</option>
+                                            <option value="emotion">호환 태그로 저장</option>
                                         </select>
                                         <input class="svb-as-input" id="svb-as-gen-name" placeholder="저장 이름">
                                     </div>
@@ -55249,18 +55232,9 @@ async function openAssetStudio() {
         throw error;
     }
 
-    studioWindow.querySelectorAll('.svb-as-tab').forEach(btn => {
-        addLocal(btn, 'click', () => {
-            activeTab = ['assets', 'generate'].includes(btn.dataset.tab) ? btn.dataset.tab : 'assets';
-            renderTabs();
-        });
-    });
-
     addLocal(document.getElementById('svb-as-asset-search'), 'input', renderAssetLibrary);
-    addLocal(document.getElementById('svb-as-kind-filter'), 'change', renderAssetLibrary);
     addLocal(document.getElementById('svb-as-asset-folder-filter'), 'change', renderAssetLibrary);
     addLocal(document.getElementById('svb-as-add-manual'), 'click', addAdditionalFromInputs);
-    addLocal(document.getElementById('svb-as-add-emotion'), 'click', addEmotionFromInputs);
     addLocal(document.getElementById('svb-as-upload-btn'), 'click', () => document.getElementById('svb-as-file-input')?.click());
     addLocal(document.getElementById('svb-as-file-input'), 'change', async event => {
         await uploadFiles(event.target.files);
@@ -55288,6 +55262,20 @@ async function openAssetStudio() {
     addLocal(document.getElementById('svb-as-module-import-file'), 'change', async event => {
         await importPersonaEmotionModule(event.target.files?.[0]);
         event.target.value = '';
+    });
+    addLocal(document.getElementById('svb-as-manage-select'), 'change', event => {
+        const actionMap = {
+            export: 'svb-as-export',
+            import: 'svb-as-import',
+            imageBackup: 'svb-as-image-backup',
+            imageImport: 'svb-as-image-import',
+            normalizeExt: 'svb-as-normalize-ext',
+            moduleExport: 'svb-as-module-export',
+            moduleImport: 'svb-as-module-import'
+        };
+        const targetId = actionMap[event.target.value];
+        event.target.value = '';
+        if (targetId) document.getElementById(targetId)?.click();
     });
     addLocal(document.getElementById('svb-as-gen-profile'), 'change', event => {
         activeImageApiProfileId = event.target.value || activeImageApiProfileId;
@@ -55424,13 +55412,6 @@ async function openAssetStudio() {
         await loadImageGenerationPresets();
         renderAll();
         setStatus('캐릭터 에셋을 다시 불러왔습니다.', 'success');
-    });
-
-    studioWindow.querySelectorAll('[data-emotion-preset]').forEach(btn => {
-        addLocal(btn, 'click', () => {
-            document.getElementById('svb-as-emotion-name').value = btn.dataset.emotionPreset || '';
-            document.getElementById('svb-as-emotion-path').focus();
-        });
     });
 
     addLocal(studioWindow, 'input', event => {
@@ -55600,10 +55581,10 @@ async function openAssetStudio() {
             if (action === 'download-additional') await downloadAssetImage(additionalAssets[idx], additionalAssets[idx]?.name || `asset_${idx + 1}`);
             if (action === 'delete-emotion') {
                 const name = emotionAssets[idx]?.name || '';
-                if (name && !confirm(`감정 이미지 "${name}"을 삭제할까요?`)) return;
+                if (name && !confirm(`에셋 "${name}"을 삭제할까요?`)) return;
                 emotionAssets.splice(idx, 1);
                 setCharacterField(char, 'emotionImages', svbEmotionTuples(emotionAssets));
-                await saveCurrentAssets('감정 이미지를 삭제했습니다.');
+                await saveCurrentAssets('에셋을 삭제했습니다.');
                 renderAll();
             }
             if (action === 'delete-additional') {
@@ -55613,7 +55594,7 @@ async function openAssetStudio() {
                 if (name && !confirm(msg)) return;
                 additionalAssets.splice(idx, 1);
                 setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(additionalAssets));
-                await saveCurrentAssets('추가 에셋을 삭제했습니다.');
+                await saveCurrentAssets('에셋을 삭제했습니다.');
                 renderAll();
             }
         } catch (error) {
