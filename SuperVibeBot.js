@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.109
-//@version 1.5.109
+//@display-name 🐸 SuperVibeBot v1.5.110
+//@version 1.5.110
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.109는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.110는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.110 Release Notes
+ * - v1.5.110: routes Kero artist/style/year tags into the final Positive prompt instead of leaking them into Quality
+ * - v1.5.110: rewrites Kero image prompt guidance around Wellspring/Danbooru tag packs and visible identity cues instead of generic style prose
+ * - v1.5.110: stops treating useful gender/age words such as man, woman, and guy as weak local synthesis fragments
+ *
  * SuperVibeBot v1.5.109 Release Notes
  * - v1.5.109: stops showing provider/preset/ratio/steps route metadata inside Asset Studio prompt copy/details
  * - v1.5.109: updates Kero image instructions to omit profileId, presetId, ratioId, and steps unless the user explicitly asks for routing overrides
@@ -1811,8 +1816,8 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use registered asset references in saved code: {{asset::asset_name}}, {{image::asset_name}}, or <img src="{{asset::asset_name}}"> inside backgroundHTML/regex display HTML.
 - Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
 - Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
-- Keep image prompts 2D illustration / character-art oriented, and do not default to anime styling unless the user or selected preset asks for it. Avoid photo, realistic, live action, 3D render, CGI, text, logo, and watermark terms. Put readable UI text in HTML/CSS, not inside the generated image.
-- For the same character across multiple images, keep identityName stable and write each assets[].prompt as the final positive prompt, including enough repeated appearance/outfit details to preserve the character while varying expression, pose, scene, or camera framing.
+- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the final Positive, assets[].negative is the final Negative, and wellspringQualityPrompt is the final Quality. Positive must be tag-led, not a plain-language style sentence.
+- For the same character across multiple images, choose one character style pack once (artist/style/year tags plus quality pack) and reuse it. Each Positive repeats the same visible identity anchors: face shape, eye shape and color, hair cut/color/part, body silhouette, core outfit, and unique marks or accessories that exist in context. Vary only expression, pose, framing, or scene.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
 - If the visual result depends on Wellspring workflow/character/preset/profile fields provided in context, preserve and pass those fields in the asset create payload instead of inventing incompatible route fields.`;
 
@@ -13117,7 +13122,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.109',
+            '//@version 1.5.110',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -30114,10 +30119,10 @@ Rules:
 - If missingCandidateNames is non-empty, generate only those names. If it is empty, infer missing names from plannedAssetItems and generate exactly the remainingCount.
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
-- Keep each prompt concise but complete: subject, hair/eyes/body, outfit, pose/composition, and background.
-- For upper-body white-background standing assets, use a full prompt like "1boy, solo, short black hair, dark eyes, ROK Army combat uniform, upper_body, standing pose, looking_at_viewer, white_background" plus a character-appropriate pose.
-- Infer gender, age, body, outfit, and visual markers from the character context inside each prompt. Do not default everyone to 1girl.
-- Include negative prompt for image quality and wrong identity/gender avoidance.`;
+- Build each Positive from source context, not generic descriptors: character style pack, subject/focus tags, visible face and eye cues, hair cut/color/part, body silhouette, core outfit, pose/composition, and background.
+- For upper-body white-background standing assets, write a direct tag prompt: the style pack selected for that character, subject count/focus, visible identity anchors, outfit, character-appropriate pose, upper_body or cowboy shot, looking_at_viewer, white_background.
+- Do not use numeric age, height, or job title as substitutes for visible identity. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
+- Put quality tags in wellspringQualityPrompt and anatomy/watermark/identity-drift terms in negative.`;
         const payload = {
             userRequest: request,
             previousAssistantText: safeString(assistantText).slice(0, 6000),
@@ -30315,14 +30320,21 @@ Rules:
         return out.join(', ');
     }
 
-    function buildKeroAssetQualityPrompt(stylePrompt = '', artistTags = '', styleTags = '', qualityPrompt = '') {
-        const withoutTechnicalRouting = splitKeroAssetPromptFragments(
+    function buildKeroAssetPositivePrompt(stylePrompt = '', artistTags = '', styleTags = '', prompt = '', options = {}) {
+        return normalizeKeroAssetPositivePrompt(
             joinKeroAssetPromptFragments(
-                stripKeroAssetRealismRiskFragments(qualityPrompt),
-                stripKeroAssetRealismRiskFragments(styleTags),
+                stripKeroAssetRealismRiskFragments(stylePrompt),
                 stripKeroAssetRealismRiskFragments(artistTags),
-                stripKeroAssetRealismRiskFragments(stylePrompt)
-            )
+                stripKeroAssetRealismRiskFragments(styleTags),
+                stripKeroAssetRealismRiskFragments(prompt)
+            ),
+            options
+        );
+    }
+
+    function buildKeroAssetQualityPrompt(qualityPrompt = '') {
+        const withoutTechnicalRouting = splitKeroAssetPromptFragments(
+            joinKeroAssetPromptFragments(stripKeroAssetRealismRiskFragments(qualityPrompt))
         ).filter(fragment => !/\b(?:sdxl|adxl|animagine|model|checkpoint)\b/i.test(fragment)).join(', ');
         return compactKeroAssetPrompt(
             withoutTechnicalRouting,
@@ -30337,7 +30349,7 @@ Rules:
             .replace(/^\((.*)\)$/, '$1')
             .replace(/:[0-9.]+$/g, '')
             .replace(/[\s-]+/g, '_');
-        return /^(?:polished_character_art|crisp_edges|distinctive_face|recognizable_character|consistent_character_design|visible_outfit|expression_focus|character_focus|visual_novel_sprite|character_sprite|dating_sim|modern_military|medieval_fantasy|adult_male|adult_female|young_man|young_woman|middle_aged_man|older_woman|man|woman|guy)$/.test(key);
+        return /^(?:polished_character_art|crisp_edges|distinctive_face|recognizable_character|consistent_character_design|visible_outfit|expression_focus|character_focus|visual_novel_sprite|character_sprite|dating_sim)$/.test(key);
     }
 
     function joinKeroAssetPromptFragments(...values) {
@@ -30484,7 +30496,7 @@ Rules:
         return safeString(stylePreset).trim();
     }
 
-    function normalizeKeroAsset2dPositivePrompt(prompt = '', options = {}) {
+    function normalizeKeroAssetPositivePrompt(prompt = '', options = {}) {
         const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
         return compactKeroAssetPrompt(
             safePrompt || 'solo, upper_body, looking_at_viewer, simple_background',
@@ -30492,7 +30504,7 @@ Rules:
         );
     }
 
-    function normalizeKeroAsset2dNegativePrompt(negative = '', profile = {}, preset = {}) {
+    function normalizeKeroAssetNegativePrompt(negative = '', profile = {}, preset = {}) {
         return joinKeroAssetPromptFragments(
             stripKeroAssetRealismRiskFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset)),
             'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry'
@@ -30642,16 +30654,18 @@ Rules:
             const profile = pickKeroAssetImageProfile(item.profileId);
             const preset = pickKeroAssetImagePreset(item.presetId, profile);
             const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
-            const prompt = normalizeKeroAsset2dPositivePrompt(renderedItemPrompt);
-            const explicitQualityPrompt = buildKeroAssetQualityPrompt(
+            const prompt = buildKeroAssetPositivePrompt(
                 svbRenderImagePromptTemplate(item.stylePrompt, vars).trim(),
                 svbRenderImagePromptTemplate(item.artistTags, vars).trim(),
                 svbRenderImagePromptTemplate(item.styleTags, vars).trim(),
+                renderedItemPrompt
+            );
+            const explicitQualityPrompt = buildKeroAssetQualityPrompt(
                 svbRenderImagePromptTemplate(item.wellspringQualityPrompt, vars).trim()
             );
             const qualityPrompt = explicitQualityPrompt
-                || buildKeroAssetQualityPrompt('', '', '', preset.wellspringQualityPrompt || profile.wellspringQualityPrompt || KERO_DEFAULT_ASSET_QUALITY_PROMPT);
-            const negative = normalizeKeroAsset2dNegativePrompt(
+                || buildKeroAssetQualityPrompt(preset.wellspringQualityPrompt || profile.wellspringQualityPrompt || KERO_DEFAULT_ASSET_QUALITY_PROMPT);
+            const negative = normalizeKeroAssetNegativePrompt(
                 svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim(),
                 profile,
                 preset
@@ -35443,11 +35457,11 @@ ${metaBlock}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[["asset_name","asset_path_or_id","png"]]},"enabled":false}
 - 에셋 모듈 생성/내보내기는 이미지 assets + 간결한 lorebook 인덱스 + <asset:name>/[asset:name] 표시용 regex를 함께 구성한다. 에셋이 많아도 로어북을 에셋별 장문으로 늘리지 말고 인물/상황/배경/UI/아이템/NSFW 그룹별 짧은 요약으로 정리한다. 에셋명은 공백/확장자/중복을 정규화하고 원본 이름은 별도 인덱스에 보존한다.
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
-- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","wellspringQualityPrompt":"masterpiece, best quality, amazing quality, very aesthetic, highres","assets":[{"assetType":"additional","name":"character_profile","prompt":"(ratatatat74:0.9), [[artist:mikozin]], 1boy, solo, Korean man, short black hair, dark eyes, lean build, ROK Army olive combat uniform, second lieutenant insignia, upper_body, standing, looking_at_viewer, white_background","negative":"wrong_gender, female, casual clothes, fantasy weapon, shield, staff, sword, text, logo, watermark, lowres, bad_anatomy, bad_hands"}]}}
+- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","wellspringQualityPrompt":"white background, simple background, masterpiece, best quality, amazing quality, very aesthetic, newest, highres","assets":[{"assetType":"additional","name":"character_profile","prompt":"(otomo_katsuhiro:1.1), year 2025, 1boy, solo, male_focus, long narrow face, monolid dark brown eyes, short swept black hair, lean shoulders, olive drab ROK Army combat uniform, second lieutenant insignia, composed half-smile, hands behind back, upper_body, looking_at_viewer, white_background","negative":"wrong_gender, female_focus, 1girl, casual clothes, fantasy weapon, shield, staff, sword, text, logo, watermark, lowres, bad_anatomy, bad_hands"}]}}
 - 각 assets[].prompt는 이미지 API에 보내는 최종 Positive다. 런타임이 외형/장면/세계관 태그를 다시 합성하지 않으므로, 케로는 캐릭터 자료를 읽고 필요한 외형, 복식, 표정, 포즈, 배경을 prompt 하나에 짧고 정확하게 완성해야 한다.
-- Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"wellspringQualityPrompt":"white background, simple background, masterpiece, best quality, amazing quality, very aesthetic, newest, highres","assets":[{"assetType":"additional","name":"character_profile","prompt":"hiyori\\\\(rindou66\\\\):1.3, doremi:0.5, kadeart, ((flat color:1.3)), 1girl, solo, black hair, blue eyes, school uniform, cowboy shot, standing, looking_at_viewer","negative":"wrong_gender, extra props, text, logo, watermark, lowres, bad_anatomy, bad_hands"}]}}
+- Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"wellspringQualityPrompt":"white background, simple background, masterpiece, best quality, amazing quality, very aesthetic, newest, highres","assets":[{"assetType":"additional","name":"character_profile","prompt":"hiyori\\\\(rindou66\\\\):1.3, doremi:0.5, kadeart, ((flat color:1.3)), year 2025, 1girl, solo, female_focus, oval face, sharp blue eyes, straight black bob hair with blunt bangs, slim build, navy school uniform, red ribbon, calm closed-mouth smile, cowboy shot, standing, looking_at_viewer","negative":"wrong_gender, male_focus, 1boy, extra props, text, logo, watermark, lowres, bad_anatomy, bad_hands"}]}}
 - 이미지 생성 직후 Wellspring LoRA 학습까지 필요하면 같은 create asset payload에 trainLora:true, loraName, trainingSteps, waitForTraining:false를 넣는다. 생성된 이미지의 Wellspring gallery job id 또는 저장 에셋을 학습 데이터로 재사용한다.
-- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"wellspringQualityPrompt":"clean linework, cel shading, polished color","assets":[{"assetType":"additional","name":"character_profile","prompt":"1girl, solo, black hair, long hair, blue eyes, school uniform, upper_body, neutral expression, white_background"},{"assetType":"additional","name":"character_smile","prompt":"1girl, solo, black hair, long hair, blue eyes, school uniform, upper_body, soft smile, white_background"}]}}
+- 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"wellspringQualityPrompt":"white background, simple background, masterpiece, best quality, amazing quality, very aesthetic, newest, highres","assets":[{"assetType":"additional","name":"character_profile","prompt":"(naguru_\\\\(cyoroama\\\\):1.15), year 2025, 1girl, solo, female_focus, heart-shaped face, clear blue eyes, long straight black hair, slim build, navy school uniform, red ribbon, upper_body, neutral expression, white_background"},{"assetType":"additional","name":"character_smile","prompt":"(naguru_\\\\(cyoroama\\\\):1.15), year 2025, 1girl, solo, female_focus, heart-shaped face, clear blue eyes, long straight black hair, slim build, navy school uniform, red ribbon, upper_body, soft smile, white_background"}]}}
 - 이미 등록된 에셋으로 Wellspring LoRA를 학습하려면 asset_manage train_lora를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"train_lora","identityName":"문아진","loraName":"문아진_identity","kind":"all","names":["moon_ajin_profile","moon_ajin_smile"],"trainingSteps":600,"waitForTraining":false}
 - 완료된 Wellspring LoRA를 identity에 연결하려면 asset_manage refresh_loras를 사용한다. 예: @action {"type":"asset_manage","target":"asset","operation":"refresh_loras","identityName":"문아진","loraName":"문아진_identity","loraStrength":0.8}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI 에셋 필드에 등록한다. 신규 이미지는 기본적으로 additional asset으로 저장한다.
@@ -35469,12 +35483,12 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 에셋 prompt는 영어 중심으로 쓴다. 이름/고유명은 그대로 두되, 외형/의상/구도/표정/조명/배경/스타일을 구체적으로 작성한다.
-- 슈바봇 케로 에셋은 무조건 2D anime/illustration 계열이다. 실사/사진/현실풍을 만들지 않는다.
+- 슈바봇 케로 에셋은 Wellspring/Danbooru 태그 기반의 삽화 프롬프트로 쓴다. Positive는 자연어식 장르 설명문이 아니라 태그 묶음이어야 하며, 작가/스타일/연도 태그와 보이는 인물 단서가 중심이다. 실사/사진/현실풍을 만들지 않는다.
 - prompt와 negative 양쪽 모두에 photo, photograph, photography, photorealistic, realistic, hyperrealistic, live action, real person, cosplay, DSLR, 3D, CGI, render, cinematic 같은 실사/사진/3D 차단 유발 단어를 쓰지 않는다. 차단 회피를 위해 negative에 금지어를 넣는 방식도 금지다.
-- 그림체/작가/연도/가중치 태그는 Wellspring gallery식 문법을 그대로 쓴다. 예: hiyori\\\\(rindou66\\\\):1.3, (ratatatat74:0.9), [[artist:mikozin]], [[[[artist:nakta]]]], year 2025, ((flat color:1.3)). 사용자가 준 괄호, 백슬래시, 대소문자, 중괄호 품질 묶음은 고치지 말고 보존한다.
+- 그림체/작가/연도/가중치 태그는 Wellspring gallery식 문법을 그대로 쓴다. Danbooru artist tag, 괄호 가중치, NovelAI식 강조, year tag, coloring/style tag를 실제 프롬프트 언어로 사용한다. 사용자가 준 괄호, 백슬래시, 대소문자, 중괄호 품질 묶음은 고치지 말고 보존한다.
 - Quality는 wellspringQualityPrompt에 반드시 작성한다. 예: white background, simple background, masterpiece, best quality, amazing quality, very aesthetic, newest, highres. 모델명, 체크포인트명, SDXL/ADXL/Animagine 같은 라우팅 단어는 prompt나 quality에 쓰지 않는다.
 - assets[].prompt는 최종 Positive다. 같은 인물의 프로필/표정/스탠딩 묶음을 만들 때도 각 prompt 안에 필요한 머리/눈/얼굴형/체형/복식 핵심/표정/포즈/배경을 완성해서 쓴다.
-- 같은 캐릭터의 여러 에셋에서는 하나의 style/artist/year/quality pack을 먼저 정하고 끝까지 유지한다. 그 공통 그림체 태그는 assets[].prompt의 앞부분 또는 wellspringQualityPrompt에 일관되게 반복하고, assets[].prompt 안의 인물 외형/복식/표정/포즈만 각 에셋에 맞게 바꾼다.
+- 같은 캐릭터의 여러 에셋에서는 하나의 style/artist/year/quality pack을 먼저 정하고 끝까지 유지한다. 사용자가 작가/스타일을 주지 않았으면 요청 장르와 캐릭터 분위기에 맞는 Wellspring gallery식 artist/style/year 태그 조합을 케로가 직접 하나 정한다. 그 공통 그림체 태그는 assets[].prompt 앞부분에, quality pack은 wellspringQualityPrompt에 일관되게 반복한다. assets[].prompt 안에서는 인물의 보이는 정체성 단서를 유지하고 표정/포즈/장면만 바꾼다.
 - 에셋 스튜디오 프리셋의 기본 고정 태그(promptPrefix/promptSuffix/negativePrefix/negativeSuffix)는 시스템이 최종 이미지 호출 직전에 자동 합성한다. 사용자가 그곳에 그림체 태그를 넣어둔 경우 같은 태그를 케로 prompt에 과도하게 반복하지 않는다.
 - 에셋 스튜디오 프리셋의 Wellspring 참조 이미지(referenceImagePath)가 설정되어 있으면 시스템이 최종 이미지 호출 직전에 해당 리수 에셋을 읽어 참조 이미지로 전달한다. 같은 캐릭터의 프로필/감정/스탠딩 묶음을 만들 때는 참조 이미지를 캐릭터 기준으로 보고, 케로 prompt는 표정/포즈/장면 차이에 집중한다.
 - ComfyUI/custom workflow 템플릿은 {{prompt}}에 최종 합성 프롬프트를 받는다. 캐릭터 전용 노드가 있으면 {{character_prompt}} 또는 {{identity_prompt}}, 네거티브 쪽은 {{character_negative}} 또는 {{identity_negative}}를 쓴다.
@@ -35483,11 +35497,11 @@ ${metaBlock}
 - Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, wellspringVariantIds, LoRA/프리셋 조합과 각 assets[].prompt의 반복되는 외형 단서로 유지한다. referenceImagePath는 해당 workflow/custom endpoint가 이미지 입력을 실제로 지원할 때만 사용하고, 지원 여부를 모르면 이미지 참조를 지어내지 않는다.
 - Wellspring LoRA/고급값은 assets[] 또는 payload에 wellspringLoras, wellspringQualityPrompt, wellspringSampler, wellspringScheduler, wellspringCfg, wellspringPerVariantBatch, wellspringPayloadJson으로 전달할 수 있다. wellspringPayloadJson은 서버 추가 필드 보강용이고, prompt를 비우거나 창작 내용을 대체하는 곳이 아니다.
 - 사용자가 그림체 프롬프트팩/샘플 프롬프트 또는 Danbooru artist/style tag를 주면 prompt 또는 wellspringQualityPrompt 중 샘플의 의도에 맞는 쪽에 그대로 반영한다. 작가 태그가 주어진 경우에는 무시하지 말고 같은 봇의 에셋 묶음 전체에 일관되게 재사용한다. 단, 사용자가 주지 않은 작가명/trigger word/LoRA trigger는 지어내지 않는다.
-- 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞는 짧은 quality를 직접 쓴다. 기본 preset 이름을 창작 프롬프트에 넣지 않는다.
-- "best quality"만 반복하는 것은 실패다. 하지만 태그를 길게 늘어놓는 것도 실패다. 인물별 subject, 머리/눈/체형, 복식, 표정/포즈/배경만 짧고 정확하게 쓴다.
+- 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞는 작가/스타일/연도 태그 조합과 짧은 quality를 직접 정한다. 기본 preset 이름이나 모델명을 창작 프롬프트에 넣지 않는다.
+- 인물 정체성은 나이/키/직업/성별 같은 문장 정보가 아니라 얼굴형, 눈 모양과 색, 머리 형태와 색, 체형 실루엣, 복식 핵심, 고유 표식, 표정/포즈/배경 같은 보이는 단서로 쓴다. 같은 인물을 다시 뽑아도 같은 사람으로 보일 만큼 짧고 정확하게 반복한다.
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
 - 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. 남성 캐릭터에 1girl/female_focus를 쓰거나, 여성 캐릭터에 1boy/male_focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo와 외형 단서만 쓴다.
-- Danbooru식 태그는 짧은 시각 단위와 Wellspring에서 실제 쓰이는 문법으로 쓴다. adult_male, young_woman, character_focus, distinctive_face, consistent_character_design, visual_novel_sprite처럼 결과를 흐리는 추상 태그는 쓰지 않는다.
+- Danbooru식 태그는 짧은 시각 단위와 Wellspring에서 실제 쓰이는 문법으로 쓴다. character_focus, distinctive_face, consistent_character_design, visual_novel_sprite처럼 결과를 흐리는 메타 설명 태그 대신 실제 보이는 성별/체형/얼굴/머리/복식/구도 태그를 쓴다.
 - 남성 예시: 1boy, solo, male_focus, black_hair, short_hair, brown_eyes, broad_shoulders, military_uniform, tactical_vest, upper_body, looking_at_viewer, white_background.
 - 여성 예시: 1girl, solo, female_focus, brown_hair, long_hair, green_eyes, slender, school_uniform, cardigan, upper_body, looking_at_viewer, smile, white_background.
 - 소년/소녀/청년/성인/중년 차이는 태그를 늘리는 방식이 아니라 얼굴선, 체형, 복식, 자세 설명으로 구분한다.
@@ -42882,7 +42896,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.109 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.110 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
