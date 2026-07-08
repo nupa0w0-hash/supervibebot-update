@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.104
-//@version 1.5.104
+//@display-name 🐸 SuperVibeBot v1.5.105
+//@version 1.5.105
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.104는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.105는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.105 Release Notes
+ * - v1.5.105: turns Asset Studio module export into an API-assisted Risu module package with modulePayload, assets, lorebook, regex, and importable module create/update actions
+ * - v1.5.105: classifies exported image assets by character, situation, background, UI, item, expression, and NSFW while normalizing asset names and preserving source names in the asset index
+ * - v1.5.105: keeps exported module lorebooks compact and uses generic <asset:name> / [asset:name] display regex instead of one long lorebook entry per image
+ *
  * SuperVibeBot v1.5.104 Release Notes
  * - v1.5.104: removes the visible Asset Studio generation tab and direct emotion-image registration controls so the studio opens as one asset management surface
  * - v1.5.104: replaces the mobile-clipping header management dropdown with a compact native management selector and tightens the mobile header controls
@@ -13189,7 +13194,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.104',
+            '//@version 1.5.105',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -35335,7 +35340,8 @@ ${metaBlock}
 - 다중 생성 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인삿말 1","key":"greeting_1","content":"안녕하세요! 오늘도 반갑습니다. 이 항목이 발동될 때 캐릭터가 방문자를 어떤 태도로 맞이하는지, 말투와 분위기까지 짧게 포함한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 2","key":"greeting_2","content":"어서오세요! 편안하게 이야기해 주세요. 특정 장소나 관계가 있다면 환대 방식, 거리감, 반복해서 쓰일 표현을 함께 정리한다.","alwaysActive":false,"selective":true,"mode":"normal"},{"comment":"인삿말 3","key":"greeting_3","content":"환영합니다! 무엇을 도와드릴까요? 안내 역할, 첫 대면의 분위기, 이후 대화로 이어지는 단서를 함께 제공한다.","alwaysActive":false,"selective":true,"mode":"normal"}]}
 - 로어북 폴더 생성: 폴더는 별도 항목으로 {"comment":"인물","key":"folder:characters","content":"","mode":"folder"}를 먼저 만들고, 하위 항목에는 "folder":"folder:characters"를 넣는다. 사용자가 "인물 폴더에 넣어줘"처럼 자연어로 말하면 folder:"인물"처럼 써도 시스템이 같은 배치 안에서 folder key로 보정한다.
 - 로어북 폴더 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인물","key":"folder:characters","content":"","mode":"folder"},{"comment":"기사단장 아르벤","key":"아르벤,기사단장","content":"기사단장 아르벤의 역할, 관계, 비밀을 정리한다.","mode":"normal","folder":"folder:characters"}]}
-- 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
+- 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[["asset_name","asset_path_or_id","png"]]},"enabled":false}
+- 에셋 모듈 생성/내보내기는 이미지 assets + 간결한 lorebook 인덱스 + <asset:name>/[asset:name] 표시용 regex를 함께 구성한다. 에셋이 많아도 로어북을 에셋별 장문으로 늘리지 말고 인물/상황/배경/UI/아이템/NSFW 그룹별 짧은 요약으로 정리한다. 에셋명은 공백/확장자/중복을 정규화하고 원본 이름은 별도 인덱스에 보존한다.
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
 - 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"sdxl-character","stylePrompt":"polished SDXL character art, clean linework, cohesive color design","artistTags":"사용자가 지정한 Danbooru artist/style tag가 있을 때만 여기에 고정","identityName":"캐릭터명","identityPrompt":"1boy, solo, male_focus, black_hair, short_hair, brown_eyes, military_uniform, athletic_body","identityNegative":"wrong_gender, female_focus, 1girl, different_character, wrong_hair_color, wrong_eye_color","assets":[{"assetType":"additional","name":"character_profile","prompt":"neutral expression, upper_body, looking_at_viewer, white_background","negative":"lowres, worst_quality, bad_anatomy, bad_hands, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 넣는다. identityPrompt는 짧게 쓴다: 남성은 1boy, solo, male_focus + 머리/눈/체형/복식, 여성은 1girl, solo, female_focus + 머리/눈/체형/복식. 불명확하면 1girl로 밀지 말고 solo와 외형 단서만 쓴다. 각 assets[].prompt에는 표정/포즈/배경 차이만 쓴다.
@@ -42774,7 +42780,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.104 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.105 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -42967,6 +42973,7 @@ Dynamic context injection.
 - RisuAI module fields: \`id\`, \`name\`, \`description\`, \`namespace\`, \`lorebook\`, \`regex\`, \`trigger\`, \`assets\`, \`lowLevelAccess\`, \`backgroundEmbedding\`, \`customModuleToggle\`, \`hideIcon\`, \`mcp\`, \`icon\`.
 - Module lorebook/regex/trigger entries merge with active character entries when the module is enabled.
 - Module assets are referenced the same way as character assets with \`{{asset::name}}\`; avoid name collisions.
+- Asset export modules should keep lorebook notes compact, classify assets by character/situation/background/UI/item/NSFW, and use generic \`<asset:name>\` / \`[asset:name]\` editdisplay regex instead of one long lorebook entry per image.
 - \`customModuleToggle\` stores toggle state in global variables named \`toggle_<name>\`.
 - Applying a module copies/merges content into the character; enabling a module is a separate runtime state.
     `,
@@ -53996,6 +54003,411 @@ async function openAssetStudio() {
         a.click();
     }
 
+    function buildAssetModuleHash(value = '') {
+        const text = safeString(value);
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i += 1) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return (hash >>> 0).toString(36);
+    }
+
+    function buildAssetModuleSlug(value = '', fallback = 'asset_module') {
+        const raw = safeString(value || fallback).trim();
+        const slug = raw
+            .normalize('NFKD')
+            .replace(/[^\w.-]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .toLowerCase()
+            .slice(0, 64);
+        return slug || `${safeString(fallback || 'asset_module').replace(/[^\w.-]+/g, '_').slice(0, 40) || 'asset_module'}_${buildAssetModuleHash(raw).slice(0, 8)}`;
+    }
+
+    function buildAssetModuleNameToken(value = '', fallback = 'asset') {
+        const clean = safeString(value || fallback)
+            .replace(/\.[a-z0-9]{2,6}$/i, '')
+            .trim()
+            .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
+            .replace(/[^\w가-힣ㄱ-ㅎㅏ-ㅣ.-]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 72);
+        return clean || fallback;
+    }
+
+    function buildAssetModuleTextBag(...values) {
+        return values.map(value => safeString(value)).filter(Boolean).join(' ').toLowerCase();
+    }
+
+    function assetModuleTextHas(text, pattern) {
+        try {
+            return pattern.test(safeString(text));
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function inferAssetModuleNsfw(sourceName = '', folder = '', promptMeta = null) {
+        const text = buildAssetModuleTextBag(
+            sourceName,
+            folder,
+            promptMeta?.prompt,
+            promptMeta?.identityPrompt,
+            promptMeta?.danbooruTags,
+            promptMeta?.sourceContext
+        );
+        return assetModuleTextHas(text, /\b(nsfw|r18|adult|nude|naked|topless|bottomless|sex|sexual|erotic|lewd|explicit|lingerie|underwear|panties|bra|cleavage|nipple|pussy|penis|cum|bondage|bdsm)\b|성인|야함|야짤|노출|속옷|란제리|나체|누드|섹스|유두|음부|가슴|후방|수위/iu);
+    }
+
+    function inferAssetModuleRole(kind = '', sourceName = '', folder = '', promptMeta = null) {
+        const text = buildAssetModuleTextBag(sourceName, folder, promptMeta?.prompt, promptMeta?.sourceContext);
+        if (assetModuleTextHas(text, /\b(ui|interface|hud|panel|button|icon|frame|window)\b|인터페이스|상태창|아이콘|버튼|패널|창/iu)) return 'ui';
+        if (assetModuleTextHas(text, /\b(bg|background|backdrop|landscape|environment|location|room|street|forest|city)\b|배경|장소|풍경|구도|도시|거리|방|숲|하늘/iu)) return 'background';
+        if (assetModuleTextHas(text, /\b(cg|scene|event|situation|cutscene|illustration)\b|상황|장면|이벤트|삽화|일러스트|컷신/iu)) return 'situation';
+        if (assetModuleTextHas(text, /\b(item|prop|weapon|object|symbol)\b|아이템|소품|무기|물건|상징/iu)) return 'item';
+        if (assetModuleTextHas(text, /\b(profile|portrait|bust|upper_body|upper body|standing|sprite|full_body|full body)\b|프로필|초상|상반신|스탠딩|전신/iu)) return 'standing';
+        if (kind === 'emotion') return 'emotion';
+        return 'asset';
+    }
+
+    function inferAssetModuleExpression(sourceName = '', folder = '', promptMeta = null) {
+        const text = buildAssetModuleTextBag(sourceName, folder, promptMeta?.prompt, promptMeta?.sourceContext);
+        const pairs = [
+            ['neutral', /\b(neutral|default|base|calm|plain)\b|기본|무표정|평온|차분/iu],
+            ['smile', /\b(smile|happy|joy|laugh|grin|cheerful)\b|미소|웃음|행복|기쁨/iu],
+            ['angry', /\b(angry|mad|rage|annoyed|irritated)\b|분노|화남|짜증|격분/iu],
+            ['sad', /\b(sad|sorrow|gloom|depressed)\b|슬픔|우울|침울/iu],
+            ['cry', /\b(cry|crying|tears|tearful)\b|울음|눈물/iu],
+            ['embarrassed', /\b(embarrassed|blush|shy|flustered)\b|당황|부끄|수줍|홍조/iu],
+            ['surprised', /\b(surprised|shock|shocked|startled|wide_eyes)\b|놀람|충격/iu],
+            ['fear', /\b(fear|scared|afraid|panic|terrified)\b|공포|겁먹|패닉/iu],
+            ['serious', /\b(serious|stern|cold|determined|focused)\b|진지|냉정|결연|집중/iu],
+            ['confused', /\b(confused|puzzled|doubt|questioning)\b|혼란|의문|멍함/iu],
+            ['love', /\b(love|heart|affection|aroused|seductive)\b|호감|애정|유혹|하트/iu],
+            ['pain', /\b(pain|hurt|injured|wounded|sick)\b|아픔|부상|상처|고통/iu]
+        ];
+        const found = pairs.find(([, pattern]) => assetModuleTextHas(text, pattern));
+        return found ? found[0] : '';
+    }
+
+    function inferAssetModuleEntity(role = 'asset', sourceName = '', folder = '', promptMeta = null) {
+        const explicit = svbNormalizeAssetIdentityName(promptMeta?.identityName || promptMeta?.identityKey || promptMeta?.characterName || promptMeta?.subjectName || promptMeta?.subject);
+        if (explicit) return explicit;
+        const folderHead = safeString(folder).split(/[\\/|>]+/).map(part => part.trim()).filter(Boolean)[0] || '';
+        if (folderHead && !assetModuleTextHas(folderHead.toLowerCase(), /\b(bg|background|ui|item|scene|situation|asset|emotion|profile)\b|배경|상황|장면|아이템|감정|프로필|스탠딩/iu)) {
+            return folderHead;
+        }
+        if (['emotion', 'standing'].includes(role)) return getCharacterDisplayName(char) || 'character';
+        return '';
+    }
+
+    function buildAssetModuleRefName(sourceName = '', info = {}, usedNames = []) {
+        const original = buildAssetModuleNameToken(sourceName, `${info.kind || 'asset'}_${Number(info.index || 0) + 1}`);
+        const entity = buildAssetModuleNameToken(info.entityName, '');
+        const role = buildAssetModuleNameToken(info.role, '');
+        const expression = buildAssetModuleNameToken(info.expression, '');
+        const nsfw = info.nsfw ? 'nsfw' : '';
+        const parts = [];
+        if (entity && !['background', 'ui', 'item'].includes(info.role)) parts.push(entity);
+        if (role && role !== 'asset') parts.push(role);
+        if (expression && !['background', 'ui', 'item', 'situation'].includes(info.role)) parts.push(expression);
+        if (nsfw) parts.push(nsfw);
+        let preferred = parts.length >= 2 ? parts.join('_') : original;
+        preferred = buildAssetModuleNameToken(preferred, original);
+        return svbMakeUniqueAssetName(preferred, usedNames);
+    }
+
+    function buildAssetModuleRefs() {
+        const refs = [];
+        const usedNames = [];
+        const addRef = (kind, asset, index) => {
+            const sourceName = safeString(asset?.name).trim();
+            const path = safeString(asset?.path).trim();
+            if (!sourceName || !path) return;
+            const ext = normalizeAssetExtValue(asset?.ext, svbGetFileExt(sourceName), svbGetFileExt(path), 'png');
+            const promptMeta = getAssetPromptMeta(kind, sourceName);
+            const normalizedPromptMeta = promptMeta ? svbNormalizeAssetPromptRecord(promptMeta) : null;
+            const folder = getAssetFolder(kind, sourceName);
+            const role = inferAssetModuleRole(kind, sourceName, folder, normalizedPromptMeta);
+            const expression = inferAssetModuleExpression(sourceName, folder, normalizedPromptMeta);
+            const nsfw = inferAssetModuleNsfw(sourceName, folder, normalizedPromptMeta);
+            const entityName = inferAssetModuleEntity(role, sourceName, folder, normalizedPromptMeta);
+            const exportName = buildAssetModuleRefName(sourceName, { kind, index, role, expression, nsfw, entityName }, usedNames);
+            usedNames.push(exportName);
+            const groupKey = [
+                nsfw ? 'nsfw' : 'sfw',
+                role,
+                entityName ? buildAssetModuleNameToken(entityName, 'character') : 'shared'
+            ].join(':');
+            refs.push({
+                kind,
+                index,
+                sourceName,
+                name: exportName,
+                path,
+                ext,
+                folder,
+                role,
+                expression,
+                nsfw,
+                entityName,
+                groupKey,
+                tag: `{{asset::${exportName}}}`,
+                shorthand: `<asset:${exportName}>`,
+                legacyTag: kind === 'emotion' ? `{{emotion::${sourceName}}}` : `{{image::${sourceName}}}`,
+                promptMeta: normalizedPromptMeta
+            });
+        };
+        additionalAssets.forEach((asset, index) => addRef('additional', asset, index));
+        emotionAssets.forEach((asset, index) => addRef('emotion', asset, index));
+        return refs;
+    }
+
+    function buildAssetModuleGroups(refs = [], aiPlan = null) {
+        const groups = new Map();
+        refs.forEach((ref) => {
+            const key = ref.groupKey || `${ref.nsfw ? 'nsfw' : 'sfw'}:${ref.role || 'asset'}:${ref.entityName || 'shared'}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    id: key,
+                    type: ref.role || 'asset',
+                    label: ref.entityName || (ref.role === 'background' ? '배경' : ref.role === 'ui' ? 'UI' : ref.role === 'item' ? '아이템' : '공용 에셋'),
+                    nsfw: ref.nsfw === true,
+                    assets: [],
+                    expressions: new Set(),
+                    sourceFolders: new Set(),
+                    summary: ''
+                });
+            }
+            const group = groups.get(key);
+            group.assets.push(ref.name);
+            if (ref.expression) group.expressions.add(ref.expression);
+            if (ref.folder) group.sourceFolders.add(ref.folder);
+        });
+        const aiGroups = Array.isArray(aiPlan?.groups) ? aiPlan.groups : [];
+        aiGroups.forEach((group) => {
+            const id = safeString(group?.id || group?.key || group?.groupKey).trim();
+            if (!id || !groups.has(id)) return;
+            const target = groups.get(id);
+            const label = safeString(group.label || group.name).trim();
+            const summary = safeString(group.summary || group.usage || group.description).trim();
+            const type = safeString(group.type || group.role).trim();
+            if (label) target.label = label.slice(0, 80);
+            if (summary) target.summary = summary.slice(0, 420);
+            if (type) target.type = type.slice(0, 40);
+        });
+        return Array.from(groups.values()).map((group) => ({
+            ...group,
+            expressions: Array.from(group.expressions),
+            sourceFolders: Array.from(group.sourceFolders)
+        })).sort((a, b) => {
+            if (a.nsfw !== b.nsfw) return a.nsfw ? 1 : -1;
+            if (a.type !== b.type) return safeString(a.type).localeCompare(safeString(b.type));
+            return safeString(a.label).localeCompare(safeString(b.label));
+        });
+    }
+
+    function sanitizeAssetModuleLorebookEntry(entry = {}, index = 0) {
+        const comment = safeString(entry.comment || entry.name || `Asset Module Note ${index + 1}`).trim().slice(0, 100);
+        const key = safeString(entry.key || entry.keys || comment).trim().slice(0, 240);
+        const content = safeString(entry.content || entry.body || entry.summary).trim().slice(0, 1800);
+        if (!comment || !content) return null;
+        return {
+            comment,
+            key: key || comment,
+            content,
+            mode: safeString(entry.mode || 'normal').trim() || 'normal',
+            alwaysActive: entry.alwaysActive !== false
+        };
+    }
+
+    function buildAssetModuleLorebook(refs = [], moduleName = 'Asset Module', aiPlan = null) {
+        const characterName = getCharacterDisplayName(char);
+        const groups = buildAssetModuleGroups(refs, aiPlan);
+        const usage = [
+            `${characterName} 이미지 에셋 ${refs.length}개를 모듈 assets로 묶었다.`,
+            '직접 호출: {{asset::에셋명}}',
+            '채팅 단축 호출: <asset:에셋명> 또는 [asset:에셋명]',
+            '이름은 내보내기 과정에서 정규화되며 원본 이름은 export assetIndex.sourceName에 보존된다.',
+            'NSFW 그룹은 성인/노출 상황 전용으로만 호출한다.'
+        ].join('\n');
+        const entries = [{
+            comment: `${moduleName} 사용법`,
+            key: 'svb_asset_module_usage,asset module,asset usage,에셋 모듈',
+            content: usage,
+            mode: 'normal',
+            alwaysActive: true
+        }];
+        ensureArray(aiPlan?.lorebook).slice(0, 8).forEach((entry, index) => {
+            const normalized = sanitizeAssetModuleLorebookEntry(entry, index);
+            if (normalized) entries.push(normalized);
+        });
+        groups.slice(0, 60).forEach((group, index) => {
+            const shownAssets = group.assets.slice(0, 32);
+            const more = group.assets.length > shownAssets.length ? ` 외 ${group.assets.length - shownAssets.length}개` : '';
+            const lines = [
+                `분류: ${group.type}${group.nsfw ? ' / NSFW' : ' / SFW'}`,
+                group.summary ? `요약: ${group.summary}` : '',
+                group.expressions.length ? `표정: ${group.expressions.join(', ')}` : '',
+                group.sourceFolders.length ? `폴더: ${group.sourceFolders.slice(0, 6).join(', ')}` : '',
+                `에셋: ${shownAssets.join(', ')}${more}`,
+                shownAssets[0] ? `예시: <asset:${shownAssets[0]}>` : ''
+            ].filter(Boolean);
+            entries.push({
+                comment: `${moduleName} 그룹 ${index + 1}: ${group.label}`,
+                key: [group.label, group.type, group.nsfw ? 'nsfw' : 'sfw', 'asset group'].filter(Boolean).join(', '),
+                content: lines.join('\n'),
+                mode: 'normal',
+                alwaysActive: true
+            });
+        });
+        return entries;
+    }
+
+    function buildAssetModuleRegex() {
+        const imageStyle = 'max-width:100%;height:auto;border-radius:8px;display:block;margin:6px 0;';
+        return [
+            {
+                comment: '에셋 단축 출력: <asset:name>',
+                name: '에셋 단축 출력: <asset:name>',
+                type: 'editdisplay',
+                flag: 'gi',
+                in: '<(?:asset|image)\\s*:\\s*([A-Za-z0-9_.\\-가-힣ㄱ-ㅎㅏ-ㅣ]+)\\s*>',
+                out: `<img class="svb-module-asset" data-svb-asset="$1" src="{{asset::$1}}" alt="$1" style="${imageStyle}">`,
+                order: 1
+            },
+            {
+                comment: '에셋 단축 출력: [asset:name]',
+                name: '에셋 단축 출력: [asset:name]',
+                type: 'editdisplay',
+                flag: 'gi',
+                in: '\\[(?:asset|image)\\s*:\\s*([A-Za-z0-9_.\\-가-힣ㄱ-ㅎㅏ-ㅣ]+)\\s*\\]',
+                out: `<img class="svb-module-asset" data-svb-asset="$1" src="{{asset::$1}}" alt="$1" style="${imageStyle}">`,
+                order: 2
+            }
+        ];
+    }
+
+    function buildAssetModuleAiInput(refs = []) {
+        const groups = buildAssetModuleGroups(refs);
+        const compactRefs = refs.slice(0, 240).map((ref) => ({
+            name: ref.name,
+            sourceName: ref.sourceName,
+            role: ref.role,
+            expression: ref.expression,
+            nsfw: ref.nsfw,
+            entityName: ref.entityName,
+            groupKey: ref.groupKey,
+            folder: ref.folder,
+            prompt: safeString(ref.promptMeta?.prompt).slice(0, 220),
+            identityPrompt: safeString(ref.promptMeta?.identityPrompt).slice(0, 180),
+            style: safeString(ref.promptMeta?.stylePreset || ref.promptMeta?.stylePrompt || ref.promptMeta?.artistTags || ref.promptMeta?.styleTags).slice(0, 180)
+        }));
+        return {
+            characterName: getCharacterDisplayName(char),
+            assetCount: refs.length,
+            omittedAssetCount: Math.max(0, refs.length - compactRefs.length),
+            groups: groups.map((group) => ({
+                id: group.id,
+                label: group.label,
+                type: group.type,
+                nsfw: group.nsfw,
+                count: group.assets.length,
+                expressions: group.expressions,
+                examples: group.assets.slice(0, 12)
+            })),
+            assets: compactRefs
+        };
+    }
+
+    async function refineAssetStudioModulePlanWithAI(refs = [], moduleName = '') {
+        if (!refs.length) return { aiAssisted: false, plan: null, warnings: [] };
+        const systemPrompt = [
+            'You are SuperVibeBot Asset Module Export Planner.',
+            'Your job is to classify exported image assets for a RisuAI module.',
+            'Return strict JSON only. Do not use markdown.',
+            'Do not invent image paths. Do not rewrite assets. Keep every note compact.',
+            'Separate character, situation, background, UI, item, and NSFW groups.',
+            'NSFW means adult/nudity/explicit/suggestive assets. Mark them clearly but do not describe explicit details.',
+            'Write Korean summaries that help an AI use the assets without wasting tokens.'
+        ].join('\n');
+        const schemaHint = '{"description":"2-4 short Korean lines","groups":[{"id":"same group id from input","label":"short label","type":"character|emotion|standing|situation|background|ui|item|asset","nsfw":false,"summary":"one compact Korean sentence"}],"lorebook":[{"comment":"short","key":"comma keys","content":"compact Korean note","mode":"normal","alwaysActive":true}]}';
+        const userText = [
+            `Module name: ${moduleName}`,
+            'Classify and summarize this asset index. Keep lorebook entries few and compact.',
+            'Do not list every asset in prose; group them.',
+            'Input JSON:',
+            JSON.stringify(buildAssetModuleAiInput(refs), null, 2),
+            'Return schema:',
+            schemaHint
+        ].join('\n');
+        try {
+            setStatus('API로 에셋 모듈 분류/로어북 요약을 작성하는 중...', '');
+            const response = await translateSingleChunk(systemPrompt, userText, 1, {
+                fromKero: false,
+                keroMode: currentKeroMode,
+                maxOutputTokens: getMaxOutputTokens()
+            });
+            const parsed = await parseJsonFromAI(response, { schemaHint, allowModelRepair: false });
+            if (!parsed?.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+                return { aiAssisted: false, plan: null, warnings: ['API 응답 JSON 파싱 실패로 결정론 기본 모듈 인덱스를 사용했습니다.'] };
+            }
+            return { aiAssisted: true, plan: parsed.data, warnings: [] };
+        } catch (error) {
+            Logger.warn('Asset module AI planning failed:', error?.message || error);
+            return { aiAssisted: false, plan: null, warnings: [`API 모듈 정리 실패: ${error?.message || error}`] };
+        }
+    }
+
+    function buildAssetStudioModulePayloadFromPlan(refs = [], aiResult = {}) {
+        const baseName = getCharacterDisplayName(char) || 'character';
+        const slug = buildAssetModuleSlug(baseName, `asset_module_${buildAssetModuleHash(baseName).slice(0, 8)}`);
+        const moduleName = `${baseName} Asset Module`;
+        const aiPlan = aiResult?.plan || null;
+        const description = safeString(aiPlan?.description).trim().slice(0, 1200) || [
+            `${baseName} 이미지 에셋을 RisuAI 모듈 assets로 묶은 SuperVibeBot 내보내기 모듈.`,
+            '인물/상황/배경/UI/아이템/NSFW 그룹을 간결한 로어북으로 정리하고, <asset:name> 단축 표시 정규식을 포함한다.',
+            '모듈 assets의 정식 호출은 {{asset::name}}이다.'
+        ].join('\n');
+        const modulePayload = {
+            id: `svb_asset_module_${slug}`,
+            name: moduleName,
+            namespace: `svb_assets_${slug}`,
+            description,
+            lorebook: buildAssetModuleLorebook(refs, moduleName, aiPlan),
+            regex: buildAssetModuleRegex(),
+            trigger: [],
+            cjs: '',
+            assets: refs.map(ref => [ref.name, ref.path, ref.ext]),
+            hideIcon: false,
+            lowLevelAccess: false
+        };
+        return { modulePayload, refs, aiAssisted: aiResult?.aiAssisted === true, warnings: ensureArray(aiResult?.warnings) };
+    }
+
+    async function buildAssetStudioModulePayload() {
+        const refs = buildAssetModuleRefs();
+        const aiResult = await refineAssetStudioModulePlanWithAI(refs, `${getCharacterDisplayName(char)} Asset Module`);
+        return buildAssetStudioModulePayloadFromPlan(refs, aiResult);
+    }
+
+    function resolveImportedAssetModulePayload(data = {}) {
+        const action = data?.keroAction || data?.action || {};
+        const candidates = [
+            data?.modulePayload,
+            data?.module,
+            data?.risuModule,
+            action?.target === 'module' ? action.payload : null,
+            data?.payload?.target === 'module' ? data.payload.payload : null
+        ];
+        return candidates.find(candidate =>
+            candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+            && (candidate.name || candidate.id || candidate.namespace || Array.isArray(candidate.assets) || Array.isArray(candidate.lorebook) || Array.isArray(candidate.regex))
+        ) || null;
+    }
+
     async function loadAssetStudioZipEngine() {
         if (globalThis.fflate?.Zip && globalThis.fflate?.ZipDeflate) return globalThis.fflate;
         await loadScriptOnce(FFLATE_UMD_URL);
@@ -54761,27 +55173,91 @@ async function openAssetStudio() {
         }
     }
 
-    function exportPersonaEmotionModule() {
-        const payload = {
-            version: 'SuperVibeBot Persona Emotion Asset Module v1',
-            type: 'persona-emotion-asset-module',
-            exportedAt: new Date().toISOString(),
-            character: {
-                id: getCharacterId(char),
-                name: getCharacterDisplayName(char)
-            },
-            emotionImages: svbEmotionTuples(emotionAssets),
-            additionalAssets: svbAdditionalAssetTuples(additionalAssets),
-            generationPresets: cloneImageGenerationPresetsForExport(imageGenerationPresets)
-        };
-        downloadStudioJson(payload, `${svbNormalizeAssetName(getCharacterDisplayName(char), 'character')}_persona_emotion_module.json`);
-        setStatus('페르소나 감정 에셋 모듈을 내보냈습니다.', 'success');
+    async function exportPersonaEmotionModule() {
+        const btn = document.getElementById('svb-as-module-export');
+        const previousText = btn?.textContent || '';
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '모듈 작성 중';
+        }
+        try {
+            const { modulePayload, refs, aiAssisted, warnings } = await buildAssetStudioModulePayload();
+            if (!refs.length) {
+                alert('모듈로 내보낼 이미지 에셋이 없습니다.');
+                return;
+            }
+            const payload = {
+                version: 'SuperVibeBot Asset Module Export v2',
+                type: 'asset-module',
+                exportedAt: new Date().toISOString(),
+                character: {
+                    id: getCharacterId(char),
+                    name: getCharacterDisplayName(char)
+                },
+                modulePayload,
+                keroAction: {
+                    type: 'create',
+                    target: 'module',
+                    payload: modulePayload,
+                    enabled: false
+                },
+                assetIndex: refs.map((ref) => ({
+                    name: ref.name,
+                    sourceName: ref.sourceName,
+                    kind: ref.kind,
+                    role: ref.role,
+                    expression: ref.expression,
+                    nsfw: ref.nsfw,
+                    entityName: ref.entityName,
+                    folder: ref.folder,
+                    tag: ref.tag,
+                    shorthand: ref.shorthand,
+                    legacyTag: ref.legacyTag
+                })),
+                generationPresets: cloneImageGenerationPresetsForExport(imageGenerationPresets),
+                assetStudio: normalizeAssetStudioMeta(assetStudioMeta),
+                compatibility: {
+                    emotionImages: svbEmotionTuples(emotionAssets),
+                    additionalAssets: svbAdditionalAssetTuples(additionalAssets)
+                },
+                aiAssisted,
+                warnings
+            };
+            downloadStudioJson(payload, `${svbNormalizeAssetName(getCharacterDisplayName(char), 'character')}_asset_module.json`);
+            const suffix = aiAssisted ? ' API 정리를 반영했습니다.' : warnings.length ? ` API 폴백: ${warnings[0]}` : '';
+            setStatus(`에셋 ${refs.length}개, 로어북 ${modulePayload.lorebook.length}개, 정규식 ${modulePayload.regex.length}개를 포함한 Risu 모듈 JSON을 내보냈습니다.${suffix}`, warnings.length && !aiAssisted ? 'error' : 'success');
+        } catch (error) {
+            alert(`모듈 내보내기 실패: ${error?.message || error}`);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = previousText || '모듈 내보내기';
+            }
+        }
     }
 
     async function importPersonaEmotionModule(file) {
         if (!file) return;
         try {
             const data = await svbReadSafeJsonFile(file, '페르소나 감정 에셋 모듈 JSON');
+            const modulePayload = resolveImportedAssetModulePayload(data);
+            if (modulePayload) {
+                const draft = normalizeModulePayload(modulePayload, null);
+                const db = await risuai.getDatabase();
+                const modules = Array.isArray(db?.modules) ? db.modules : [];
+                const conflictIndex = findModuleConflictIndex(modules, draft);
+                const conflict = conflictIndex >= 0 ? modules[conflictIndex] : null;
+                const action = conflict
+                    ? { type: 'update', target: 'module', id: getModuleId(conflict), payload: modulePayload }
+                    : { type: 'create', target: 'module', payload: modulePayload, enabled: data.enabled === true };
+                const message = conflict
+                    ? `같은 id/namespace의 기존 모듈 "${getModuleDisplayName(conflict)}"을(를) 이 에셋 모듈로 업데이트할까요?\n\n에셋 ${ensureArray(draft.assets).length}개 · 로어북 ${ensureArray(draft.lorebook).length}개 · 정규식 ${ensureArray(draft.regex).length}개`
+                    : `새 Risu 모듈 "${getModuleDisplayName(draft)}"을(를) 생성할까요?\n\n에셋 ${ensureArray(draft.assets).length}개 · 로어북 ${ensureArray(draft.lorebook).length}개 · 정규식 ${ensureArray(draft.regex).length}개`;
+                if (!confirm(message)) return;
+                const result = await applyModuleWorkTargetAction(action, {});
+                setStatus(result?.message || `모듈 "${getModuleDisplayName(draft)}" 가져오기를 완료했습니다.`, 'success');
+                return;
+            }
             const nextEmotion = normalizeEmotionAssets(data.emotionImages || data.emotions || []);
             const nextAdditional = normalizeAdditionalAssets(data.additionalAssets || data.assets || []);
             const presetSource = collectImageGenerationPresetImportSources(data);
