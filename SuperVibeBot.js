@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.100
-//@version 1.5.100
+//@display-name 🐸 SuperVibeBot v1.5.101
+//@version 1.5.101
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.100는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.101는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.101 Release Notes
+ * - v1.5.101: stores final positive/negative image prompts, style tags, identity prompts, route info, and source context per generated asset in Asset Studio metadata
+ * - v1.5.101: shows per-image prompt details inside Asset Studio registered asset rows, generated output cards, JSON export, and image ZIP backup metadata
+ * - v1.5.101: preserves explicit artist/style tags over inferred style presets and matches asset names against lorebook identity names before deriving character prompts
+ *
  * SuperVibeBot v1.5.100 Release Notes
  * - v1.5.100: simplifies Kero image asset prompt assembly so final prompts keep only short 2D anime style anchors, concrete identity tags, composition, expression, and background
  * - v1.5.100: removes weak local synthesis tags such as distinctive_face, consistent_character_design, visual_novel_sprite, adult_male, young_woman, and duplicate generic gun tags from final prompts
@@ -3500,14 +3505,14 @@ const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 600000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
 const KERO_ASSET_STYLE_PRESETS = Object.freeze({
-    'clean-anime': 'anime illustration, clean lineart, cel shading',
-    'soft-pastel': 'soft pastel anime illustration, gentle colors',
-    'sharp-keyvisual': 'anime key visual, sharp lineart, vivid colors',
-    'dark-fantasy': 'dark fantasy anime illustration, dramatic lighting',
-    watercolor: 'watercolor anime illustration, soft colors',
-    'ink-manhwa': 'manhwa style, clean black lineart',
-    'retro-cel': 'retro cel anime style, simple bold shadows',
-    'game-card': 'anime game card illustration, detailed outfit'
+    'clean-anime': 'clean anime illustration, crisp lineart, balanced cel shading',
+    'soft-pastel': 'soft pastel anime illustration, gentle colors, soft lighting',
+    'sharp-keyvisual': 'anime key visual, sharp lineart, vivid colors, polished shading',
+    'dark-fantasy': 'dark fantasy anime illustration, dramatic lighting, rich shadows',
+    watercolor: 'watercolor anime illustration, transparent color wash, soft edges',
+    'ink-manhwa': 'manhwa style, clean black lineart, controlled screentone shading',
+    'retro-cel': 'retro cel anime style, simple bold shadows, limited color palette',
+    'game-card': 'anime game card illustration, detailed outfit, strong silhouette'
 });
 const KERO_DANBOORU_PROMPT_TAG_LIBRARY = Object.freeze({
     negative: {
@@ -13166,7 +13171,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.100',
+            '//@version 1.5.101',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -21435,9 +21440,21 @@ function normalizeImagePresetOutput(output = {}, index = 0) {
         partId: safeString(source.partId).trim(),
         prompt: safeString(source.prompt || source.resolvedPrompt).trim(),
         negative: safeString(source.negative || source.resolvedNegative).trim(),
+        stylePreset: safeString(source.stylePreset || source.style || source.styleId).trim(),
+        stylePrompt: safeString(source.stylePrompt || source.baseStylePrompt).trim(),
+        artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
+        styleTags: safeString(source.styleTags || source.danbooruStyleTags).trim(),
+        identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject),
+        identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt).trim(),
+        danbooruTags: safeString(source.danbooruTags || source.tags).trim(),
+        sourceContext: safeString(source.sourceContext || source.context || source.source || source.reason).trim(),
+        provider: safeString(source.provider || source.profileName || source.profileId).trim(),
+        presetId: safeString(source.presetId || source.imagePresetId).trim(),
         ratioId: safeString(source.ratioId || source.ratio).trim(),
         steps: Number.isFinite(Number(source.steps)) ? Number(source.steps) : 0,
         seed: source.seed === "random" ? "random" : (Number.isFinite(Number(source.seed)) ? Number(source.seed) : ""),
+        wellspringJobId: safeString(source.wellspringJobId || source.jobId).trim(),
+        wellspringRunId: safeString(source.wellspringRunId || source.runId).trim(),
         createdAt: safeString(source.createdAt || source.date).trim() || new Date().toISOString()
     };
 }
@@ -29969,6 +29986,41 @@ ${currentVars || '{}'}
         return inferKeroAssetIdentityNameFromText(action.userRequest || action.request || action.instruction || action.mission || action.reason || payloadObj.userRequest || payloadObj.request || '');
     }
 
+    function collectKeroAssetKnownIdentityNames(char) {
+        const names = [];
+        const blocked = new Set(['인물', '캐릭터', '주인공', '프로필', '세계관', '설정', '관계', '역사', '배경', '요약', '기본', '감정', '스탠딩', 'asset', 'profile', 'character']);
+        const push = (value) => {
+            const text = safeString(value).trim();
+            if (!text) return;
+            text.split(/[,|;/，、\n]+/).forEach((part) => {
+                const clean = svbNormalizeAssetIdentityName(part.replace(/^[#\-\s"'`]+|[#\-\s"'`]+$/g, '').replace(/\s*[:：].*$/, ''));
+                if (!clean || blocked.has(clean.toLowerCase()) || blocked.has(clean)) return;
+                if (!(/[가-힣]{2,10}/.test(clean) || /^[A-Za-z][A-Za-z0-9_\- ]{1,32}$/.test(clean))) return;
+                if (clean.length > 34) return;
+                if (!names.some(name => name.toLowerCase() === clean.toLowerCase())) names.push(clean);
+            });
+        };
+        try {
+            const full = typeof buildFullCharacterContext === 'function' ? buildFullCharacterContext(char) : null;
+            ensureArray(full?.lorebooks || getCharacterField(char, 'globalLore')).forEach((entry) => {
+                push(entry.comment);
+                push(entry.key);
+            });
+        } catch (_) {}
+        return names;
+    }
+
+    function inferKeroAssetIdentityNameFromItem(char, item = {}, knownNames = null) {
+        const candidates = ensureArray(knownNames || collectKeroAssetKnownIdentityNames(char));
+        if (!candidates.length) return '';
+        const source = [item.identityName, item.name, item.label, item.assetName, item.slotName, item.emotionTarget, item.prompt]
+            .map(safeString)
+            .join('\n')
+            .toLowerCase();
+        if (!source.trim()) return '';
+        return candidates.find(name => source.includes(name.toLowerCase())) || '';
+    }
+
     function keroAssetPushUnique(list, value) {
         const text = safeString(value).trim();
         if (!text) return;
@@ -30222,9 +30274,14 @@ ${currentVars || '{}'}
     async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
         let meta = svbReadAssetStudioMetaFromCharacter(char);
         const actionIdentityName = resolveKeroAssetActionIdentityName(action, items);
+        const knownIdentityNames = collectKeroAssetKnownIdentityNames(char);
         let dirty = false;
         const hydrated = items.map((item) => {
-            const identityName = svbNormalizeAssetIdentityName(item.identityName || actionIdentityName);
+            const identityName = svbNormalizeAssetIdentityName(
+                item.identityName
+                || inferKeroAssetIdentityNameFromItem(char, item, knownIdentityNames)
+                || actionIdentityName
+            );
             const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
             const generated = buildKeroAssetIdentityPromptFromContext(char, action, { ...item, identityName });
             const explicitIdentity = safeString(item.identityPrompt).trim();
@@ -30248,6 +30305,7 @@ ${currentVars || '{}'}
                 identityNegative,
                 danbooruTags: joinKeroAssetPromptFragments(generated.danbooruTags, item.danbooruTags),
                 stylePreset: item.stylePreset || generated.stylePreset,
+                stylePresetInferred: !safeString(item.stylePreset).trim() && !!generated.stylePreset,
                 wellspringLoras: itemLoras.length ? itemLoras : storedLoras
             };
         });
@@ -30332,21 +30390,25 @@ ${currentVars || '{}'}
         return 'clean-anime';
     }
 
-    function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '') {
+    function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '', options = {}) {
         const presetPrompt = KERO_ASSET_STYLE_PRESETS[normalizeKeroAssetStyleKey(stylePreset)] || KERO_ASSET_STYLE_PRESETS['clean-anime'];
-        return joinKeroAssetPromptFragments(
-            'best_quality, highres, 2d, anime_style, clean_lineart, cel_shading',
-            presetPrompt,
+        const explicitStylePrompt = joinKeroAssetPromptFragments(
             stripKeroAssetRealismRiskFragments(styleTags),
             stripKeroAssetRealismRiskFragments(artistTags),
             stripKeroAssetRealismRiskFragments(stylePrompt)
         );
+        const shouldUsePreset = !(options.stylePresetInferred && explicitStylePrompt);
+        return joinKeroAssetPromptFragments(
+            'masterpiece, best quality, highres, 2d anime illustration',
+            shouldUsePreset ? presetPrompt : '',
+            explicitStylePrompt
+        );
     }
 
-    function normalizeKeroAsset2dPositivePrompt(prompt = '', stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '') {
+    function normalizeKeroAsset2dPositivePrompt(prompt = '', stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '', options = {}) {
         const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
         return joinKeroAssetPromptFragments(
-            buildKeroAssetStylePrompt(stylePreset, stylePrompt, artistTags, styleTags),
+            buildKeroAssetStylePrompt(stylePreset, stylePrompt, artistTags, styleTags, options),
             safePrompt || 'solo, upper_body, looking_at_viewer, simple_background'
         );
     }
@@ -30507,7 +30569,8 @@ ${currentVars || '{}'}
                 item.stylePreset,
                 svbRenderImagePromptTemplate(item.stylePrompt, vars).trim(),
                 svbRenderImagePromptTemplate(item.artistTags, vars).trim(),
-                svbRenderImagePromptTemplate(item.styleTags, vars).trim()
+                svbRenderImagePromptTemplate(item.styleTags, vars).trim(),
+                { stylePresetInferred: item.stylePresetInferred === true }
             );
             const negative = normalizeKeroAsset2dNegativePrompt(
                 joinKeroAssetPromptFragments(
@@ -30549,7 +30612,28 @@ ${currentVars || '{}'}
                     signal: actionSignal
                 });
                 throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
-                const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, {
+                    target: item.target,
+                    name,
+                    prompt,
+                    negative,
+                    promptMeta: {
+                        sourceContext: 'kero_asset_create',
+                        provider: profile.name || profile.provider,
+                        presetId: preset.id || preset.name,
+                        stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
+                        stylePrompt: item.stylePrompt,
+                        artistTags: item.artistTags,
+                        styleTags: item.styleTags,
+                        identityName: item.identityName,
+                        identityPrompt: item.identityPrompt,
+                        danbooruTags: item.danbooruTags,
+                        ratioId,
+                        steps,
+                        wellspringJobId: imageResult.wellspringJobId || '',
+                        wellspringRunId: imageResult.wellspringRunId || ''
+                    }
+                });
                 const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
                 const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase()) || null;
                 if (allowAutoReferenceForProfile && !autoReferencePath && savedAsset?.path) {
@@ -30566,6 +30650,11 @@ ${currentVars || '{}'}
                     prompt: imageResult.prompt || prompt,
                     negative: imageResult.negative || negative,
                     stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
+                    stylePrompt: item.stylePrompt || '',
+                    artistTags: item.artistTags || '',
+                    styleTags: item.styleTags || '',
+                    identityPrompt: item.identityPrompt || '',
+                    danbooruTags: item.danbooruTags || '',
                     ratioId,
                     steps,
                     referenceImagePath,
@@ -35240,7 +35329,7 @@ ${metaBlock}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
-- 에셋 prompt는 세 층으로 단순 분리한다: stylePrompt/artistTags는 같은 봇 전체의 고정 그림체, identityPrompt는 인물별 고정 외형/성별/복식/상징, assets[].prompt는 해당 컷의 표정/포즈/구도다. danbooruTags는 사용자가 명시한 태그팩이 있을 때만 짧게 쓴다.
+- 에셋 prompt는 세 층으로 단순 분리한다: stylePrompt/artistTags는 같은 봇 전체의 고정 그림체, identityPrompt는 인물별 고정 외형/성별/복식/상징, assets[].prompt는 해당 컷의 표정/포즈/구도다. danbooruTags는 사용자가 명시한 태그팩이 있을 때만 짧게 쓴다. 생성 후 시스템은 최종 positive/negative prompt를 Asset Studio 이미지별 기록에 저장한다.
 - Wellspring workflow를 쓸 때 wellspringWorkflowId는 Wellspring workflow id, wellspringCharacterId는 Wellspring project/character id, wellspringVariantIds는 workflow variant id 배열이다. RisuAI 캐릭터 targetCharacterId와 혼동하지 않는다.
 - 에셋 스튜디오 관리 기능도 케로가 활용한다. 확장자 정리/폴더 이동/패턴 이름 변경/삭제는 target:"asset", type:"asset_manage"로 실행한다.
 - 에셋 확장자 정리: @action {"type":"asset_manage","target":"asset","operation":"normalize_extensions","kind":"all","all":true}
@@ -35273,8 +35362,8 @@ ${metaBlock}
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
 - 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. 남성 캐릭터에 1girl/female_focus를 쓰거나, 여성 캐릭터에 1boy/male_focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo와 외형 단서만 쓴다.
 - Danbooru식 태그는 짧은 시각 단위로만 쓴다. adult_male, young_woman, character_focus, distinctive_face, consistent_character_design, visual_novel_sprite처럼 결과를 흐리는 추상 태그는 쓰지 않는다.
-- 남성 예시: 1boy, solo, male_focus, short_black_hair, brown_eyes, broad_shoulders, military_uniform, tactical_vest, upper_body, looking_at_viewer, white_background.
-- 여성 예시: 1girl, solo, female_focus, long_brown_hair, green_eyes, slender, school_uniform, cardigan, upper_body, looking_at_viewer, smile, white_background.
+- 남성 예시: 1boy, solo, male_focus, black_hair, short_hair, brown_eyes, broad_shoulders, military_uniform, tactical_vest, upper_body, looking_at_viewer, white_background.
+- 여성 예시: 1girl, solo, female_focus, brown_hair, long_hair, green_eyes, slender, school_uniform, cardigan, upper_body, looking_at_viewer, smile, white_background.
 - 소년/소녀/청년/성인/중년 차이는 태그를 늘리는 방식이 아니라 얼굴선, 체형, 복식, 자세 설명으로 구분한다.
 - 같은 봇의 여러 인물 에셋은 하나의 기본 그림체(stylePreset/stylePrompt/artistTags)를 공유하고, identityPrompt는 인물마다 다르게 둔다. “전부 비슷한 여자/남자”가 되지 않도록 머리색, 눈색, 체형, 복식 실루엣, 상징 소품을 각 인물마다 다르게 만든다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
@@ -42667,7 +42756,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.100 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.101 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -51469,6 +51558,103 @@ function svbNormalizeAssetIdentityMap(value = {}) {
     return identities;
 }
 
+function svbNormalizeAssetPromptRecord(value = {}) {
+    const source = (value && typeof value === 'object' && !Array.isArray(value))
+        ? value
+        : { prompt: value };
+    const record = {
+        prompt: safeString(source.prompt || source.positive || source.finalPrompt || source.input).trim(),
+        negative: safeString(source.negative || source.negativePrompt || source.finalNegative || source.uc).trim(),
+        stylePreset: safeString(source.stylePreset || source.style || source.styleId).trim(),
+        stylePrompt: safeString(source.stylePrompt || source.artistStyle || source.baseStylePrompt).trim(),
+        artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
+        styleTags: safeString(source.styleTags || source.danbooruStyleTags || source.tagPrompt).trim(),
+        identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject),
+        identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt).trim(),
+        danbooruTags: safeString(source.danbooruTags || source.tags).trim(),
+        sourceContext: safeString(source.sourceContext || source.context || source.source || source.reason).trim(),
+        provider: safeString(source.provider || source.profileName || source.profileId).trim(),
+        presetId: safeString(source.presetId || source.imagePresetId).trim(),
+        ratioId: safeString(source.ratioId || source.ratio).trim(),
+        steps: Number.isFinite(Number(source.steps)) ? Number(source.steps) : '',
+        seed: source.seed === 'random' ? 'random' : (Number.isFinite(Number(source.seed)) ? Number(source.seed) : ''),
+        wellspringJobId: safeString(source.wellspringJobId || source.jobId).trim(),
+        wellspringRunId: safeString(source.wellspringRunId || source.runId).trim(),
+        path: safeString(source.path || source.assetPath).trim(),
+        ext: safeString(source.ext || source.extension).replace(/^\./, '').toLowerCase(),
+        createdAt: safeString(source.createdAt || source.date).trim(),
+        updatedAt: safeString(source.updatedAt).trim()
+    };
+    const hasContent = Object.entries(record).some(([key, entryValue]) =>
+        key !== 'updatedAt' && safeString(entryValue).trim()
+    );
+    if (!hasContent) return null;
+    return {
+        ...record,
+        updatedAt: record.updatedAt || new Date().toISOString()
+    };
+}
+
+function svbNormalizeAssetPromptMap(value = {}) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const prompts = {};
+    Object.entries(value).forEach(([name, record]) => {
+        const cleanName = safeString(name).trim();
+        if (!cleanName) return;
+        const normalized = svbNormalizeAssetPromptRecord(record);
+        if (normalized) prompts[cleanName] = normalized;
+    });
+    return prompts;
+}
+
+function svbGetAssetStudioPromptRecord(meta = {}, kind = 'additional', name = '') {
+    const cleanKind = kind === 'emotion' ? 'emotion' : 'additional';
+    const cleanName = safeString(name).trim();
+    if (!cleanName) return null;
+    const prompts = svbNormalizeAssetStudioMeta(meta).prompts?.[cleanKind] || {};
+    return prompts[cleanName] || null;
+}
+
+function svbSetAssetStudioPromptRecord(meta = {}, kind = 'additional', name = '', record = {}) {
+    const cleanKind = kind === 'emotion' ? 'emotion' : 'additional';
+    const cleanName = safeString(name).trim();
+    const next = svbNormalizeAssetStudioMeta(meta);
+    if (!cleanName) return next;
+    if (!next.prompts) next.prompts = { additional: {}, emotion: {} };
+    if (!next.prompts[cleanKind]) next.prompts[cleanKind] = {};
+    const previous = next.prompts[cleanKind][cleanName] || {};
+    const normalized = svbNormalizeAssetPromptRecord({
+        ...previous,
+        ...record,
+        createdAt: previous.createdAt || record.createdAt || new Date().toISOString()
+    });
+    if (normalized) next.prompts[cleanKind][cleanName] = normalized;
+    else delete next.prompts[cleanKind][cleanName];
+    return next;
+}
+
+function svbRenameAssetStudioPromptKey(meta = {}, kind = 'additional', oldName = '', newName = '') {
+    const cleanKind = kind === 'emotion' ? 'emotion' : 'additional';
+    const cleanOld = safeString(oldName).trim();
+    const cleanNew = safeString(newName).trim();
+    if (!cleanOld || !cleanNew || cleanOld === cleanNew) return meta;
+    const next = svbNormalizeAssetStudioMeta(meta);
+    const map = next.prompts?.[cleanKind];
+    if (!map || !map[cleanOld]) return next;
+    map[cleanNew] = { ...map[cleanOld], updatedAt: new Date().toISOString() };
+    delete map[cleanOld];
+    return next;
+}
+
+function svbDeleteAssetStudioPromptKey(meta = {}, kind = 'additional', name = '') {
+    const cleanKind = kind === 'emotion' ? 'emotion' : 'additional';
+    const cleanName = safeString(name).trim();
+    if (!cleanName) return meta;
+    const next = svbNormalizeAssetStudioMeta(meta);
+    if (next.prompts?.[cleanKind]) delete next.prompts[cleanKind][cleanName];
+    return next;
+}
+
 function svbFindAssetIdentityEntry(meta = {}, name = '') {
     const wanted = svbNormalizeAssetIdentityName(name).toLowerCase();
     if (!wanted) return null;
@@ -51545,6 +51731,7 @@ function svbSetAssetIdentityWellspringLoras(meta = {}, name = '', loras = [], de
 
 function svbNormalizeAssetStudioMeta(raw = {}) {
     const folders = raw?.folders || {};
+    const prompts = raw?.prompts || raw?.promptMeta || raw?.assetPrompts || raw?.generatedPrompts || {};
     const normalizeMap = (value) => {
         if (!value || typeof value !== 'object') return {};
         return Object.fromEntries(Object.entries(value)
@@ -51555,6 +51742,13 @@ function svbNormalizeAssetStudioMeta(raw = {}) {
         folders: {
             additional: normalizeMap(folders.additional),
             emotion: normalizeMap(folders.emotion)
+        },
+        prompts: {
+            additional: svbNormalizeAssetPromptMap(
+                prompts.additional || prompts.additionalAssets || prompts.assets
+                || (!prompts.emotion && !prompts.emotionImages && !prompts.emotions ? prompts : {})
+            ),
+            emotion: svbNormalizeAssetPromptMap(prompts.emotion || prompts.emotionImages || prompts.emotions)
         },
         identities: svbNormalizeAssetIdentityMap(raw?.identities || raw?.identityPrompts || raw?.characterPrompts)
     };
@@ -51580,6 +51774,12 @@ function svbCleanAssetStudioMeta(meta, emotionAssets = [], additionalAssets = []
     });
     Object.keys(clean.folders.emotion || {}).forEach((name) => {
         if (!emotionNames.has(name)) delete clean.folders.emotion[name];
+    });
+    Object.keys(clean.prompts.additional || {}).forEach((name) => {
+        if (!additionalNames.has(name)) delete clean.prompts.additional[name];
+    });
+    Object.keys(clean.prompts.emotion || {}).forEach((name) => {
+        if (!emotionNames.has(name)) delete clean.prompts.emotion[name];
     });
     return clean;
 }
@@ -51679,6 +51879,8 @@ async function svbSaveGeneratedImageToCharacter(char, imageResult, options = {})
     const rawName = safeString(options.name || `generated_${Date.now()}`).trim();
     const emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
     const additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
+    let savedName = '';
+    let savedPath = '';
 
     if (target === 'emotion') {
         const name = rawName || `generated_${Date.now()}`;
@@ -51688,6 +51890,8 @@ async function svbSaveGeneratedImageToCharacter(char, imageResult, options = {})
         if (existing >= 0) emotionAssets[existing] = { name, path };
         else emotionAssets.push({ name, path });
         setCharacterField(char, 'emotionImages', svbEmotionTuples(emotionAssets));
+        savedName = name;
+        savedPath = path;
     } else {
         const normalized = svbNormalizeAssetName(rawName, 'generated');
         const name = options.unique === false
@@ -51698,12 +51902,36 @@ async function svbSaveGeneratedImageToCharacter(char, imageResult, options = {})
         if (existing >= 0) additionalAssets[existing] = { name, path, ext };
         else additionalAssets.push({ name, path, ext });
         setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(additionalAssets));
+        savedName = name;
+        savedPath = path;
+    }
+
+    const promptRecord = svbNormalizeAssetPromptRecord({
+        ...(options.promptMeta || options.metadata || {}),
+        prompt: options.prompt || options.promptMeta?.prompt || imageResult.prompt,
+        negative: options.negative || options.promptMeta?.negative || imageResult.negative,
+        path: savedPath,
+        ext,
+        target,
+        createdAt: options.createdAt || new Date().toISOString()
+    });
+    if (promptRecord) {
+        const meta = svbSetAssetStudioPromptRecord(
+            svbReadAssetStudioMetaFromCharacter(char),
+            target,
+            savedName,
+            promptRecord
+        );
+        svbWriteAssetStudioMetaToCharacter(char, meta);
     }
 
     const ok = await svbSaveAssetStudioCharacter(char, 'generated-image');
     if (!ok) throw new Error('캐릭터 저장에 실패했습니다.');
     return {
         target,
+        name: savedName,
+        path: savedPath,
+        ext,
         emotionAssets: normalizeEmotionAssets(getCharacterField(char, 'emotionImages')),
         additionalAssets: normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'))
     };
@@ -51887,6 +52115,10 @@ async function openAssetStudio() {
         return safeString(assetStudioMeta?.folders?.[kind]?.[name]).trim();
     }
 
+    function getAssetPromptMeta(kind, name) {
+        return svbGetAssetStudioPromptRecord(assetStudioMeta, kind, name);
+    }
+
     function setAssetFolder(kind, name, folder) {
         const cleanName = safeString(name).trim();
         if (!cleanName) return;
@@ -51898,10 +52130,24 @@ async function openAssetStudio() {
 
     function renameAssetFolderKey(kind, oldName, newName) {
         const map = assetStudioMeta?.folders?.[kind];
-        if (!map) return;
-        const folder = map[oldName];
-        delete map[oldName];
-        if (folder && newName) map[newName] = folder;
+        if (map) {
+            const folder = map[oldName];
+            delete map[oldName];
+            if (folder && newName) map[newName] = folder;
+        }
+        renameAssetPromptKey(kind, oldName, newName);
+    }
+
+    function renameAssetPromptKey(kind, oldName, newName) {
+        assetStudioMeta = svbRenameAssetStudioPromptKey(assetStudioMeta, kind, oldName, newName);
+    }
+
+    function deleteAssetPromptKey(kind, name) {
+        assetStudioMeta = svbDeleteAssetStudioPromptKey(assetStudioMeta, kind, name);
+    }
+
+    function setAssetPromptMeta(kind, name, record = {}) {
+        assetStudioMeta = svbSetAssetStudioPromptRecord(assetStudioMeta, kind, name, record);
     }
 
     function cleanAssetStudioMeta() {
@@ -51912,6 +52158,12 @@ async function openAssetStudio() {
         }
         for (const name of Object.keys(assetStudioMeta.folders.emotion || {})) {
             if (!emotionNames.has(name)) delete assetStudioMeta.folders.emotion[name];
+        }
+        for (const name of Object.keys(assetStudioMeta.prompts?.additional || {})) {
+            if (!additionalNames.has(name)) delete assetStudioMeta.prompts.additional[name];
+        }
+        for (const name of Object.keys(assetStudioMeta.prompts?.emotion || {})) {
+            if (!emotionNames.has(name)) delete assetStudioMeta.prompts.emotion[name];
         }
         selectedAssetIds = new Set([...selectedAssetIds].filter(id => {
             const { kind, idx } = parseAssetSelectionId(id);
@@ -51940,6 +52192,52 @@ async function openAssetStudio() {
         ].join('');
         select.value = previous && (previous === '__none__' || folders.includes(previous)) ? previous : '';
         return select.value;
+    }
+
+    function buildAssetPromptCopyText(record = {}) {
+        const lines = [];
+        const add = (label, value) => {
+            const text = safeString(value).trim();
+            if (text) lines.push(`${label}: ${text}`);
+        };
+        add('Positive', record.prompt);
+        add('Negative', record.negative);
+        add('StylePreset', record.stylePreset);
+        add('StylePrompt', record.stylePrompt);
+        add('ArtistTags', record.artistTags);
+        add('StyleTags', record.styleTags);
+        add('IdentityName', record.identityName);
+        add('IdentityPrompt', record.identityPrompt);
+        add('DanbooruTags', record.danbooruTags);
+        add('Provider', record.provider);
+        add('Preset', record.presetId);
+        add('Ratio', record.ratioId);
+        add('Steps', record.steps);
+        add('Source', record.sourceContext);
+        return lines.join('\n');
+    }
+
+    function renderAssetPromptDetailsHtml(record = {}, buttonAttrs = '') {
+        const normalized = svbNormalizeAssetPromptRecord(record);
+        if (!normalized) {
+            return '<details class="svb-as-prompt-details"><summary>프롬프트 기록 없음</summary><div class="svb-as-prompt-empty">이전 수동 등록 이미지이거나 프롬프트 기록 없이 가져온 에셋입니다.</div></details>';
+        }
+        const rows = [
+            ['Positive', normalized.prompt],
+            ['Negative', normalized.negative],
+            ['Style', svbJoinPromptFragments(normalized.stylePreset, normalized.stylePrompt, normalized.artistTags, normalized.styleTags)],
+            ['Identity', svbJoinPromptFragments(normalized.identityName, normalized.identityPrompt)],
+            ['Danbooru', normalized.danbooruTags],
+            ['Route', [normalized.provider, normalized.presetId, normalized.ratioId, normalized.steps ? `${normalized.steps} steps` : ''].filter(Boolean).join(' · ')],
+            ['Source', normalized.sourceContext]
+        ].filter(([, value]) => safeString(value).trim());
+        return `<details class="svb-as-prompt-details">
+            <summary>프롬프트 확인</summary>
+            <div class="svb-as-prompt-body">
+                ${rows.map(([label, value]) => `<div class="svb-as-prompt-block"><strong>${escapeHtml(label)}</strong><pre>${escapeHtml(value)}</pre></div>`).join('')}
+                <button class="svb-as-btn" data-action="copy-prompt-meta" ${buttonAttrs} type="button">프롬프트 복사</button>
+            </div>
+        </details>`;
     }
 
     function getAssetRefsForKind(kind, selectedOnly = true) {
@@ -52793,6 +53091,7 @@ async function openAssetStudio() {
         return outputs.map((output, outputIndex) => {
             const ext = safeString(output.ext || svbGetFileExt(output.name) || svbGetFileExt(output.path) || 'png').toUpperCase();
             const tag = output.target === 'emotion' ? `{{emotion::${output.name || ''}}}` : `{{image::${output.name || ''}}}`;
+            const promptDetails = renderAssetPromptDetailsHtml(output, `data-part-idx="${partIndex}" data-output-idx="${outputIndex}"`);
             return `<div class="svb-as-output-card" data-part-idx="${partIndex}" data-output-idx="${outputIndex}">
                 <button class="svb-as-output-thumb is-empty" data-action="zoom-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" data-output-name="${escapeHtml(output.name || '')}" data-output-path="${escapeHtml(output.path || '')}" data-output-ext="${escapeHtml(output.ext || 'png')}" type="button" title="생성본 확대">
                     <span>${escapeHtml(ext || 'IMG')}</span>
@@ -52802,6 +53101,7 @@ async function openAssetStudio() {
                     <span>${escapeHtml(output.target === 'emotion' ? '감정 이미지' : '추가 에셋')}</span>
                     <code>${escapeHtml(tag)}</code>
                 </div>
+                ${promptDetails}
                 <div class="svb-as-output-actions">
                     <button class="svb-as-btn" data-action="copy-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">태그 복사</button>
                     <button class="svb-as-btn" data-action="download-output" data-part-idx="${partIndex}" data-output-idx="${outputIndex}" type="button">이미지 저장</button>
@@ -52882,7 +53182,7 @@ async function openAssetStudio() {
             : svbNormalizeAssetName(`${base || 'asset'}_${suffix}`, 'asset');
     }
 
-    async function saveGeneratedBatchAssetToState(imageResult, part, name) {
+    async function saveGeneratedBatchAssetToState(imageResult, part, name, promptMeta = {}) {
         if (!imageResult?.bytes) throw new Error('저장할 이미지 결과가 없습니다.');
         const target = part.assetType === 'emotion' ? 'emotion' : 'additional';
         const ext = safeString(imageResult.ext || svbDetectImageFormat(imageResult.bytes) || 'png').replace(/^\./, '').toLowerCase() || 'png';
@@ -52893,6 +53193,14 @@ async function openAssetStudio() {
             const existing = emotionAssets.findIndex(item => item.name.toLowerCase() === finalName.toLowerCase());
             if (existing >= 0) emotionAssets[existing] = { name: finalName, path };
             else emotionAssets.push({ name: finalName, path });
+            setAssetPromptMeta('emotion', finalName, {
+                ...promptMeta,
+                prompt: promptMeta.prompt || imageResult.prompt,
+                negative: promptMeta.negative || imageResult.negative,
+                path,
+                ext,
+                sourceContext: promptMeta.sourceContext || 'asset_studio_batch'
+            });
             return normalizeImagePresetOutput({
                 id: svbImageId('image-output'),
                 name: finalName,
@@ -52909,6 +53217,14 @@ async function openAssetStudio() {
         const existing = additionalAssets.findIndex(item => item.name.toLowerCase() === finalName.toLowerCase());
         if (existing >= 0) additionalAssets[existing] = { name: finalName, path, ext };
         else additionalAssets.push({ name: finalName, path, ext });
+        setAssetPromptMeta('additional', finalName, {
+            ...promptMeta,
+            prompt: promptMeta.prompt || imageResult.prompt,
+            negative: promptMeta.negative || imageResult.negative,
+            path,
+            ext,
+            sourceContext: promptMeta.sourceContext || 'asset_studio_batch'
+        });
         return normalizeImagePresetOutput({
             id: svbImageId('image-output'),
             name: finalName,
@@ -52971,10 +53287,21 @@ async function openAssetStudio() {
                     wellspringCharacterId: job.part.wellspringCharacterId,
                     wellspringVariantIds: job.part.wellspringVariantIds
                 });
-                const output = await saveGeneratedBatchAssetToState(result, job.part, name);
+                const output = await saveGeneratedBatchAssetToState(result, job.part, name, {
+                    prompt: result.prompt || prompt,
+                    negative: result.negative || negative,
+                    provider: profile.name || profile.provider,
+                    presetId: preset.id || preset.name,
+                    ratioId,
+                    steps,
+                    sourceContext: 'asset_studio_batch'
+                });
                 output.partId = job.part.id;
                 output.prompt = result.prompt || prompt;
                 output.negative = result.negative || negative;
+                output.provider = profile.name || profile.provider;
+                output.presetId = preset.id || preset.name;
+                output.sourceContext = 'asset_studio_batch';
                 output.ratioId = ratioId;
                 output.steps = steps;
                 job.part.outputs = [...ensureArray(job.part.outputs), output];
@@ -53128,6 +53455,7 @@ async function openAssetStudio() {
                 <img src="${escapeHtml(result.dataUrl)}" alt="생성 결과">
             </button>
             <div class="svb-as-generated-meta">생성 결과 · 아직 저장하지 않았습니다.</div>
+            ${renderAssetPromptDetailsHtml(result, '')}
         `;
     }
 
@@ -53151,6 +53479,7 @@ async function openAssetStudio() {
             const count = usage[asset.name] || 0;
             const folder = getAssetFolder('emotion', asset.name);
             const selected = selectedAssetIds.has(assetSelectionId('emotion', idx));
+            const promptDetails = renderAssetPromptDetailsHtml(getAssetPromptMeta('emotion', asset.name), `data-kind="emotion" data-idx="${idx}"`);
             return `<div class="svb-as-row" data-kind="emotion" data-idx="${idx}">
                 <div class="svb-as-row-main">
                     <input class="svb-as-select" data-kind="emotion" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
@@ -53161,6 +53490,7 @@ async function openAssetStudio() {
                     </div>
                     <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
                 </div>
+                ${promptDetails}
                 <div class="svb-as-row-actions">
                     <button class="svb-as-btn" data-action="copy-emotion" data-idx="${idx}" type="button">태그 복사</button>
                     <button class="svb-as-btn" data-action="download-emotion" data-idx="${idx}" type="button">이미지 저장</button>
@@ -53193,6 +53523,7 @@ async function openAssetStudio() {
             const count = usage[asset.name] || 0;
             const folder = getAssetFolder('additional', asset.name);
             const selected = selectedAssetIds.has(assetSelectionId('additional', idx));
+            const promptDetails = renderAssetPromptDetailsHtml(getAssetPromptMeta('additional', asset.name), `data-kind="additional" data-idx="${idx}"`);
             return `<div class="svb-as-row" data-kind="additional" data-idx="${idx}">
                 <div class="svb-as-row-main">
                     <input class="svb-as-select" data-kind="additional" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
@@ -53204,6 +53535,7 @@ async function openAssetStudio() {
                     </div>
                     <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
                 </div>
+                ${promptDetails}
                 <div class="svb-as-row-actions">
                     <button class="svb-as-btn" data-action="copy-additional" data-idx="${idx}" type="button">태그 복사</button>
                     <button class="svb-as-btn" data-action="download-additional" data-idx="${idx}" type="button">이미지 저장</button>
@@ -53338,7 +53670,14 @@ async function openAssetStudio() {
             setStatus(`${profile.name} + ${preset.name} 이미지 생성 중...`, 'info');
             const result = await svbGenerateImageWithProfileAndPreset(profile, preset, { prompt, negative, ratioId, steps });
             if (requestId !== generationRequestId || !studioWindow.isConnected) return;
-            generatedImageResult = result;
+            generatedImageResult = {
+                ...result,
+                provider: profile.name || profile.provider,
+                presetId: preset.id || preset.name,
+                ratioId,
+                steps,
+                sourceContext: 'asset_studio_single'
+            };
             const nameInput = document.getElementById('svb-as-gen-name');
             if (nameInput && !nameInput.value.trim()) {
                 nameInput.value = svbNormalizeAssetName(`generated_${new Date().toISOString().replace(/[:.]/g, '-')}`, 'generated');
@@ -53382,7 +53721,19 @@ async function openAssetStudio() {
                 btn.disabled = true;
                 btn.textContent = '저장 중...';
             }
-            const saved = await svbSaveGeneratedImageToCharacter(char, generatedImageResult, { target, name });
+            const saved = await svbSaveGeneratedImageToCharacter(char, generatedImageResult, {
+                target,
+                name,
+                promptMeta: {
+                    prompt: generatedImageResult.prompt,
+                    negative: generatedImageResult.negative,
+                    provider: generatedImageResult.provider,
+                    presetId: generatedImageResult.presetId,
+                    ratioId: generatedImageResult.ratioId,
+                    steps: generatedImageResult.steps,
+                    sourceContext: generatedImageResult.sourceContext
+                }
+            });
             emotionAssets = saved.emotionAssets;
             additionalAssets = saved.additionalAssets;
             setStatus(target === 'emotion' ? '생성 이미지를 감정 이미지로 저장했습니다.' : '생성 이미지를 추가 에셋으로 저장했습니다.', 'success');
@@ -53407,7 +53758,8 @@ async function openAssetStudio() {
             character: getCharacterDisplayName(char),
             exportedAt: new Date().toISOString(),
             emotionImages: svbEmotionTuples(emotionAssets),
-            additionalAssets: svbAdditionalAssetTuples(additionalAssets)
+            additionalAssets: svbAdditionalAssetTuples(additionalAssets),
+            assetStudio: normalizeAssetStudioMeta(assetStudioMeta)
         };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -53436,6 +53788,18 @@ async function openAssetStudio() {
             const addMap = new Map(additionalAssets.map(item => [item.name.toLowerCase(), item]));
             nextAdditional.forEach(item => addMap.set(item.name.toLowerCase(), item));
             additionalAssets = Array.from(addMap.values());
+            const importedMeta = normalizeAssetStudioMeta(data.assetStudio || data.superVibeBotAssetStudio || data.meta || {});
+            assetStudioMeta = normalizeAssetStudioMeta({
+                folders: {
+                    additional: { ...(assetStudioMeta.folders?.additional || {}), ...(importedMeta.folders?.additional || {}) },
+                    emotion: { ...(assetStudioMeta.folders?.emotion || {}), ...(importedMeta.folders?.emotion || {}) }
+                },
+                prompts: {
+                    additional: { ...(assetStudioMeta.prompts?.additional || {}), ...(importedMeta.prompts?.additional || {}) },
+                    emotion: { ...(assetStudioMeta.prompts?.emotion || {}), ...(importedMeta.prompts?.emotion || {}) }
+                },
+                identities: { ...(assetStudioMeta.identities || {}), ...(importedMeta.identities || {}) }
+            });
             syncCharacterAssetFields();
             await saveCurrentAssets('에셋 JSON을 가져와 병합했습니다.');
             renderAll();
@@ -53698,6 +54062,7 @@ async function openAssetStudio() {
                 failures,
                 emotionImages: svbEmotionTuples(emotionAssets),
                 additionalAssets: svbAdditionalAssetTuples(additionalAssets),
+                assetStudio: normalizeAssetStudioMeta(assetStudioMeta),
                 files: entries
             };
             files[`${root}/_supervibebot_asset_backup.json`] = new TextEncoder().encode(JSON.stringify(metadata, null, 2));
@@ -53799,6 +54164,18 @@ async function openAssetStudio() {
                 saved += 1;
                 if (saved % 10 === 0) await new Promise(resolveFrame => setTimeout(resolveFrame, 0));
             }
+            const importedMeta = normalizeAssetStudioMeta(metadata?.assetStudio || metadata?.superVibeBotAssetStudio || {});
+            assetStudioMeta = normalizeAssetStudioMeta({
+                folders: {
+                    additional: { ...(assetStudioMeta.folders?.additional || {}), ...(importedMeta.folders?.additional || {}) },
+                    emotion: { ...(assetStudioMeta.folders?.emotion || {}), ...(importedMeta.folders?.emotion || {}) }
+                },
+                prompts: {
+                    additional: { ...(assetStudioMeta.prompts?.additional || {}), ...(importedMeta.prompts?.additional || {}) },
+                    emotion: { ...(assetStudioMeta.prompts?.emotion || {}), ...(importedMeta.prompts?.emotion || {}) }
+                },
+                identities: { ...(assetStudioMeta.identities || {}), ...(importedMeta.identities || {}) }
+            });
             syncCharacterAssetFields();
             await saveCurrentAssets(`이미지 ZIP 가져오기 완료: ${saved}개 병합했습니다.`);
             renderAll();
@@ -53827,7 +54204,10 @@ async function openAssetStudio() {
             const nextName = makeUniqueLooseAssetName(parsed.base || asset.name, usedEmotionNames, `emotion_${index + 1}`);
             usedEmotionNames.push(nextName);
             const next = { name: nextName, path: safeString(asset.path).trim() };
-            if (next.name !== asset.name || next.path !== asset.path) changed += 1;
+            if (next.name !== asset.name || next.path !== asset.path) {
+                renameAssetFolderKey('emotion', asset.name, next.name);
+                changed += 1;
+            }
             return next;
         }).filter(asset => asset.name && asset.path);
         const usedAdditionalNames = [];
@@ -53841,7 +54221,10 @@ async function openAssetStudio() {
                 path: safeString(asset.path).trim(),
                 ext
             };
-            if (next.name !== asset.name || next.path !== asset.path || next.ext !== asset.ext) changed += 1;
+            if (next.name !== asset.name || next.path !== asset.path || next.ext !== asset.ext) {
+                renameAssetFolderKey('additional', asset.name, next.name);
+                changed += 1;
+            }
             return next;
         }).filter(asset => asset.name && asset.path);
         syncCharacterAssetFields();
@@ -54069,6 +54452,7 @@ async function openAssetStudio() {
                 const samePath = path && safeString(item.path).trim().toLowerCase() === path;
                 return !(sameName || samePath);
             });
+            deleteAssetPromptKey('emotion', output?.name);
             return;
         }
         additionalAssets = additionalAssets.filter(item => {
@@ -54076,6 +54460,7 @@ async function openAssetStudio() {
             const samePath = path && safeString(item.path).trim().toLowerCase() === path;
             return !(sameName || samePath);
         });
+        deleteAssetPromptKey('additional', output?.name);
     }
 
     async function deleteGenerationPresetPart(partIndex) {
@@ -54284,6 +54669,14 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-inline.ext{text-align:center}
             #svb-asset-studio-window .svb-as-badge{border:1px solid #dbe3ef;border-radius:999px;background:#f8fafc;color:#64748b;padding:5px 8px;font-size:11px;white-space:nowrap}
             #svb-asset-studio-window .svb-as-row-actions{display:flex;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-prompt-details{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:6px 8px}
+            #svb-asset-studio-window .svb-as-prompt-details > summary{cursor:pointer;list-style:none;font-size:11px;font-weight:850;color:#334155}
+            #svb-asset-studio-window .svb-as-prompt-details > summary::-webkit-details-marker{display:none}
+            #svb-asset-studio-window .svb-as-prompt-body{display:flex;flex-direction:column;gap:6px;margin-top:7px}
+            #svb-asset-studio-window .svb-as-prompt-block{display:flex;flex-direction:column;gap:3px;min-width:0}
+            #svb-asset-studio-window .svb-as-prompt-block strong{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:0}
+            #svb-asset-studio-window .svb-as-prompt-block pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.45;color:#111827;background:#fff;border:1px solid #e2e8f0;border-radius:7px;padding:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+            #svb-asset-studio-window .svb-as-prompt-empty{font-size:11px;color:#64748b;line-height:1.45;margin-top:6px}
             #svb-asset-studio-window .svb-as-empty{padding:28px 12px;text-align:center;color:#64748b;font-size:13px;line-height:1.6;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc}
             #svb-asset-studio-window .svb-as-status{font-size:12px;color:#64748b;line-height:1.45;white-space:pre-wrap}
             #svb-asset-studio-window .svb-as-status.success{color:#047857}
@@ -54865,6 +55258,27 @@ async function openAssetStudio() {
                     const tag = output.target === 'emotion' ? `{{emotion::${output.name}}}` : `{{image::${output.name}}}`;
                     await safeCopyText(tag);
                     setStatus(`${tag} 태그를 복사했습니다.`, 'success');
+                }
+                return;
+            }
+            if (action === 'copy-prompt-meta') {
+                let record = null;
+                if (Number.isInteger(partIdx) && Number.isInteger(outputIdx)) {
+                    const preset = readGenerationPresetFromUI(getSelectedImagePreset());
+                    record = ensureArray(ensureArray(preset.parts)[partIdx]?.outputs)[outputIdx];
+                } else if (Number.isInteger(idx)) {
+                    const kind = btn.dataset.kind === 'emotion' ? 'emotion' : 'additional';
+                    const asset = kind === 'emotion' ? emotionAssets[idx] : additionalAssets[idx];
+                    record = asset ? getAssetPromptMeta(kind, asset.name) : null;
+                } else {
+                    record = generatedImageResult;
+                }
+                const text = buildAssetPromptCopyText(record || {});
+                if (text) {
+                    await safeCopyText(text);
+                    setStatus('프롬프트 기록을 복사했습니다.', 'success');
+                } else {
+                    setStatus('복사할 프롬프트 기록이 없습니다.', 'info');
                 }
                 return;
             }
