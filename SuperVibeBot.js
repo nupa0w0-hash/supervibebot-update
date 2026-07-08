@@ -1,19 +1,19 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.110
-//@version 1.5.110
+//@display-name 🐸 SuperVibeBot v1.5.111
+//@version 1.5.111
 //@api 3.0
-//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
+//@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.110는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.111는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
 // 개발 모드 플래그 (릴리스 시 false 유지)
 const DEV_MODE = false;
-const SUPER_VIBE_BOT_CANONICAL_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js';
+const SUPER_VIBE_BOT_CANONICAL_UPDATE_URL = 'https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js';
 const SUPER_VIBE_BOT_UPDATE_URL = SUPER_VIBE_BOT_CANONICAL_UPDATE_URL;
 // 페르소나 기능 제어 플래그
 const PERSONA_DYNAMIC_AVAILABLE = false;
@@ -165,6 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.111 Release Notes
+ * - v1.5.111: fixes the official update-url to the verified raw.githubusercontent.com /main/ path after GitHub resolved refs/heads/main through the stale refs branch
+ * - v1.5.111: updates the runtime self-test so SuperVibeBot no longer rejects the canonical /main/ raw update channel
+ *
  * SuperVibeBot v1.5.110 Release Notes
  * - v1.5.110: routes Kero artist/style/year tags into the final Positive prompt instead of leaking them into Quality
  * - v1.5.110: rewrites Kero image prompt guidance around Wellspring/Danbooru tag packs and visible identity cues instead of generic style prose
@@ -13122,16 +13126,16 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.110',
+            '//@version 1.5.111',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
         const superVibeUsesVerifiedRawMain = SUPER_VIBE_BOT_UPDATE_URL === SUPER_VIBE_BOT_CANONICAL_UPDATE_URL
-            && /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main\/SuperVibeBot\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+            && /^https:\/\/raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/main\/SuperVibeBot\.js$/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         const superVibeUsesGithubRawCompatibility = /github\.com\/nupa0w0-hash\/supervibebot-update\/raw/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         const superVibeUsesReleaseLatest = /github\.com\/nupa0w0-hash\/supervibebot-update\/releases\/latest\/download/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         const superVibeUsesAliasFile = /SuperVibeBot\.(?:update|auto)\.js(?:$|[?#])/i.test(SUPER_VIBE_BOT_UPDATE_URL);
-        const superVibeUsesShortRawMain = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/main\/SuperVibeBot\.js/i.test(SUPER_VIBE_BOT_UPDATE_URL);
+        const superVibeUsesLegacyRefsHeadsMain = /raw\.githubusercontent\.com\/nupa0w0-hash\/supervibebot-update\/refs\/heads\/main\/SuperVibeBot\.js/i.test(SUPER_VIBE_BOT_UPDATE_URL);
         return {
             autoUpdateReady: metadata.autoUpdateReady === true,
             versionByteIndex: metadata.versionByteIndex,
@@ -13151,7 +13155,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
             superVibeUsesGithubRawCompatibility,
             superVibeUsesReleaseLatest,
             superVibeUsesAliasFile,
-            superVibeUsesShortRawMain
+            superVibeUsesLegacyRefsHeadsMain
         };
     });
     if (!result.ok) {
@@ -13173,11 +13177,11 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
     if (!value.storedMismatchRejected) problems.push('script/store updateURL 불일치 허용');
     if (!value.stringMetadataIgnored) problems.push('스크립트 문자열 내부 메타데이터 오인');
     if (!value.superVibeMetadataReady) problems.push('슈바봇 official update-url 자동 업데이트 판정 실패');
-    if (!value.superVibeUsesVerifiedRawMain) problems.push('슈바봇 update-url이 검증된 raw.githubusercontent.com refs/heads/main SuperVibeBot.js 경로가 아님');
+    if (!value.superVibeUsesVerifiedRawMain) problems.push('슈바봇 update-url이 검증된 raw.githubusercontent.com main SuperVibeBot.js 경로가 아님');
     if (value.superVibeUsesGithubRawCompatibility) problems.push('슈바봇 update-url이 github.com/raw 호환 경로임');
     if (value.superVibeUsesReleaseLatest) problems.push('SuperVibeBot update-url uses GitHub releases/latest');
     if (value.superVibeUsesAliasFile) problems.push('SuperVibeBot update-url uses SuperVibeBot.update.js/SuperVibeBot.auto.js alias');
-    if (value.superVibeUsesShortRawMain) problems.push('SuperVibeBot update-url uses short /main/ raw path');
+    if (value.superVibeUsesLegacyRefsHeadsMain) problems.push('SuperVibeBot update-url uses legacy /refs/heads/main raw path');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         '플러그인 자동 업데이트 메타데이터 자체 테스트',
@@ -42896,7 +42900,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.110 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.111 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -42937,7 +42941,7 @@ RisuAI plugins are JavaScript extensions running in a sandboxed iframe.
 - \`//@name\` is the stable plugin identity. Do not rename it during updates; use displayName/\`//@display-name\` for visible labels.
 - \`//@version\` is required for RisuAI update checks and should be within the first 512 bytes.
 - \`//@update-url\` must be an HTTPS JavaScript file URL that returns a non-empty body for browser fetches with \`Range: bytes=0-512\`. For GitHub-hosted plugins, use a verified \`raw.githubusercontent.com\` URL and re-check that the exact URL returns the newest version before release.
-- For SuperVibeBot itself, never suggest a different update-url; keep the fixed official raw main SuperVibeBot.js channel.
+- For SuperVibeBot itself, use the fixed official raw main channel: \`https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js\`. Do not use the \`/refs/heads/main/\` raw path for this repository because a \`refs\` branch can make GitHub raw resolve stale content.
 - When updating an existing plugin, keep \`//@name\` unchanged, bump \`//@version\`, and preserve \`//@update-url\` unless the user provides a new release URL.
 
 ### Runtime Rules
