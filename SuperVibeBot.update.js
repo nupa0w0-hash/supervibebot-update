@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.101
-//@version 1.5.101
+//@display-name 🐸 SuperVibeBot v1.5.102
+//@version 1.5.102
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.101는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.102는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.102 Release Notes
+ * - v1.5.102: rebuilds Asset Studio asset browsing around mobile-friendly gallery/list cards for additional assets and emotion images
+ * - v1.5.102: moves JSON/ZIP/module maintenance into a compact management menu while keeping the canonical update URL unchanged
+ * - v1.5.102: simplifies the image generation tab so single-image generation is the primary panel and preset batch generation is kept under an advanced section
+ *
  * SuperVibeBot v1.5.101 Release Notes
  * - v1.5.101: stores final positive/negative image prompts, style tags, identity prompts, route info, and source context per generated asset in Asset Studio metadata
  * - v1.5.101: shows per-image prompt details inside Asset Studio registered asset rows, generated output cards, JSON export, and image ZIP backup metadata
@@ -13171,7 +13176,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.101',
+            '//@version 1.5.102',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -42756,7 +42761,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.101 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.102 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
@@ -52025,6 +52030,7 @@ async function openAssetStudio() {
     let additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
     let assetStudioMeta = normalizeAssetStudioMeta(readAssetStudioMetaFromCharacter(char));
     let selectedAssetIds = new Set();
+    let assetViewModes = { additional: 'gallery', emotion: 'gallery' };
     let pendingBatchReplaceKind = 'additional';
     let generatedImageResult = null;
     let generationRequestId = 0;
@@ -52194,6 +52200,24 @@ async function openAssetStudio() {
         return select.value;
     }
 
+    function setAssetViewMode(kind, mode) {
+        const cleanKind = kind === 'emotion' ? 'emotion' : 'additional';
+        assetViewModes[cleanKind] = mode === 'list' ? 'list' : 'gallery';
+        if (cleanKind === 'emotion') renderEmotionList();
+        else renderAdditionalList();
+    }
+
+    function updateAssetViewModeButtons(kind) {
+        const mode = assetViewModes[kind] || 'gallery';
+        studioWindow.querySelectorAll(`.svb-as-view-btn[data-kind="${kind}"]`).forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === mode);
+        });
+    }
+
+    function getSelectedCountForKind(kind) {
+        return [...selectedAssetIds].filter(id => id.startsWith(`${kind}:`)).length;
+    }
+
     function buildAssetPromptCopyText(record = {}) {
         const lines = [];
         const add = (label, value) => {
@@ -52238,6 +52262,43 @@ async function openAssetStudio() {
                 <button class="svb-as-btn" data-action="copy-prompt-meta" ${buttonAttrs} type="button">프롬프트 복사</button>
             </div>
         </details>`;
+    }
+
+    function renderAssetCardHtml(kind, asset = {}, idx = 0, options = {}) {
+        const isEmotion = kind === 'emotion';
+        const name = safeString(asset.name).trim();
+        const path = safeString(asset.path).trim();
+        const ext = safeString(asset.ext || svbGetFileExt(path) || 'png').replace(/^\./, '').toLowerCase();
+        const folder = safeString(options.folder).trim();
+        const usageCount = Number(options.usageCount) || 0;
+        const selected = selectedAssetIds.has(assetSelectionId(kind, idx));
+        const tag = isEmotion ? `{{emotion::${name}}}` : `{{image::${name}}}`;
+        const promptDetails = renderAssetPromptDetailsHtml(getAssetPromptMeta(kind, name), `data-kind="${kind}" data-idx="${idx}"`);
+        return `<article class="svb-as-asset-card svb-as-row" data-kind="${kind}" data-idx="${idx}">
+            <div class="svb-as-card-media">
+                <input class="svb-as-select svb-as-card-select" data-kind="${kind}" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
+                ${assetThumbHtml(kind, idx, isEmotion ? { ...asset, ext } : { ...asset, ext })}
+            </div>
+            <div class="svb-as-card-info">
+                <strong title="${escapeHtml(name)}">${escapeHtml(name || (isEmotion ? '감정 이미지' : '추가 에셋'))}</strong>
+                <span>${escapeHtml(folder || '미분류')} · ${usageCount ? `사용 ${usageCount}` : '미사용'} · ${escapeHtml(ext.toUpperCase())}</span>
+                <code>${escapeHtml(tag)}</code>
+            </div>
+            <div class="svb-as-card-actions">
+                <button class="svb-as-btn" data-action="${isEmotion ? 'copy-emotion' : 'copy-additional'}" data-idx="${idx}" type="button">태그</button>
+                <button class="svb-as-btn" data-action="${isEmotion ? 'download-emotion' : 'download-additional'}" data-idx="${idx}" type="button">저장</button>
+                <button class="svb-as-btn danger" data-action="${isEmotion ? 'delete-emotion' : 'delete-additional'}" data-idx="${idx}" type="button">삭제</button>
+            </div>
+            ${promptDetails}
+            <details class="svb-as-card-edit">
+                <summary>이름/경로 편집</summary>
+                <div class="svb-as-row-fields">
+                    <input class="svb-as-inline ${isEmotion ? 'svb-as-emotion-name' : 'svb-as-add-name'}" data-idx="${idx}" data-prev-name="${escapeHtml(name)}" value="${escapeHtml(name)}" placeholder="${isEmotion ? '감정명' : '에셋 이름'}">
+                    <input class="svb-as-inline ${isEmotion ? 'svb-as-emotion-path' : 'svb-as-add-path'}" data-idx="${idx}" value="${escapeHtml(path)}" placeholder="assets/... 또는 data:">
+                    ${isEmotion ? '' : `<input class="svb-as-inline ext svb-as-add-ext" data-idx="${idx}" value="${escapeHtml(ext)}" placeholder="확장자">`}
+                </div>
+            </details>
+        </article>`;
     }
 
     function getAssetRefsForKind(kind, selectedOnly = true) {
@@ -53464,6 +53525,10 @@ async function openAssetStudio() {
         if (!list) return;
         const folderFilter = renderFolderFilter('svb-as-emotion-folder-filter', 'emotion');
         const usage = svbCollectAssetUsage(char, [], emotionAssets.map(item => item.name));
+        updateAssetViewModeButtons('emotion');
+        const selectedCount = document.getElementById('svb-as-emotion-selected-count');
+        if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind('emotion')}개 선택`;
+        list.className = `svb-as-list svb-as-asset-grid svb-as-emotion-list ${assetViewModes.emotion === 'list' ? 'list' : 'gallery'}`;
         const filtered = emotionAssets
             .map((asset, idx) => ({ asset, idx }))
             .filter(({ asset }) => {
@@ -53475,29 +53540,10 @@ async function openAssetStudio() {
             list.innerHTML = '<div class="svb-as-empty">감정 이미지가 없습니다. 기본 프리셋을 만들거나 직접 추가하세요.</div>';
             return;
         }
-        list.innerHTML = filtered.map(({ asset, idx }) => {
-            const count = usage[asset.name] || 0;
-            const folder = getAssetFolder('emotion', asset.name);
-            const selected = selectedAssetIds.has(assetSelectionId('emotion', idx));
-            const promptDetails = renderAssetPromptDetailsHtml(getAssetPromptMeta('emotion', asset.name), `data-kind="emotion" data-idx="${idx}"`);
-            return `<div class="svb-as-row" data-kind="emotion" data-idx="${idx}">
-                <div class="svb-as-row-main">
-                    <input class="svb-as-select" data-kind="emotion" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
-                    ${assetThumbHtml('emotion', idx, { ...asset, ext: svbGetFileExt(asset.path) || 'png' })}
-                    <div class="svb-as-row-fields">
-                        <input class="svb-as-inline svb-as-emotion-name" data-idx="${idx}" data-prev-name="${escapeHtml(asset.name)}" value="${escapeHtml(asset.name)}" placeholder="감정명">
-                        <input class="svb-as-inline svb-as-emotion-path" data-idx="${idx}" value="${escapeHtml(asset.path)}" placeholder="assets/... 또는 data:">
-                    </div>
-                    <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
-                </div>
-                ${promptDetails}
-                <div class="svb-as-row-actions">
-                    <button class="svb-as-btn" data-action="copy-emotion" data-idx="${idx}" type="button">태그 복사</button>
-                    <button class="svb-as-btn" data-action="download-emotion" data-idx="${idx}" type="button">이미지 저장</button>
-                    <button class="svb-as-btn danger" data-action="delete-emotion" data-idx="${idx}" type="button">삭제</button>
-                </div>
-            </div>`;
-        }).join('');
+        list.innerHTML = filtered.map(({ asset, idx }) => renderAssetCardHtml('emotion', asset, idx, {
+            usageCount: usage[asset.name] || 0,
+            folder: getAssetFolder('emotion', asset.name)
+        })).join('');
         scheduleThumbHydration(list);
     }
 
@@ -53507,6 +53553,10 @@ async function openAssetStudio() {
         const query = safeString(document.getElementById('svb-as-search')?.value).trim().toLowerCase();
         const folderFilter = renderFolderFilter('svb-as-add-folder-filter', 'additional');
         const usage = svbCollectAssetUsage(char, additionalAssets.map(item => item.name), []);
+        updateAssetViewModeButtons('additional');
+        const selectedCount = document.getElementById('svb-as-add-selected-count');
+        if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind('additional')}개 선택`;
+        list.className = `svb-as-list svb-as-asset-grid svb-as-additional-list ${assetViewModes.additional === 'list' ? 'list' : 'gallery'}`;
         const filtered = additionalAssets
             .map((asset, idx) => ({ asset, idx }))
             .filter(({ asset }) => {
@@ -53519,30 +53569,10 @@ async function openAssetStudio() {
             list.innerHTML = '<div class="svb-as-empty">표시할 추가 에셋이 없습니다.</div>';
             return;
         }
-        list.innerHTML = filtered.map(({ asset, idx }) => {
-            const count = usage[asset.name] || 0;
-            const folder = getAssetFolder('additional', asset.name);
-            const selected = selectedAssetIds.has(assetSelectionId('additional', idx));
-            const promptDetails = renderAssetPromptDetailsHtml(getAssetPromptMeta('additional', asset.name), `data-kind="additional" data-idx="${idx}"`);
-            return `<div class="svb-as-row" data-kind="additional" data-idx="${idx}">
-                <div class="svb-as-row-main">
-                    <input class="svb-as-select" data-kind="additional" data-idx="${idx}" type="checkbox" ${selected ? 'checked' : ''} title="선택">
-                    ${assetThumbHtml('additional', idx, asset)}
-                    <div class="svb-as-row-fields">
-                        <input class="svb-as-inline svb-as-add-name" data-idx="${idx}" data-prev-name="${escapeHtml(asset.name)}" value="${escapeHtml(asset.name)}" placeholder="에셋 이름">
-                        <input class="svb-as-inline svb-as-add-path" data-idx="${idx}" value="${escapeHtml(asset.path)}" placeholder="assets/... 또는 data:">
-                        <input class="svb-as-inline ext svb-as-add-ext" data-idx="${idx}" value="${escapeHtml(asset.ext)}" placeholder="확장자">
-                    </div>
-                    <span class="svb-as-badge">${escapeHtml(folder || '미분류')} · ${count ? `사용 ${count}` : '미사용'}</span>
-                </div>
-                ${promptDetails}
-                <div class="svb-as-row-actions">
-                    <button class="svb-as-btn" data-action="copy-additional" data-idx="${idx}" type="button">태그 복사</button>
-                    <button class="svb-as-btn" data-action="download-additional" data-idx="${idx}" type="button">이미지 저장</button>
-                    <button class="svb-as-btn danger" data-action="delete-additional" data-idx="${idx}" type="button">삭제</button>
-                </div>
-            </div>`;
-        }).join('');
+        list.innerHTML = filtered.map(({ asset, idx }) => renderAssetCardHtml('additional', asset, idx, {
+            usageCount: usage[asset.name] || 0,
+            folder: getAssetFolder('additional', asset.name)
+        })).join('');
         scheduleThumbHydration(list);
     }
 
@@ -54641,6 +54671,11 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-btn.danger{border-color:#fecaca;color:#b91c1c}
             #svb-asset-studio-window .svb-as-btn:disabled{opacity:.6;cursor:wait}
             #svb-asset-studio-window .svb-as-close{width:32px;padding:0;font-size:18px}
+            #svb-asset-studio-window .svb-as-header-menu{position:relative}
+            #svb-asset-studio-window .svb-as-header-menu > summary{display:inline-flex;align-items:center;justify-content:center;list-style:none}
+            #svb-asset-studio-window .svb-as-header-menu > summary::-webkit-details-marker{display:none}
+            #svb-asset-studio-window .svb-as-header-menu-panel{position:absolute;right:0;top:38px;z-index:4;width:190px;border:1px solid #dbe3ef;border-radius:10px;background:#fff;box-shadow:0 16px 42px rgba(15,23,42,.18);padding:8px;display:grid;grid-template-columns:1fr;gap:6px}
+            #svb-asset-studio-window .svb-as-header-menu-panel .svb-as-btn{width:100%;justify-content:flex-start}
             #svb-asset-studio-window .svb-as-body{flex:1;min-height:0;display:flex;background:#f8fafc}
             #svb-asset-studio-window .svb-as-left{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff}
             #svb-asset-studio-window .svb-as-tabs{display:flex;gap:8px;padding:12px;border-bottom:1px solid #e5e7eb}
@@ -54650,6 +54685,8 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto;padding:12px}
             #svb-asset-studio-window .svb-as-form{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:10px;display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-form-title{font-size:12px;font-weight:850;color:#334155}
+            #svb-asset-studio-window details.svb-as-form > summary{cursor:pointer;list-style:none}
+            #svb-asset-studio-window details.svb-as-form > summary::-webkit-details-marker{display:none}
             #svb-asset-studio-window .svb-as-details{border-top:1px solid #e2e8f0;padding-top:8px;display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-details[open]{display:flex}
             #svb-asset-studio-window .svb-as-details > summary{cursor:pointer;list-style:none}
@@ -54660,11 +54697,34 @@ async function openAssetStudio() {
             #svb-asset-studio-window textarea.svb-as-input{height:auto;min-height:88px;padding:8px 10px;resize:vertical;line-height:1.45;font-family:inherit}
             #svb-asset-studio-window .svb-as-search{margin:0 0 2px}
             #svb-asset-studio-window .svb-as-list{display:flex;flex-direction:column;gap:8px}
+            #svb-asset-studio-window .svb-as-asset-grid.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:10px;align-items:start}
+            #svb-asset-studio-window .svb-as-asset-grid.list{display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-row{border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:9px;display:flex;flex-direction:column;gap:8px}
+            #svb-asset-studio-window .svb-as-asset-card{position:relative;min-width:0;background:#fff}
+            #svb-asset-studio-window .svb-as-card-media{position:relative;display:block}
+            #svb-asset-studio-window .svb-as-card-select{position:absolute;top:8px;left:8px;z-index:2;background:#fff;border-radius:4px}
+            #svb-asset-studio-window .svb-as-card-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+            #svb-asset-studio-window .svb-as-card-info strong{font-size:13px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-card-info span{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-card-info code{font-size:10px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:4px 6px}
+            #svb-asset-studio-window .svb-as-card-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+            #svb-asset-studio-window .svb-as-card-actions .svb-as-btn{height:30px;padding:0 6px}
+            #svb-asset-studio-window .svb-as-card-edit{border-top:1px solid #edf2f7;padding-top:6px}
+            #svb-asset-studio-window .svb-as-card-edit > summary{cursor:pointer;list-style:none;font-size:11px;font-weight:850;color:#475569}
+            #svb-asset-studio-window .svb-as-card-edit > summary::-webkit-details-marker{display:none}
+            #svb-asset-studio-window .svb-as-asset-grid.gallery .svb-as-thumb{width:100%;aspect-ratio:1/1.18;height:auto;border-radius:8px}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-asset-card{display:grid;grid-template-columns:22px 72px minmax(0,1fr) auto;align-items:center;gap:9px}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-media{display:contents}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-select{position:static;grid-column:1}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-thumb{grid-column:2;width:72px;height:72px}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-info{grid-column:3}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:4;display:flex}
+            #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-prompt-details,#svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-edit{grid-column:1 / -1}
             #svb-asset-studio-window .svb-as-row-main{display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:8px;align-items:center}
             #svb-asset-studio-window .svb-as-select{width:16px;height:16px;margin:0;accent-color:#0f766e}
             #svb-asset-studio-window .svb-as-row-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.45fr);gap:7px;align-items:center}
             #svb-asset-studio-window .svb-as-additional-list .svb-as-row-fields{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr) 70px}
+            #svb-asset-studio-window .svb-as-asset-grid.gallery .svb-as-row-fields,#svb-asset-studio-window .svb-as-asset-grid.gallery.svb-as-additional-list .svb-as-row-fields{grid-template-columns:1fr}
             #svb-asset-studio-window .svb-as-inline{min-width:0;width:100%;height:30px;border:1px solid #dbe3ef;border-radius:7px;background:#fff;color:#111827;padding:0 8px;font-size:12px;box-sizing:border-box}
             #svb-asset-studio-window .svb-as-inline.ext{text-align:center}
             #svb-asset-studio-window .svb-as-badge{border:1px solid #dbe3ef;border-radius:999px;background:#f8fafc;color:#64748b;padding:5px 8px;font-size:11px;white-space:nowrap}
@@ -54689,6 +54749,11 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-lightbox-close{position:absolute;top:16px;right:16px;width:36px;height:36px;border:0;border-radius:8px;background:#fff;color:#111827;font-size:22px;cursor:pointer}
             #svb-asset-studio-window .svb-as-lightbox-caption{color:#fff;font-size:12px;text-align:center;word-break:break-all;max-width:80vw;line-height:1.5}
             #svb-asset-studio-window .svb-as-preset-row{display:flex;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-toolbar-left,#svb-asset-studio-window .svb-as-toolbar-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-inline-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-view-btn.active{border-color:#0f766e;background:#ecfdf5;color:#047857}
+            #svb-asset-studio-window .svb-as-selected-count{font-size:11px;color:#64748b;font-weight:750}
             #svb-asset-studio-window .svb-as-quick-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
             #svb-asset-studio-window .svb-as-connection-summary{border:1px solid #dbeafe;border-radius:9px;background:#eff6ff;color:#1e3a8a;padding:9px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
             #svb-asset-studio-window .svb-as-connection-summary strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -54700,6 +54765,9 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-batch-head > div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}
             #svb-asset-studio-window .svb-as-batch-head strong{font-size:12px;color:#334155}
             #svb-asset-studio-window .svb-as-batch-head span{font-size:12px;color:#64748b}
+            #svb-asset-studio-window .svb-as-batch-actions{padding:8px 0 2px}
+            #svb-asset-studio-window .svb-as-generate-main{border:1px solid #dbeafe;border-radius:10px;background:#eff6ff;padding:10px;display:flex;flex-direction:column;gap:8px}
+            #svb-asset-studio-window .svb-as-generate-main textarea.svb-as-input{background:#fff}
             #svb-asset-studio-window .svb-as-part-list{display:flex;flex-direction:column;gap:10px}
             #svb-asset-studio-window .svb-as-part-row{border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:10px;display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-part-top{display:grid;grid-template-columns:24px minmax(120px,1fr) 120px minmax(120px,1fr);gap:7px;align-items:center}
@@ -54732,7 +54800,7 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-overlay{padding:0}
                 #svb-asset-studio-window .svb-as-container{width:100vw;height:100vh;border-radius:0}
                 #svb-asset-studio-window .svb-as-header{height:auto;min-height:56px;padding:10px 12px;flex-wrap:wrap}
-                #svb-asset-studio-window .svb-as-actions{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}
+                #svb-asset-studio-window .svb-as-actions{width:auto;overflow:visible;flex-wrap:nowrap;padding-bottom:2px}
                 #svb-asset-studio-window .svb-as-body{display:flex}
                 #svb-asset-studio-window .svb-as-grid,#svb-asset-studio-window .svb-as-grid.three{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-quick-row{grid-template-columns:1fr 1fr}
@@ -54742,10 +54810,19 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-part-top,#svb-asset-studio-window .svb-as-part-grid{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-part-check{justify-self:start}
                 #svb-asset-studio-window .svb-as-output-list{grid-template-columns:1fr}
+                #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+                #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-asset-card{grid-template-columns:22px 60px minmax(0,1fr)}
+                #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:1 / -1}
+                #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-thumb{width:60px;height:60px}
                 #svb-asset-studio-window .svb-as-row-main{grid-template-columns:22px 54px minmax(0,1fr)}
                 #svb-asset-studio-window .svb-as-row-fields,#svb-asset-studio-window .svb-as-additional-list .svb-as-row-fields{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-badge{justify-self:start;grid-column:3}
                 #svb-asset-studio-window .svb-as-lightbox img{max-height:72vh}
+            }
+            @media (max-width:420px){
+                #svb-asset-studio-window .svb-as-panel{padding:10px}
+                #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:1fr}
+                #svb-asset-studio-window .svb-as-card-actions{grid-template-columns:1fr 1fr 1fr}
             }
         </style>
         <div class="svb-as-overlay">
@@ -54756,13 +54833,18 @@ async function openAssetStudio() {
                         <span id="svb-as-summary">에셋을 불러오는 중...</span>
                     </div>
                     <div class="svb-as-actions">
-                        <button class="svb-as-btn" id="svb-as-export" type="button">JSON 내보내기</button>
-                        <button class="svb-as-btn" id="svb-as-import" type="button">JSON 가져오기</button>
-                        <button class="svb-as-btn" id="svb-as-image-backup" type="button">이미지 ZIP 백업</button>
-                        <button class="svb-as-btn" id="svb-as-image-import" type="button">이미지 ZIP 가져오기</button>
-                        <button class="svb-as-btn" id="svb-as-normalize-ext" type="button">확장자 정리</button>
-                        <button class="svb-as-btn" id="svb-as-module-export" type="button">모듈 내보내기</button>
-                        <button class="svb-as-btn" id="svb-as-module-import" type="button">모듈 가져오기</button>
+                        <details class="svb-as-header-menu">
+                            <summary class="svb-as-btn">관리</summary>
+                            <div class="svb-as-header-menu-panel">
+                                <button class="svb-as-btn" id="svb-as-export" type="button">JSON 내보내기</button>
+                                <button class="svb-as-btn" id="svb-as-import" type="button">JSON 가져오기</button>
+                                <button class="svb-as-btn" id="svb-as-image-backup" type="button">이미지 ZIP 백업</button>
+                                <button class="svb-as-btn" id="svb-as-image-import" type="button">이미지 ZIP 가져오기</button>
+                                <button class="svb-as-btn" id="svb-as-normalize-ext" type="button">확장자 정리</button>
+                                <button class="svb-as-btn" id="svb-as-module-export" type="button">모듈 내보내기</button>
+                                <button class="svb-as-btn" id="svb-as-module-import" type="button">모듈 가져오기</button>
+                            </div>
+                        </details>
                         <button class="svb-as-btn" id="svb-as-refresh" type="button">새로고침</button>
                         <button class="svb-as-btn svb-as-close" id="svb-as-close" type="button" title="닫기">×</button>
                     </div>
@@ -54784,14 +54866,22 @@ async function openAssetStudio() {
                         </div>
                         <div class="svb-as-panel" id="svb-as-additional-panel">
                             <div class="svb-as-form">
-                                <div class="svb-as-form-title">파일 업로드</div>
+                                <div class="svb-as-toolbar">
+                                    <div class="svb-as-toolbar-left">
+                                        <strong class="svb-as-form-title">추가 에셋</strong>
+                                        <span class="svb-as-selected-count" id="svb-as-add-selected-count">0개 선택</span>
+                                    </div>
+                                    <div class="svb-as-toolbar-right">
+                                        <button class="svb-as-btn svb-as-view-btn active" data-action="set-asset-view" data-kind="additional" data-view="gallery" type="button">갤러리</button>
+                                        <button class="svb-as-btn svb-as-view-btn" data-action="set-asset-view" data-kind="additional" data-view="list" type="button">목록</button>
+                                    </div>
+                                </div>
                                 <div class="svb-as-actions">
                                     <button class="svb-as-btn primary" id="svb-as-upload-btn" type="button">파일 업로드</button>
                                     <input id="svb-as-file-input" type="file" accept="image/*" multiple style="display:none">
                                 </div>
                             </div>
                             <div class="svb-as-form">
-                                <div class="svb-as-form-title">선택 관리</div>
                                 <div class="svb-as-grid">
                                     <select class="svb-as-input svb-as-folder-filter" id="svb-as-add-folder-filter" data-kind="additional"></select>
                                     <input class="svb-as-input" id="svb-as-search" placeholder="에셋 검색">
@@ -54805,26 +54895,34 @@ async function openAssetStudio() {
                                     <button class="svb-as-btn danger" data-action="delete-selected" data-kind="additional" type="button">선택 삭제</button>
                                 </div>
                             </div>
-                            <div class="svb-as-form">
-                                <div class="svb-as-form-title">직접 등록</div>
+                            <details class="svb-as-form">
+                                <summary class="svb-as-form-title">직접 등록</summary>
                                 <div class="svb-as-grid three">
                                     <input class="svb-as-input" id="svb-as-add-name" placeholder="에셋 이름">
                                     <input class="svb-as-input" id="svb-as-add-path" placeholder="assets/... 또는 data:">
                                     <input class="svb-as-input" id="svb-as-add-ext" placeholder="png">
                                 </div>
                                 <button class="svb-as-btn primary" id="svb-as-add-manual" type="button">추가 에셋 등록</button>
-                            </div>
+                            </details>
                             <div class="svb-as-list svb-as-additional-list" id="svb-as-additional-list"></div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-emotion-panel" style="display:none">
                             <div class="svb-as-form">
-                                <div class="svb-as-form-title">기본 감정 프리셋</div>
+                                <div class="svb-as-toolbar">
+                                    <div class="svb-as-toolbar-left">
+                                        <strong class="svb-as-form-title">감정 이미지</strong>
+                                        <span class="svb-as-selected-count" id="svb-as-emotion-selected-count">0개 선택</span>
+                                    </div>
+                                    <div class="svb-as-toolbar-right">
+                                        <button class="svb-as-btn svb-as-view-btn active" data-action="set-asset-view" data-kind="emotion" data-view="gallery" type="button">갤러리</button>
+                                        <button class="svb-as-btn svb-as-view-btn" data-action="set-asset-view" data-kind="emotion" data-view="list" type="button">목록</button>
+                                    </div>
+                                </div>
                                 <div class="svb-as-preset-row">
                                     ${SVB_EMOTION_PRESETS.map(name => `<button class="svb-as-btn" data-emotion-preset="${escapeHtml(name)}" type="button">${escapeHtml(name)}</button>`).join('')}
                                 </div>
                             </div>
                             <div class="svb-as-form">
-                                <div class="svb-as-form-title">선택 관리</div>
                                 <select class="svb-as-input svb-as-folder-filter" id="svb-as-emotion-folder-filter" data-kind="emotion"></select>
                                 <div class="svb-as-actions">
                                     <button class="svb-as-btn" data-action="select-visible" data-kind="emotion" type="button">표시 선택</button>
@@ -54835,14 +54933,14 @@ async function openAssetStudio() {
                                     <button class="svb-as-btn danger" data-action="delete-selected" data-kind="emotion" type="button">선택 삭제</button>
                                 </div>
                             </div>
-                            <div class="svb-as-form">
-                                <div class="svb-as-form-title">감정 이미지 등록</div>
+                            <details class="svb-as-form">
+                                <summary class="svb-as-form-title">감정 이미지 직접 등록</summary>
                                 <div class="svb-as-grid">
                                     <input class="svb-as-input" id="svb-as-emotion-name" placeholder="감정명">
                                     <input class="svb-as-input" id="svb-as-emotion-path" placeholder="assets/... 또는 data:">
                                 </div>
                                 <button class="svb-as-btn primary" id="svb-as-add-emotion" type="button">감정 이미지 저장</button>
-                            </div>
+                            </details>
                             <div class="svb-as-list" id="svb-as-emotion-list"></div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-generate-panel" style="display:none">
@@ -54951,20 +55049,8 @@ async function openAssetStudio() {
                                     </details>
                                     <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring은 preset/model 또는 workflow/project/variant 값을 우선 사용하고, 참조 이미지는 해당 엔드포인트가 지원할 때만 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
                                 </details>
-                                <div class="svb-as-batch-head">
-                                    <div>
-                                        <strong>프리셋 구성</strong>
-                                        <span id="svb-as-preset-summary">파트를 불러오는 중...</span>
-                                    </div>
-                                    <div class="svb-as-generate-actions compact">
-                                        <button class="svb-as-btn" id="svb-as-part-add" type="button">파트 추가</button>
-                                        <button class="svb-as-btn primary" id="svb-as-gen-selected" type="button">선택 생성</button>
-                                        <button class="svb-as-btn" id="svb-as-gen-all" type="button">전체 생성</button>
-                                    </div>
-                                </div>
-                                <div class="svb-as-part-list" id="svb-as-part-list"></div>
-                                <details class="svb-as-details">
-                                    <summary class="svb-as-form-title">개별 이미지 생성</summary>
+                                <section class="svb-as-generate-main">
+                                    <div class="svb-as-form-title">단일 이미지 생성</div>
                                     <div class="svb-as-grid">
                                         <select class="svb-as-input" id="svb-as-gen-ratio"></select>
                                         <input class="svb-as-input" id="svb-as-gen-steps" type="number" min="10" max="30" step="1" placeholder="Steps">
@@ -54982,9 +55068,24 @@ async function openAssetStudio() {
                                         <button class="svb-as-btn primary" id="svb-as-gen-run" type="button">이미지 생성</button>
                                         <button class="svb-as-btn" id="svb-as-gen-save" type="button">결과 저장</button>
                                     </div>
-                                </details>
+                                </section>
                                 <div class="svb-as-generated-preview" id="svb-as-generated-preview"></div>
-                                <div class="svb-as-help">URL과 Key/Token은 설정의 이미지 API 설정에서 관리합니다. 프리셋은 여러 감정/파트를 한 번에 생성하는 묶음입니다.</div>
+                                <details class="svb-as-details svb-as-batch-details">
+                                    <summary class="svb-as-batch-head">
+                                        <div>
+                                            <strong>고급/배치 생성</strong>
+                                            <span id="svb-as-preset-summary">파트를 불러오는 중...</span>
+                                        </div>
+                                    </summary>
+                                    <div class="svb-as-batch-actions">
+                                        <div class="svb-as-generate-actions compact">
+                                            <button class="svb-as-btn" id="svb-as-part-add" type="button">파트 추가</button>
+                                            <button class="svb-as-btn primary" id="svb-as-gen-selected" type="button">선택 생성</button>
+                                            <button class="svb-as-btn" id="svb-as-gen-all" type="button">전체 생성</button>
+                                        </div>
+                                    </div>
+                                    <div class="svb-as-part-list" id="svb-as-part-list"></div>
+                                </details>
                             </div>
                         </div>
                     </section>
@@ -55208,6 +55309,8 @@ async function openAssetStudio() {
                 if (target.checked) selectedAssetIds.add(id);
                 else selectedAssetIds.delete(id);
             }
+            const selectedCount = document.getElementById(kind === 'emotion' ? 'svb-as-emotion-selected-count' : 'svb-as-add-selected-count');
+            if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind(kind)}개 선택`;
             return;
         }
         if (!target?.classList?.contains('svb-as-inline')) return;
@@ -55302,6 +55405,10 @@ async function openAssetStudio() {
             }
             if (action === 'delete-output') {
                 if (Number.isInteger(partIdx) && Number.isInteger(outputIdx)) await deletePartOutput(partIdx, outputIdx);
+                return;
+            }
+            if (action === 'set-asset-view') {
+                setAssetViewMode(btn.dataset.kind, btn.dataset.view);
                 return;
             }
             const bulkKind = btn.dataset.kind === 'emotion' ? 'emotion' : 'additional';
