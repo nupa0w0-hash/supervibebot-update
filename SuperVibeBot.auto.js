@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.96
-//@version 1.5.96
+//@display-name 🐸 SuperVibeBot v1.5.97
+//@version 1.5.97
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.96는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.97는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.97 Release Notes
+ * - v1.5.97: restores the Kero image asset create/manage execution bridge that was missing from the v1.5.96 runtime cleanup
+ * - v1.5.97: adds Danbooru-style prompt stack synthesis for image assets, separating fixed style/artist tags, character identity tags, world/genre tags, and per-asset pose/expression prompts
+ * - v1.5.97: infers boy/man/guy/woman/girl subject tags from character context instead of defaulting ambiguous asset prompts toward 1girl
+ *
  * SuperVibeBot v1.5.96 Release Notes
  * - v1.5.96: removes pluginStorage-backed Kero mission/action/bulk/input/workstream runtime recovery and keeps those states in memory only
  * - v1.5.96: disables bulk_create job execution/recovery and requires multi-item work to use direct create payload arrays
@@ -10141,7 +10146,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt', 'styleTags', 'danbooruStyleTags', 'baseStylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13028,7 +13033,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.96',
+            '//@version 1.5.97',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -27400,7 +27405,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt', 'styleTags', 'danbooruStyleTags', 'baseStylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -29453,6 +29458,1264 @@ ${currentVars || '{}'}
     }
 
     // 미리보기 생성 함수 - 개선된 결과가 캐시에 있으면 해당 결과를 표시
+    function getKeroAssetPayloadObject(action = {}) {
+        return isPlainObject(action?.payload) ? action.payload : {};
+    }
+
+    function collectKeroAssetCreateSources(action = {}) {
+        const payload = getKeroAssetPayloadObject(action);
+        const collected = [];
+        const pushArray = (source, forcedTarget = '') => {
+            ensureArray(source).forEach((entry) => {
+                if (isPlainObject(entry)) collected.push(forcedTarget ? { ...entry, _forcedAssetTarget: forcedTarget } : entry);
+                else if (safeString(entry).trim()) collected.push({ prompt: entry, _forcedAssetTarget: forcedTarget });
+            });
+        };
+        [
+            [payload.assets, ''],
+            [payload.items, ''],
+            [payload.images, ''],
+            [payload.prompts, ''],
+            [payload.parts, ''],
+            [payload.assetPrompts, ''],
+            [payload.imagePrompts, ''],
+            [payload.profileAssets, 'additional'],
+            [payload.standingAssets, 'additional'],
+            [payload.additionalAssets, 'additional'],
+            [payload.emotionAssets, 'emotion'],
+            [payload.expressionAssets, 'emotion'],
+            [payload.emotionImages, 'emotion'],
+            [action.assets, ''],
+            [action.items, ''],
+            [action.images, ''],
+            [action.prompts, ''],
+            [action.parts, ''],
+            [action.assetPrompts, ''],
+            [action.imagePrompts, ''],
+            [action.profileAssets, 'additional'],
+            [action.standingAssets, 'additional'],
+            [action.additionalAssets, 'additional'],
+            [action.emotionAssets, 'emotion'],
+            [action.expressionAssets, 'emotion'],
+            [action.emotionImages, 'emotion']
+        ].forEach(([source, forcedTarget]) => pushArray(source, forcedTarget));
+        if (collected.length) return collected;
+        if (Array.isArray(payload) && payload.length) return payload;
+        if (isPlainObject(payload) && (
+            payload.prompt || payload.positive || payload.positivePrompt || payload.caption || payload.imagePrompt
+            || payload.name || payload.assetName || payload.slotName || payload.emotionTarget || payload.emotion
+        )) {
+            return [payload];
+        }
+        const direct = {};
+        [
+            'prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt',
+            'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt',
+            'styleTags', 'danbooruStyleTags', 'baseStylePrompt',
+            'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt',
+            'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags',
+            'tagPrompt', 'tags', 'profileId', 'presetId', 'ratioId', 'ratio', 'steps', 'count', 'name',
+            'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target',
+            'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength',
+            'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId',
+            'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds',
+            'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler',
+            'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId',
+            'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora',
+            'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps',
+            'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength',
+            'autoUseTrainedLora'
+        ].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(action || {}, key)) direct[key] = action[key];
+        });
+        return Object.keys(direct).length ? [direct] : [];
+    }
+
+    function svbKeroAssetStringifyJson(value) {
+        if (typeof value === 'string') return value;
+        if (isPlainObject(value) || Array.isArray(value)) return JSON.stringify(value);
+        return '';
+    }
+
+    function normalizeKeroAssetCreatePayloads(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const sources = collectKeroAssetCreateSources(action);
+        const items = [];
+        sources.forEach((entry, index) => {
+            const source = isPlainObject(entry) ? entry : { prompt: entry };
+            if (source.enabled === false || source.disabled === true) return;
+            const rawTarget = safeString(source._forcedAssetTarget || source.target || source.assetType || source.asset_type || source.kind || source.type || payloadObj.target || payloadObj.assetType || '').trim().toLowerCase();
+            const target = /^(emotion|emote|expression|감정|표정)$/.test(rawTarget) || source.emotion || source.emotionTarget || source.emotionName ? 'emotion' : 'additional';
+            const fallbackName = target === 'emotion' ? `emotion_${index + 1}` : `asset_${index + 1}`;
+            const rawName = safeString(
+                source.name || source.assetName || source.asset_name || source.slotName || source.slot
+                || source.emotionTarget || source.emotion || source.emotionName || source.label || source.title
+                || fallbackName
+            ).trim() || fallbackName;
+            const payloadJsonValue = source.wellspringPayloadJson ?? source.remotePayloadJson ?? payloadObj.wellspringPayloadJson ?? payloadObj.remotePayloadJson ?? action.wellspringPayloadJson ?? action.remotePayloadJson;
+            const rawCount = Number(source.count || source.batchSize || source.batch || source.n || source.samples || payloadObj.count || action.count || 1);
+            const rawSteps = Number(source.steps || payloadObj.steps || action.steps || 0);
+            items.push({
+                index,
+                target,
+                name: target === 'emotion' ? rawName : svbNormalizeAssetName(rawName, fallbackName),
+                label: safeString(source.label || source.title || rawName).trim() || rawName,
+                prompt: safeString(source.prompt || source.positive || source.positivePrompt || source.caption || source.imagePrompt || source.description || source.content || source.text).trim(),
+                negative: safeString(source.negative || source.negativePrompt || source.uc || payloadObj.negative || payloadObj.negativePrompt || action.negative || action.negativePrompt).trim(),
+                ratioId: safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim(),
+                steps: Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0,
+                count: Math.max(1, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1),
+                stylePreset: safeString(source.stylePreset || source.style || source.styleId || payloadObj.stylePreset || payloadObj.style || payloadObj.styleId || action.stylePreset || action.style || action.styleId).trim(),
+                stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
+                artistTags: safeString(source.artistTags || source.artistStyle || source.artistPrompt || payloadObj.artistTags || payloadObj.artistStyle || payloadObj.artistPrompt || action.artistTags || action.artistStyle || action.artistPrompt).trim(),
+                styleTags: safeString(source.styleTags || source.danbooruStyleTags || source.baseStylePrompt || payloadObj.styleTags || payloadObj.danbooruStyleTags || payloadObj.baseStylePrompt || action.styleTags || action.danbooruStyleTags || action.baseStylePrompt).trim(),
+                profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
+                presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim(),
+                identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject || payloadObj.identityName || payloadObj.identityKey || payloadObj.characterName || payloadObj.subjectName || payloadObj.subject || action.identityName || action.identityKey || action.characterName || action.subjectName || action.subject),
+                identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.characterConsistencyPrompt || payloadObj.identityPrompt || payloadObj.characterPrompt || payloadObj.visualIdentityPrompt || payloadObj.characterConsistencyPrompt || action.identityPrompt || action.characterPrompt || action.visualIdentityPrompt || action.characterConsistencyPrompt).trim(),
+                identityNegative: safeString(source.identityNegative || source.characterNegative || payloadObj.identityNegative || payloadObj.characterNegative || action.identityNegative || action.characterNegative).trim(),
+                danbooruTags: safeString(source.danbooruTags || source.tagPrompt || source.tags || payloadObj.danbooruTags || payloadObj.tagPrompt || payloadObj.tags || action.danbooruTags || action.tagPrompt || action.tags).trim(),
+                referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
+                referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
+                referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
+                referenceInformationExtracted: svbOptionalNumber(source.referenceInformationExtracted ?? source.referenceInfo ?? payloadObj.referenceInformationExtracted ?? payloadObj.referenceInfo ?? action.referenceInformationExtracted ?? action.referenceInfo, undefined),
+                wellspringMode: safeString(source.wellspringMode || source.wellspringApiMode || payloadObj.wellspringMode || payloadObj.wellspringApiMode || action.wellspringMode || action.wellspringApiMode).trim(),
+                wellspringPresetId: safeString(source.wellspringPresetId || source.remotePresetId || source.preset_id || payloadObj.wellspringPresetId || payloadObj.remotePresetId || payloadObj.preset_id || action.wellspringPresetId || action.remotePresetId).trim(),
+                wellspringModelId: safeString(source.wellspringModelId || source.modelId || source.model_id || payloadObj.wellspringModelId || payloadObj.modelId || payloadObj.model_id || action.wellspringModelId || action.modelId || action.model_id).trim(),
+                wellspringWorkflowId: safeString(source.wellspringWorkflowId || source.workflowId || source.workflow_id || payloadObj.wellspringWorkflowId || payloadObj.workflowId || payloadObj.workflow_id || action.wellspringWorkflowId || action.workflowId || action.workflow_id).trim(),
+                wellspringCharacterId: safeString(source.wellspringCharacterId || source.projectId || source.project_id || source.remoteCharacterId || payloadObj.wellspringCharacterId || payloadObj.projectId || payloadObj.project_id || payloadObj.remoteCharacterId || action.wellspringCharacterId || action.projectId || action.project_id || action.remoteCharacterId).trim(),
+                wellspringVariantIds: svbNormalizeWellspringIdList(source.wellspringVariantIds || source.variantIds || source.variant_ids || source.wellspringVariantId || source.variantId || source.variant_id || payloadObj.wellspringVariantIds || payloadObj.variantIds || payloadObj.variant_ids || action.wellspringVariantIds || action.variantIds || action.variant_ids),
+                wellspringPerVariantBatch: svbOptionalNumber(source.wellspringPerVariantBatch ?? source.perVariantBatch ?? source.per_variant_batch ?? payloadObj.wellspringPerVariantBatch ?? payloadObj.perVariantBatch ?? payloadObj.per_variant_batch ?? action.wellspringPerVariantBatch ?? action.perVariantBatch ?? action.per_variant_batch, undefined),
+                wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt || payloadObj.wellspringQualityPrompt || payloadObj.qualityPrompt || payloadObj.quality_prompt || action.wellspringQualityPrompt || action.qualityPrompt || action.quality_prompt).trim(),
+                wellspringCfg: svbOptionalNumberAtLeast(source.wellspringCfg ?? source.cfg ?? payloadObj.wellspringCfg ?? payloadObj.cfg ?? action.wellspringCfg ?? action.cfg, 1, undefined, 30),
+                wellspringSampler: safeString(source.wellspringSampler || payloadObj.wellspringSampler || action.wellspringSampler).trim(),
+                wellspringScheduler: safeString(source.wellspringScheduler || payloadObj.wellspringScheduler || action.wellspringScheduler).trim(),
+                wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || payloadObj.wellspringLoras || payloadObj.loras || action.wellspringLoras || action.loras),
+                wellspringPayloadJson: svbKeroAssetStringifyJson(payloadJsonValue)
+            });
+        });
+        return items;
+    }
+
+    function hasExplicitKeroAssetCreatePayload(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const arrayKeys = ['assets', 'items', 'images', 'prompts', 'parts', 'assetPrompts', 'imagePrompts', 'profileAssets', 'standingAssets', 'emotionAssets', 'expressionAssets', 'additionalAssets', 'emotionImages'];
+        const scalarKeys = ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'stylePrompt', 'artistTags', 'styleTags', 'identityName', 'identityKey', 'identityPrompt', 'characterPrompt', 'visualIdentityPrompt', 'danbooruTags', 'tagPrompt', 'wellspringMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'workflowId', 'projectId', 'variantIds', 'variantId'];
+        return arrayKeys.some((key) => Array.isArray(payloadObj?.[key]) || Array.isArray(action?.[key]))
+            || scalarKeys.some((key) => Object.prototype.hasOwnProperty.call(payloadObj, key) || Object.prototype.hasOwnProperty.call(action || {}, key));
+    }
+
+    function buildKeroAssetCreateActionFromMisroutedCharacterAction(action = {}, options = {}) {
+        if (!isKeroCharacterPatchAction(action) || action._redirectedFromCharacterPatch === true) return null;
+        const request = safeString(action.userRequest || action.request || options.userRequest || options.request || currentKeroMission?.objective || '').trim();
+        if (!isKeroAssetFocusedRequest(request)) return null;
+        if (!hasExplicitKeroAssetCreatePayload(action)) return null;
+        const items = normalizeKeroAssetCreatePayloads(action).filter((item) =>
+            safeString(item.prompt || item.wellspringPayloadJson || item.danbooruTags || item.identityPrompt || item.referenceImagePath).trim()
+        );
+        if (!items.length) return null;
+        const payloadObj = getKeroAssetPayloadObject(action);
+        return {
+            ...action,
+            type: 'create',
+            target: 'asset',
+            payload: { ...payloadObj, assets: items },
+            _redirectedFromCharacterPatch: true,
+            reason: 'image_focused_character_update_asset_payload_recovery'
+        };
+    }
+
+    function inferKeroAssetIdentityNameFromText(text = '') {
+        const source = safeString(text).trim();
+        if (!source) return '';
+        const patterns = [
+            /(?:^|[\s"'“”])([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)\s*(?:여러\s*가지\s*)?(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)/i,
+            /(?:감정|표정|프로필|스탠딩|전신|에셋|이미지)\s*(?:을|를)?\s*([가-힣A-Za-z][가-힣A-Za-zA-Z0-9_\- ]{1,30}?)(?:으로|로|의)/i
+        ];
+        const blocked = new Set(['캐릭터', '인물', '봇', '주인공', '기본', '여러가지', '여러 가지']);
+        for (const pattern of patterns) {
+            const match = source.match(pattern);
+            const name = svbNormalizeAssetIdentityName(match?.[1] || '');
+            if (name && !blocked.has(name)) return name;
+        }
+        return '';
+    }
+
+    function resolveKeroAssetActionIdentityName(action = {}, items = []) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        const explicit = svbNormalizeAssetIdentityName(
+            action.identityName || action.identityKey || action.characterName || action.subjectName || action.subject
+            || payloadObj.identityName || payloadObj.identityKey || payloadObj.characterName || payloadObj.subjectName || payloadObj.subject
+            || items.find(item => item.identityName)?.identityName
+        );
+        if (explicit) return explicit;
+        return inferKeroAssetIdentityNameFromText(action.userRequest || action.request || action.instruction || action.mission || action.reason || payloadObj.userRequest || payloadObj.request || '');
+    }
+
+    function keroAssetPushUnique(list, value) {
+        const text = safeString(value).trim();
+        if (!text) return;
+        const key = text.toLowerCase().replace(/[\s_]+/g, '_');
+        if (list.some(item => safeString(item).toLowerCase().replace(/[\s_]+/g, '_') === key)) return;
+        list.push(text);
+    }
+
+    function keroAssetTextHas(text, pattern) {
+        return pattern.test(safeString(text));
+    }
+
+    function collectKeroAssetNameSnippets(text = '', identityName = '', radius = 700) {
+        const source = safeString(text);
+        const name = safeString(identityName).trim();
+        if (!source || !name) return [];
+        const lower = source.toLowerCase();
+        const needle = name.toLowerCase();
+        const snippets = [];
+        let index = lower.indexOf(needle);
+        while (index >= 0 && snippets.length < 8) {
+            snippets.push(source.slice(Math.max(0, index - radius), Math.min(source.length, index + name.length + radius)));
+            index = lower.indexOf(needle, index + needle.length);
+        }
+        return snippets;
+    }
+
+    function collectKeroAssetContextText(char, action = {}, item = {}) {
+        const identityName = svbNormalizeAssetIdentityName(item.identityName || resolveKeroAssetActionIdentityName(action, [item]));
+        const requestText = safeString(action.userRequest || action.request || currentKeroMission?.objective || '').trim();
+        const texts = [identityName, item.label, item.name, item.prompt, item.identityPrompt, item.danbooruTags, requestText].filter(Boolean);
+        let full = null;
+        try {
+            full = typeof buildFullCharacterContext === 'function' ? buildFullCharacterContext(char) : null;
+        } catch (_) {
+            full = null;
+        }
+        const descText = safeString(full?.descriptions ? JSON.stringify(full.descriptions) : (getCharacterField(char, 'desc') || char?.desc || char?.description || '')).trim();
+        const noteText = safeString(full?.globalNote || getCharacterField(char, 'globalNote') || '').trim();
+        const firstText = safeString(full?.firstMessage || getCharacterField(char, 'firstMessage') || '').trim();
+        const lorebooks = ensureArray(full?.lorebooks || getCharacterField(char, 'globalLore')).filter(Boolean);
+        if (identityName) {
+            [descText, noteText, firstText].forEach((text) => collectKeroAssetNameSnippets(text, identityName).forEach(snippet => texts.push(snippet)));
+            lorebooks.forEach((entry) => {
+                const block = [entry.comment, entry.key, entry.content].map(safeString).join('\n');
+                if (block.toLowerCase().includes(identityName.toLowerCase())) texts.push(block);
+            });
+        } else {
+            texts.push(descText, noteText, firstText);
+            lorebooks.slice(0, 12).forEach((entry) => texts.push([entry.comment, entry.key, entry.content].map(safeString).join('\n')));
+        }
+        return texts.filter(Boolean).join('\n').slice(0, 32000);
+    }
+
+    function inferKeroAssetDanbooruSubjectProfile(text = '') {
+        const source = safeString(text);
+        const lower = source.toLowerCase();
+        const maleStrong = /\b(1boy|male focus|male_focus|male|man|men|boy|guy|young man|adult man|middle-aged man|soldier|officer|prince|king|father|brother|husband)\b|남성|남자|소년|청년|장년|중년|아저씨|할아버지|군인|장교|왕자|왕|아버지|형|오빠|남편/.test(lower);
+        const femaleStrong = /\b(1girl|female focus|female_focus|female|woman|women|girl|lady|young woman|adult woman|princess|queen|mother|sister|wife)\b|여성|여자|소녀|아가씨|숙녀|여고생|여군|공주|여왕|어머니|누나|언니|아내/.test(lower);
+        let gender = 'unknown';
+        if (maleStrong && !femaleStrong) gender = 'male';
+        else if (femaleStrong && !maleStrong) gender = 'female';
+        else if (/\b1boy\b|male[_ ]focus/.test(lower)) gender = 'male';
+        else if (/\b1girl\b|female[_ ]focus/.test(lower)) gender = 'female';
+
+        let age = 'adult';
+        if (/소년|boy\b|teen boy|adolescent boy|학생|student|youth|young boy/.test(lower)) age = 'boy';
+        if (/소녀|girl\b|teen girl|adolescent girl|여고생|schoolgirl|young girl/.test(lower)) age = 'girl';
+        if (/청년|young man|guy|young adult man/.test(lower)) age = 'young_man';
+        if (/청년 여성|young woman|young adult woman|아가씨/.test(lower)) age = 'young_woman';
+        if (/중년|장년|middle-aged|older man|mature man|아저씨/.test(lower)) age = gender === 'female' ? 'mature_female' : 'mature_male';
+        if (/성인 여성|adult woman|woman\b|lady|숙녀/.test(lower)) age = 'woman';
+        if (/성인 남성|adult man|man\b|남자|남성/.test(lower)) age = 'man';
+
+        const tags = ['solo'];
+        if (gender === 'male') {
+            keroAssetPushUnique(tags, '1boy');
+            keroAssetPushUnique(tags, 'male_focus');
+            if (age === 'boy') keroAssetPushUnique(tags, 'boy');
+            else if (age === 'mature_male') keroAssetPushUnique(tags, 'mature_male');
+            else keroAssetPushUnique(tags, age === 'young_man' ? 'young_man' : 'adult_male');
+        } else if (gender === 'female') {
+            keroAssetPushUnique(tags, '1girl');
+            keroAssetPushUnique(tags, 'female_focus');
+            if (age === 'girl') keroAssetPushUnique(tags, 'girl');
+            else if (age === 'mature_female') keroAssetPushUnique(tags, 'mature_female');
+            else keroAssetPushUnique(tags, age === 'young_woman' ? 'young_woman' : 'adult_female');
+        } else {
+            keroAssetPushUnique(tags, 'character_focus');
+        }
+        return { gender, age, tags };
+    }
+
+    function buildKeroAssetVisualIdentityTags(text = '') {
+        const source = safeString(text).toLowerCase();
+        const tags = [];
+        const rules = [
+            [/흑발|검은 머리|black hair/, 'black_hair'],
+            [/백발|하얀 머리|은발|silver hair|white hair/, 'silver_hair'],
+            [/금발|blonde hair|blond hair|gold hair/, 'blonde_hair'],
+            [/갈색 머리|brown hair|brunette/, 'brown_hair'],
+            [/붉은 머리|red hair|redhead/, 'red_hair'],
+            [/푸른 머리|blue hair/, 'blue_hair'],
+            [/분홍 머리|pink hair/, 'pink_hair'],
+            [/보라 머리|purple hair/, 'purple_hair'],
+            [/녹색 머리|green hair/, 'green_hair'],
+            [/장발|long hair/, 'long_hair'],
+            [/단발|short hair|bob cut|bobcut/, 'short_hair'],
+            [/포니테일|ponytail/, 'ponytail'],
+            [/땋은 머리|braid|braided hair/, 'braid'],
+            [/앞머리|bangs/, 'bangs'],
+            [/푸른 눈|blue eyes/, 'blue_eyes'],
+            [/붉은 눈|red eyes/, 'red_eyes'],
+            [/금안|황금색 눈|gold eyes|golden eyes|amber eyes/, 'golden_eyes'],
+            [/녹색 눈|green eyes/, 'green_eyes'],
+            [/보라색 눈|purple eyes|violet eyes/, 'purple_eyes'],
+            [/갈색 눈|brown eyes/, 'brown_eyes'],
+            [/검은 눈|black eyes/, 'black_eyes'],
+            [/회색 눈|gray eyes|grey eyes/, 'gray_eyes'],
+            [/안경|glasses/, 'glasses'],
+            [/흉터|scar/, 'scar'],
+            [/점|mole/, 'mole'],
+            [/근육|muscular|well-built|broad shoulders/, 'muscular'],
+            [/탄탄|athletic|fit body/, 'athletic_body'],
+            [/마른|slender|slim/, 'slender'],
+            [/작은 체구|petite|short stature/, 'petite'],
+            [/큰 키|tall/, 'tall'],
+            [/군복|military uniform|combat uniform/, 'military_uniform'],
+            [/전술|tactical|방탄|bulletproof|plate carrier/, 'tactical_gear'],
+            [/갑옷|armor|armour/, 'armor'],
+            [/망토|cloak|cape/, 'cloak'],
+            [/정장|suit/, 'suit'],
+            [/교복|school uniform/, 'school_uniform'],
+            [/한복|hanbok/, 'hanbok'],
+            [/드레스|dress|gown/, 'dress'],
+            [/코트|coat/, 'coat'],
+            [/재킷|jacket/, 'jacket'],
+            [/검|sword/, 'sword'],
+            [/총|rifle|gun|firearm/, 'firearm']
+        ];
+        rules.forEach(([pattern, tag]) => {
+            if (keroAssetTextHas(source, pattern)) keroAssetPushUnique(tags, tag);
+        });
+        keroAssetPushUnique(tags, 'distinctive_face');
+        keroAssetPushUnique(tags, 'consistent_character_design');
+        return tags;
+    }
+
+    function buildKeroAssetGenreTags(text = '') {
+        const source = safeString(text).toLowerCase();
+        const tags = ['visual_novel_sprite', 'character_sprite', 'upper_body', 'looking_at_viewer'];
+        const rules = [
+            [/정통 판타지|medieval|high fantasy|classic fantasy/, ['fantasy', 'medieval_fantasy']],
+            [/다크 판타지|dark fantasy|gothic/, ['dark_fantasy', 'dramatic_lighting']],
+            [/어반판타지|urban fantasy/, ['urban_fantasy', 'modern_fantasy']],
+            [/미연시|visual novel|dating sim|연애/, ['visual_novel', 'dating_sim']],
+            [/군|군대|한국군|military|soldier|소녀전선|girls'? frontline/, ['military', 'modern_military', 'tactical_gear']],
+            [/sf|sci-fi|science fiction|cyberpunk|사이버펑크|미래/, ['science_fiction', 'futuristic']],
+            [/학원|학교|academy|school/, ['academy', 'school_life']],
+            [/무협|martial arts|wuxia/, ['martial_arts', 'eastern_fantasy']],
+            [/아이돌|idol/, ['idol', 'stage_costume']]
+        ];
+        rules.forEach(([pattern, values]) => {
+            if (keroAssetTextHas(source, pattern)) values.forEach(tag => keroAssetPushUnique(tags, tag));
+        });
+        return tags;
+    }
+
+    function inferKeroAssetStylePresetFromContext(text = '') {
+        const source = safeString(text).toLowerCase();
+        if (/다크 판타지|dark fantasy|gothic|horror/.test(source)) return 'dark-fantasy';
+        if (/정통 판타지|fantasy|rpg|gacha|card/.test(source)) return 'game-card';
+        if (/무협|manhwa|webtoon|웹툰|만화/.test(source)) return 'ink-manhwa';
+        if (/retro|cel|90s|고전/.test(source)) return 'retro-cel';
+        if (/수채|watercolor/.test(source)) return 'watercolor';
+        if (/일상|romance|연애|soft|pastel|slice of life/.test(source)) return 'soft-pastel';
+        if (/군|military|sci-fi|cyberpunk|action/.test(source)) return 'sharp-keyvisual';
+        return 'clean-anime';
+    }
+
+    function removeKeroAssetConflictingSubjectTags(prompt = '', profile = {}) {
+        const fragments = [];
+        safeString(prompt).split(/[,;\n]+/).forEach((fragment) => {
+            const clean = fragment.trim();
+            if (!clean) return;
+            const key = clean.toLowerCase().replace(/\s+/g, '_');
+            if (profile.gender === 'male' && /^(1girl|female_focus|girl|woman|adult_female|young_woman|mature_female)$/.test(key)) return;
+            if (profile.gender === 'female' && /^(1boy|male_focus|boy|man|adult_male|young_man|mature_male)$/.test(key)) return;
+            fragments.push(clean);
+        });
+        return fragments.join(', ');
+    }
+
+    function buildKeroAssetIdentityPromptFromContext(char, action = {}, item = {}) {
+        const contextText = collectKeroAssetContextText(char, action, item);
+        const profile = inferKeroAssetDanbooruSubjectProfile([item.identityPrompt, item.prompt, contextText].join('\n'));
+        const tags = [];
+        profile.tags.forEach(tag => keroAssetPushUnique(tags, tag));
+        buildKeroAssetVisualIdentityTags(contextText).forEach(tag => keroAssetPushUnique(tags, tag));
+        return {
+            prompt: tags.join(', '),
+            negative: profile.gender === 'male'
+                ? 'wrong_gender, female_focus, 1girl, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
+                : (profile.gender === 'female'
+                    ? 'wrong_gender, male_focus, 1boy, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
+                    : 'wrong_gender, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'),
+            danbooruTags: buildKeroAssetGenreTags(contextText).join(', '),
+            stylePreset: inferKeroAssetStylePresetFromContext(contextText),
+            subjectProfile: profile
+        };
+    }
+
+    function joinKeroAssetPromptFragments(...values) {
+        const seen = new Set();
+        const out = [];
+        const push = (value) => {
+            if (Array.isArray(value)) {
+                value.forEach(push);
+                return;
+            }
+            if (value && typeof value === 'object') {
+                push(value.prompt || value.positive || value.tags || value.text || '');
+                return;
+            }
+            safeString(value).split(/[,;\n]+/).forEach((fragment) => {
+                const clean = fragment.trim();
+                if (!clean) return;
+                const key = clean.toLowerCase().replace(/[\s_]+/g, '_');
+                if (seen.has(key)) return;
+                seen.add(key);
+                out.push(clean);
+            });
+        };
+        values.forEach(push);
+        return out.join(', ');
+    }
+
+    async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
+        let meta = svbReadAssetStudioMetaFromCharacter(char);
+        const actionIdentityName = resolveKeroAssetActionIdentityName(action, items);
+        let dirty = false;
+        const hydrated = items.map((item) => {
+            const identityName = svbNormalizeAssetIdentityName(item.identityName || actionIdentityName);
+            const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
+            const generated = buildKeroAssetIdentityPromptFromContext(char, action, { ...item, identityName });
+            const explicitIdentity = safeString(item.identityPrompt).trim();
+            const storedIdentity = safeString(stored?.prompt).trim();
+            const subjectProfile = generated.subjectProfile || inferKeroAssetDanbooruSubjectProfile([explicitIdentity, storedIdentity, item.prompt].join('\n'));
+            const identityPrompt = removeKeroAssetConflictingSubjectTags(
+                joinKeroAssetPromptFragments(generated.prompt, storedIdentity, explicitIdentity),
+                subjectProfile
+            );
+            const identityNegative = joinKeroAssetPromptFragments(item.identityNegative, stored?.negative, generated.negative);
+            const itemLoras = svbNormalizeWellspringLoras(item.wellspringLoras || item.loras);
+            const storedLoras = svbNormalizeWellspringLoras(stored?.wellspringLoras || stored?.loras);
+            if (identityName && (explicitIdentity || (!storedIdentity && generated.prompt))) {
+                meta = svbSetAssetIdentityPrompt(meta, identityName, identityPrompt, identityNegative);
+                dirty = true;
+            }
+            return {
+                ...item,
+                identityName,
+                identityPrompt,
+                identityNegative,
+                danbooruTags: joinKeroAssetPromptFragments(generated.danbooruTags, item.danbooruTags),
+                stylePreset: item.stylePreset || generated.stylePreset,
+                wellspringLoras: itemLoras.length ? itemLoras : storedLoras
+            };
+        });
+        if (dirty) {
+            svbWriteAssetStudioMetaToCharacter(char, meta);
+            const ok = await svbSaveAssetStudioCharacter(char, 'asset-identity-prompt');
+            if (!ok) throw new Error('Failed to save generated asset identity prompt.');
+        }
+        return hydrated;
+    }
+
+    function findKeroImageProfile(profileId = '') {
+        const id = safeString(profileId).trim();
+        if (!id) return null;
+        const lower = id.toLowerCase();
+        return normalizeImageApiProfiles(imageApiProfiles).find((profile) =>
+            safeString(profile.id).toLowerCase() === lower
+            || safeString(profile.name).toLowerCase() === lower
+            || safeString(profile.provider).toLowerCase() === lower
+        ) || null;
+    }
+
+    function findKeroImagePreset(presetId = '') {
+        const id = safeString(presetId).trim();
+        if (!id) return null;
+        const lower = id.toLowerCase();
+        return normalizeImageGenerationPresets(imageGenerationPresets).find((preset) =>
+            safeString(preset.id).toLowerCase() === lower
+            || safeString(preset.name).toLowerCase() === lower
+            || safeString(preset.provider).toLowerCase() === lower
+        ) || null;
+    }
+
+    function pickKeroAssetImageProfile(profileId = '') {
+        let profile = findKeroImageProfile(profileId) || getActiveImageApiProfile();
+        const configuredWellspring = normalizeImageApiProfiles(imageApiProfiles).find((item) =>
+            (isWellspringImageProvider(item.provider) || safeString(item.endpoint).includes('wellspring.encrypt.gay'))
+            && safeString(item.endpoint).trim()
+        );
+        if ((!profile || !safeString(profile.endpoint).trim()) && configuredWellspring) profile = configuredWellspring;
+        profile = normalizeImageApiProfile(profile);
+        if (!safeString(profile.endpoint).trim()) throw new Error('Image API profile endpoint is empty.');
+        return profile;
+    }
+
+    function pickKeroAssetImagePreset(presetId = '', profile = null) {
+        const preset = findKeroImagePreset(presetId) || getActiveImageGenerationPreset();
+        const normalized = normalizeImageGenerationPreset(preset);
+        if (profile && profile.provider && !normalized.provider) normalized.provider = profile.provider;
+        return normalized;
+    }
+
+    function getKeroDefaultAssetNegativePrompt(profile = {}, preset = {}) {
+        return joinKeroAssetPromptFragments(
+            preset.negative,
+            profile.negative,
+            'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry, cropped_face, duplicate_character, same_face, different_character'
+        );
+    }
+
+    function stripKeroAssetRealismRiskFragments(text = '') {
+        const blocked = /\b(photo|photograph|photography|photorealistic|realistic|hyperrealistic|live action|real person|cosplay|dslr|3d|cgi|render|cinematic)\b/i;
+        return safeString(text)
+            .split(/[,;\n]+/)
+            .map(fragment => fragment.trim())
+            .filter(fragment => fragment && !blocked.test(fragment))
+            .join(', ');
+    }
+
+    function normalizeKeroAssetStyleKey(stylePreset = '') {
+        const raw = safeString(stylePreset).trim().toLowerCase();
+        if (!raw) return 'clean-anime';
+        const normalized = raw.replace(/[\s_]+/g, '-');
+        if (KERO_ASSET_STYLE_PRESETS[normalized]) return normalized;
+        if (/pastel|soft|gentle|warm/.test(normalized)) return 'soft-pastel';
+        if (/dark|gothic|shadow|fantasy/.test(normalized)) return 'dark-fantasy';
+        if (/water|paint|aquarelle/.test(normalized)) return 'watercolor';
+        if (/ink|manhwa|webtoon|comic/.test(normalized)) return 'ink-manhwa';
+        if (/retro|cel|90/.test(normalized)) return 'retro-cel';
+        if (/card|splash|gacha|game/.test(normalized)) return 'game-card';
+        if (/sharp|key|vivid|bold/.test(normalized)) return 'sharp-keyvisual';
+        return 'clean-anime';
+    }
+
+    function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '') {
+        const presetPrompt = KERO_ASSET_STYLE_PRESETS[normalizeKeroAssetStyleKey(stylePreset)] || KERO_ASSET_STYLE_PRESETS['clean-anime'];
+        return joinKeroAssetPromptFragments(
+            'masterpiece, best_quality, highres, 2d_anime, anime_coloring, official_art, clean_lineart, consistent_art_style',
+            presetPrompt,
+            stripKeroAssetRealismRiskFragments(styleTags),
+            stripKeroAssetRealismRiskFragments(artistTags),
+            stripKeroAssetRealismRiskFragments(stylePrompt)
+        );
+    }
+
+    function normalizeKeroAsset2dPositivePrompt(prompt = '', stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '') {
+        const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
+        return joinKeroAssetPromptFragments(
+            buildKeroAssetStylePrompt(stylePreset, stylePrompt, artistTags, styleTags),
+            safePrompt || 'solo, character_focus, upper_body, looking_at_viewer, detailed_eyes, clean_background'
+        );
+    }
+
+    function normalizeKeroAsset2dNegativePrompt(negative = '', profile = {}, preset = {}) {
+        return joinKeroAssetPromptFragments(
+            stripKeroAssetRealismRiskFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset)),
+            'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry, cropped_face, duplicate_character, different_character'
+        );
+    }
+
+    function getKeroAssetOutputName(item, index = 0, total = 1) {
+        const base = safeString(item?.name).trim() || (item?.target === 'emotion' ? 'emotion' : 'asset');
+        if (total <= 1) return item?.target === 'emotion' ? base : svbNormalizeAssetName(base, 'asset');
+        const suffix = String(index + 1).padStart(2, '0');
+        return item?.target === 'emotion' ? `${base}_${suffix}` : svbNormalizeAssetName(`${base}_${suffix}`, 'asset');
+    }
+
+    function collectKeroAssetTrainingSources(action = {}) {
+        const payloadObj = getKeroAssetPayloadObject(action);
+        return [payloadObj.wellspringTraining, payloadObj.loraTraining, payloadObj.training, payloadObj, action.wellspringTraining, action.loraTraining, action.training, action].filter(isPlainObject);
+    }
+
+    function getKeroAssetTrainingValue(action = {}, keys = [], fallback = undefined) {
+        for (const source of collectKeroAssetTrainingSources(action)) {
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+            }
+        }
+        return fallback;
+    }
+
+    function isKeroAssetTrainingTruthy(value) {
+        if (value === true) return true;
+        if (value === false || value === null || value === undefined) return false;
+        const text = safeString(value).trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y', 'on', 'auto', 'train', 'lora'].includes(text);
+    }
+
+    function resolveKeroAssetLoraTrainingOptions(action = {}, items = [], createdAssets = [], char = null) {
+        const explicit = getKeroAssetTrainingValue(action, ['trainLora', 'trainLoRA', 'wellspringTrainLora', 'autoTrainLora', 'enabled'], undefined);
+        const hasTrainingObject = collectKeroAssetTrainingSources(action).some((source) =>
+            source && source !== action && (
+                Object.prototype.hasOwnProperty.call(source, 'loraName')
+                || Object.prototype.hasOwnProperty.call(source, 'lora_name')
+                || Object.prototype.hasOwnProperty.call(source, 'galleryJobIds')
+                || Object.prototype.hasOwnProperty.call(source, 'uploadIds')
+            )
+        );
+        if (!isKeroAssetTrainingTruthy(explicit) && !hasTrainingObject) return { enabled: false };
+        const identityName = svbNormalizeAssetIdentityName(
+            getKeroAssetTrainingValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '')
+            || items.find(item => item.identityName)?.identityName
+            || createdAssets.find(item => item.identityName)?.identityName
+            || getCharacterDisplayName(char)
+        );
+        const rawLoraName = safeString(getKeroAssetTrainingValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim();
+        return {
+            enabled: true,
+            identityName,
+            loraName: rawLoraName.slice(0, 40),
+            loraStrength: svbOptionalNumberAtLeast(getKeroAssetTrainingValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2),
+            waitForTraining: isKeroAssetTrainingTruthy(getKeroAssetTrainingValue(action, ['waitForTraining', 'wait', 'waitForCompletion'], false)),
+            autoUseTrainedLora: getKeroAssetTrainingValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false,
+            profileId: safeString(getKeroAssetTrainingValue(action, ['profileId', 'profile'], '')).trim(),
+            steps: svbOptionalNumber(getKeroAssetTrainingValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined), undefined),
+            galleryJobIds: [
+                ...svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], [])),
+                ...createdAssets.map(asset => safeString(asset.wellspringJobId || asset.jobId).trim()).filter(Boolean)
+            ],
+            uploadIds: svbNormalizeWellspringIdList(getKeroAssetTrainingValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], [])),
+            trainingAssets: createdAssets.filter(asset => safeString(asset.path).trim()).map(asset => ({ name: asset.name, path: asset.path, ext: asset.ext, wellspringJobId: asset.wellspringJobId })),
+            trainingTimeoutMs: Math.max(0, Number(getKeroAssetTrainingValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
+        };
+    }
+
+    async function saveKeroAssetLoraTrainingMeta(char, trainingOptions = {}, started = {}, completed = null) {
+        if (!char || !trainingOptions.identityName) return;
+        let meta = svbReadAssetStudioMetaFromCharacter(char);
+        const identityName = trainingOptions.identityName;
+        const existing = svbFindAssetIdentityEntry(meta, identityName) || { name: identityName, prompt: '', negative: '' };
+        meta.identities[identityName] = {
+            ...existing,
+            name: identityName,
+            wellspringLoraName: started.loraName || trainingOptions.loraName || existing.wellspringLoraName || '',
+            wellspringTrainingId: started.trainingId || existing.wellspringTrainingId || '',
+            updatedAt: new Date().toISOString()
+        };
+        const loraId = completed?.lora ? svbExtractWellspringLoraId(completed.lora) : '';
+        if (loraId && trainingOptions.autoUseTrainedLora !== false) {
+            meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength: trainingOptions.loraStrength || 0.8 }], {
+                loraName: started.loraName || trainingOptions.loraName,
+                trainingId: started.trainingId
+            });
+        }
+        svbWriteAssetStudioMetaToCharacter(char, meta);
+        const ok = await svbSaveAssetStudioCharacter(char, completed?.lora ? 'asset-lora-trained' : 'asset-lora-training-started');
+        if (!ok) throw new Error('Failed to save Asset Studio LoRA metadata.');
+    }
+
+    async function runKeroAssetCreateAction(action = {}, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const actionSignal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
+        const char = await getCharacterData();
+        if (!char) return { success: false, failed: 1, detail: 'Character data not found.' };
+
+        let items = normalizeKeroAssetCreatePayloads(action);
+        if (!items.length) {
+            await addBotMessage('생성할 이미지 에셋 payload가 없습니다. prompt와 name을 포함한 assets/items 배열이 필요합니다.');
+            return { success: false, failed: 1, detail: 'asset create payload missing' };
+        }
+        items = await hydrateKeroAssetIdentityPrompts(char, action, items);
+        const missingPrompt = items.filter((item) => !safeString(item.prompt || item.identityPrompt || item.danbooruTags).trim());
+        if (missingPrompt.length) {
+            const detail = `이미지 프롬프트가 비어 있는 에셋 ${missingPrompt.length}개가 있어 실행하지 않았습니다.`;
+            await addBotMessage(detail);
+            return { success: false, failed: missingPrompt.length, detail };
+        }
+
+        await loadImageApiSettings();
+        await loadImageGenerationPresets();
+
+        const jobs = [];
+        items.forEach((item) => {
+            for (let index = 0; index < item.count; index += 1) jobs.push({ item, index, total: item.count });
+        });
+        const requested = jobs.length;
+        let created = 0;
+        let failed = 0;
+        const createdAssets = [];
+        const failedAssets = [];
+        let autoReferencePath = '';
+        let autoReferenceName = '';
+        const shouldAutoReferenceBatch = requested > 1 && !items.some(item => safeString(item.referenceImagePath).trim());
+        addKeroWorkstreamEvent('이미지 에셋 생성', `이미지 API로 ${requested}장 생성 후 캐릭터 에셋에 등록합니다.`, 'action', actionProgressOptions);
+
+        for (const job of jobs) {
+            assertKeroActionNotTimedOut(action, '이미지 에셋 생성');
+            throwIfSvbAborted(actionSignal, '이미지 에셋 생성이 사용자 요청으로 중단되었습니다.');
+            if (typeof options.abortCheck === 'function' && options.abortCheck()) throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 생성을 중단했습니다.');
+            const item = job.item;
+            const name = getKeroAssetOutputName(item, job.index, job.total);
+            const vars = {
+                character: item.identityName || getCharacterDisplayName(char),
+                char: item.identityName || getCharacterDisplayName(char),
+                emotion: item.target === 'emotion' ? (item.name || item.label) : item.label,
+                part: item.label,
+                name,
+                asset: name
+            };
+            const profile = pickKeroAssetImageProfile(item.profileId);
+            const preset = pickKeroAssetImagePreset(item.presetId, profile);
+            const renderedIdentityPrompt = svbRenderImagePromptTemplate(item.identityPrompt, vars).trim();
+            const renderedDanbooruTags = svbRenderImagePromptTemplate(item.danbooruTags, vars).trim();
+            const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
+            const prompt = normalizeKeroAsset2dPositivePrompt(
+                joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt),
+                item.stylePreset,
+                svbRenderImagePromptTemplate(item.stylePrompt, vars).trim(),
+                svbRenderImagePromptTemplate(item.artistTags, vars).trim(),
+                svbRenderImagePromptTemplate(item.styleTags, vars).trim()
+            );
+            const negative = normalizeKeroAsset2dNegativePrompt(
+                joinKeroAssetPromptFragments(
+                    svbRenderImagePromptTemplate(item.identityNegative, vars).trim(),
+                    svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim()
+                ),
+                profile,
+                preset
+            );
+            const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
+            const steps = item.steps || preset.steps || profile.steps || 26;
+            const allowAutoReferenceForProfile = shouldAutoReferenceBatch && !isWellspringImageProvider(profile.provider);
+            const referenceImagePath = safeString(item.referenceImagePath || (allowAutoReferenceForProfile ? autoReferencePath : '')).trim();
+            const referenceImageName = safeString(item.referenceImageName || (referenceImagePath === autoReferencePath ? autoReferenceName : '')).trim();
+            updateKeroProgress(created + failed, requested, `이미지 에셋 생성 중... ${created + failed + 1}/${requested} · ${item.label || name}`, actionProgressOptions);
+            try {
+                const imageResult = await svbGenerateImageWithProfileAndPreset(profile, preset, {
+                    prompt,
+                    negative,
+                    ratioId,
+                    steps,
+                    referenceImagePath,
+                    referenceImageName,
+                    referenceStrength: item.referenceStrength,
+                    referenceInformationExtracted: item.referenceInformationExtracted,
+                    wellspringMode: item.wellspringMode,
+                    wellspringPresetId: item.wellspringPresetId,
+                    wellspringModelId: item.wellspringModelId,
+                    wellspringWorkflowId: item.wellspringWorkflowId,
+                    wellspringCharacterId: item.wellspringCharacterId,
+                    wellspringVariantIds: item.wellspringVariantIds,
+                    wellspringPerVariantBatch: item.wellspringPerVariantBatch,
+                    wellspringQualityPrompt: item.wellspringQualityPrompt,
+                    wellspringCfg: item.wellspringCfg,
+                    wellspringSampler: item.wellspringSampler,
+                    wellspringScheduler: item.wellspringScheduler,
+                    wellspringLoras: item.wellspringLoras,
+                    wellspringPayloadJson: item.wellspringPayloadJson,
+                    signal: actionSignal
+                });
+                throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
+                const saveResult = await svbSaveGeneratedImageToCharacter(char, imageResult, { target: item.target, name });
+                const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
+                const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase()) || null;
+                if (allowAutoReferenceForProfile && !autoReferencePath && savedAsset?.path) {
+                    autoReferencePath = savedAsset.path;
+                    autoReferenceName = savedAsset.name || name;
+                }
+                created += 1;
+                createdAssets.push({
+                    target: item.target,
+                    name,
+                    path: savedAsset?.path || '',
+                    ext: savedAsset?.ext || imageResult.ext || svbGetFileExt(savedAsset?.path) || 'png',
+                    identityName: item.identityName || '',
+                    prompt: imageResult.prompt || prompt,
+                    negative: imageResult.negative || negative,
+                    stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
+                    ratioId,
+                    steps,
+                    referenceImagePath,
+                    wellspringJobId: imageResult.wellspringJobId || '',
+                    wellspringRunId: imageResult.wellspringRunId || ''
+                });
+            } catch (error) {
+                failed += 1;
+                failedAssets.push({ target: item.target, name, error: error?.message || String(error) });
+                Logger.error('Kero asset generation failed:', error);
+                break;
+            }
+        }
+
+        updateKeroProgress(created + failed, requested, failed ? '이미지 에셋 생성 확인 필요' : '이미지 에셋 생성 완료', actionProgressOptions);
+        if (failed) {
+            const firstError = failedAssets[0]?.error || '알 수 없는 오류';
+            const detail = `이미지 에셋 ${created}/${requested}장 저장 후 중단: ${firstError}`;
+            await addBotMessage(detail);
+            return { success: created > 0, requested, created, failed, detail, createdAssets, failedAssets };
+        }
+
+        const trainingOptions = resolveKeroAssetLoraTrainingOptions(action, items, createdAssets, char);
+        let trainingResult = null;
+        if (trainingOptions.enabled) {
+            try {
+                const trainingProfile = pickKeroAssetImageProfile(trainingOptions.profileId);
+                if (!isWellspringImageProvider(trainingProfile.provider)) throw new Error('Wellspring profile is required for LoRA training.');
+                addKeroWorkstreamEvent('Wellspring LoRA training', `${trainingOptions.loraName} dataset ${trainingOptions.galleryJobIds.length + trainingOptions.uploadIds.length + trainingOptions.trainingAssets.length}`, 'action', actionProgressOptions);
+                const started = await svbStartWellspringLoraTraining(trainingProfile, { ...trainingOptions, signal: actionSignal });
+                await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
+                trainingResult = { started };
+                if (trainingOptions.waitForTraining) {
+                    const completed = await svbWaitForWellspringLoraTraining(trainingProfile, started, { signal: actionSignal, trainingTimeoutMs: trainingOptions.trainingTimeoutMs });
+                    await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
+                    trainingResult.completed = completed;
+                }
+            } catch (error) {
+                Logger.error('Kero Wellspring LoRA training failed:', error);
+                trainingResult = { error: error?.message || String(error) };
+                await addBotMessage(`이미지 에셋은 ${created}장 저장했지만 Wellspring LoRA 학습 시작에 실패했습니다: ${error?.message || error}`);
+                return { success: true, requested, created, failed: 0, trainingFailed: true, detail: `Image assets saved, LoRA training failed: ${error?.message || error}`, createdAssets, trainingResult };
+            }
+        }
+        const trainingSuffix = trainingResult?.completed?.lora
+            ? ` Wellspring LoRA "${trainingOptions.loraName}"까지 identity에 연결했습니다.`
+            : (trainingResult?.started ? ` Wellspring LoRA "${trainingOptions.loraName}" 학습을 시작했습니다.` : '');
+        await addBotMessage(`이미지 에셋 ${created}장을 생성하고 캐릭터에 등록했습니다.${trainingSuffix}`);
+        return { success: true, requested, created, failed: 0, detail: `이미지 에셋 ${created}장 등록 완료${trainingSuffix}`, createdAssets, trainingResult };
+    }
+
+    function getKeroAssetManageSources(action = {}) {
+        const sources = [];
+        if (isPlainObject(action.payload)) sources.push(action.payload);
+        ['data', 'params', 'options'].forEach((key) => { if (isPlainObject(action?.[key])) sources.push(action[key]); });
+        sources.push(action || {});
+        return sources;
+    }
+
+    function getKeroAssetManageValue(action = {}, keys = [], fallback = '') {
+        for (const source of getKeroAssetManageSources(action)) {
+            for (const key of keys) {
+                if (source && Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+            }
+        }
+        return fallback;
+    }
+
+    function getKeroAssetManageBoolean(action = {}, keys = []) {
+        const value = getKeroAssetManageValue(action, keys, undefined);
+        if (value === true) return true;
+        const text = safeString(value).trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y', 'all', '*', '전체'].includes(text);
+    }
+
+    function normalizeKeroAssetManageOperation(action = {}) {
+        const explicit = getKeroAssetManageValue(action, ['operation', 'op', 'mode', 'assetOperation', 'asset_operation'], '');
+        const type = normalizeKeroActionTypeName(action?.type);
+        const raw = safeString(explicit).trim() || (type === 'delete' ? 'delete' : '');
+        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
+        if (/^(?:normalize|normalizeextension|normalizeextensions|stripext|stripextension|stripextensions|cleanext|cleanextension|cleanextensions|extensioncleanup|cleanupextensions?)$/.test(key)) return 'normalize_extensions';
+        if (/^(?:move|movefolder|folder|setfolder|organize|organizefolder|group|groupfolder)$/.test(key)) return 'move_folder';
+        if (/^(?:pattern|patternrename|renamepattern|rename|batchrename|bulkrename)$/.test(key)) return 'pattern_rename';
+        if (/^(?:batchreplace|bulkreplace|replaceimages?|replaceasset|replaceassets)$/.test(key)) return 'batch_replace';
+        if (/^(?:zipimport|importzip|imagezipimport|importimagezip|backupimport)$/.test(key)) return 'zip_import';
+        if (/^(?:trainlora|loratrain|loratraining|wellspringtrainlora|wellspringloratraining|traininglora)$/.test(key)) return 'train_lora';
+        if (/^(?:refreshloras?|listloras?|syncloras?|wellspringloras?)$/.test(key)) return 'refresh_loras';
+        if (/^(?:delete|remove|purge)$/.test(key)) return 'delete';
+        if (!key && getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')) return 'pattern_rename';
+        if (!key && getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '') !== '') return 'move_folder';
+        return '';
+    }
+
+    function normalizeKeroAssetManageKind(action = {}) {
+        const raw = safeString(getKeroAssetManageValue(action, ['kind', 'assetKind', 'assetType', 'targetKind', 'slotType'], '')).trim();
+        const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
+        if (!key || ['all', '*', 'both', 'any', '전체'].includes(key)) return 'all';
+        if (/^(?:emotion|emotions|emotionimage|emotionimages|감정)$/.test(key)) return 'emotion';
+        if (/^(?:additional|additionalasset|additionalassets|image|images|profile|profileasset|standing|asset|assets|추가)$/.test(key)) return 'additional';
+        return 'all';
+    }
+
+    function collectKeroAssetManageNames(action = {}) {
+        const names = [];
+        const pushName = (value) => {
+            if (Array.isArray(value)) {
+                value.forEach(pushName);
+                return;
+            }
+            if (isPlainObject(value)) {
+                pushName(value.name || value.assetName || value.slotName || value.id || value.key || value.label);
+                return;
+            }
+            safeString(value).split(/[,\n|]+/).map(item => item.trim()).filter(Boolean).forEach((item) => names.push(item));
+        };
+        for (const source of getKeroAssetManageSources(action)) {
+            ['names', 'name', 'assetNames', 'assetName', 'slotName', 'items', 'assets', 'images', 'targets'].forEach((key) => {
+                if (source && Object.prototype.hasOwnProperty.call(source, key)) pushName(source[key]);
+            });
+        }
+        const seen = new Set();
+        return names.filter((name) => {
+            const key = safeString(name).toLowerCase();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
+    function getKeroAssetManageLists(char) {
+        const emotionAssets = normalizeEmotionAssets(getCharacterField(char, 'emotionImages'));
+        const additionalAssets = normalizeAdditionalAssets(getCharacterField(char, 'additionalAssets'));
+        const meta = svbCleanAssetStudioMeta(svbReadAssetStudioMetaFromCharacter(char), emotionAssets, additionalAssets);
+        return { emotionAssets, additionalAssets, meta };
+    }
+
+    function getKeroAssetManageFolderFilter(action = {}, operation = '') {
+        if (operation === 'move_folder') {
+            const value = getKeroAssetManageValue(action, ['fromFolder', 'from_folder', 'sourceFolder', 'source_folder', 'currentFolder', 'current_folder'], undefined);
+            return value === undefined ? null : safeString(value).trim();
+        }
+        const value = getKeroAssetManageValue(action, ['folder', 'fromFolder', 'from_folder'], undefined);
+        return value === undefined ? null : safeString(value).trim();
+    }
+
+    function keroAssetFolderMatches(currentFolder, filter) {
+        if (filter === null || filter === undefined) return true;
+        const wanted = safeString(filter).trim();
+        if (!wanted) return true;
+        const key = wanted.toLowerCase();
+        if (['__none__', 'none', 'uncategorized', 'root', '미분류'].includes(key)) return !safeString(currentFolder).trim();
+        return safeString(currentFolder).trim() === wanted;
+    }
+
+    function selectKeroAssetManageRefs(lists, action = {}, operation = '') {
+        const kind = normalizeKeroAssetManageKind(action);
+        const names = collectKeroAssetManageNames(action);
+        const allRequested = getKeroAssetManageBoolean(action, ['all', 'includeAll', 'selectAll']) || names.some(name => safeString(name).trim() === '*');
+        const nameSet = new Set(names.filter(name => safeString(name).trim() !== '*').map(name => safeString(name).trim().toLowerCase()));
+        const folderFilter = getKeroAssetManageFolderFilter(action, operation);
+        const hasFolderFilter = folderFilter !== null && folderFilter !== undefined && safeString(folderFilter).trim() !== '';
+        const shouldDefaultAll = operation === 'normalize_extensions' && !nameSet.size && !hasFolderFilter;
+        const kinds = kind === 'emotion' ? ['emotion'] : (kind === 'additional' ? ['additional'] : ['additional', 'emotion']);
+        const refs = [];
+        for (const assetKind of kinds) {
+            const source = assetKind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+            source.forEach((asset, idx) => {
+                const name = safeString(asset.name).trim();
+                const base = svbSplitAssetDisplayName(name).base;
+                const folder = svbGetAssetStudioFolder(lists.meta, assetKind, name);
+                const nameMatches = !nameSet.size || nameSet.has(name.toLowerCase()) || nameSet.has(base.toLowerCase());
+                if (!nameMatches) return;
+                if (!keroAssetFolderMatches(folder, folderFilter)) return;
+                if (!allRequested && !shouldDefaultAll && !nameSet.size && !hasFolderFilter) return;
+                refs.push({ kind: assetKind, idx, asset });
+            });
+        }
+        return refs;
+    }
+
+    function getKeroAssetManageOperationLabel(operation) {
+        const labels = {
+            normalize_extensions: '확장자 정리',
+            move_folder: '폴더 이동',
+            pattern_rename: '패턴 이름 변경',
+            train_lora: 'Wellspring LoRA 학습',
+            refresh_loras: 'Wellspring LoRA 갱신',
+            delete: '삭제'
+        };
+        return labels[operation] || operation || '에셋 관리';
+    }
+
+    function renderKeroAssetManagePattern(pattern, ref, sequence, lists) {
+        const asset = ref.asset || {};
+        const name = safeString(asset.name).trim();
+        const split = svbSplitAssetDisplayName(name);
+        const folder = svbGetAssetStudioFolder(lists.meta, ref.kind, name);
+        const ext = ref.kind === 'additional'
+            ? svbNormalizeAssetExtValue(split.ext, asset.ext, svbGetFileExt(asset.path), 'png')
+            : svbNormalizeAssetExtValue(split.ext, svbGetFileExt(asset.path), 'png');
+        return safeString(pattern || '{name}')
+            .replace(/\{nn\}/g, String(sequence + 1).padStart(2, '0'))
+            .replace(/\{n\}/g, String(sequence + 1))
+            .replace(/\{folder\}/g, folder || 'root')
+            .replace(/\{base\}/g, split.base || name)
+            .replace(/\{name\}/g, name)
+            .replace(/\{kind\}/g, ref.kind)
+            .replace(/\{ext\}/g, ext);
+    }
+
+    function getKeroAssetManageTrainingIdentity(action = {}, char = null) {
+        return svbNormalizeAssetIdentityName(getKeroAssetManageValue(action, ['identityName', 'identityKey', 'characterName', 'subjectName', 'subject'], '') || getCharacterDisplayName(char));
+    }
+
+    function getKeroAssetManageTrainingAssets(refs = []) {
+        return ensureArray(refs).map((ref) => {
+            const asset = ref.asset || {};
+            const path = safeString(asset.path).trim();
+            if (!path) return null;
+            return { name: asset.name || `${ref.kind}_${ref.idx + 1}`, path, ext: asset.ext || svbGetFileExt(path) || 'png' };
+        }).filter(Boolean);
+    }
+
+    async function runKeroAssetTrainLoraAction(action = {}, char = null, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const lists = getKeroAssetManageLists(char);
+        const refs = selectKeroAssetManageRefs(lists, action, 'train_lora');
+        const identityName = getKeroAssetManageTrainingIdentity(action, char);
+        const loraName = safeString(getKeroAssetManageValue(action, ['loraName', 'lora_name', 'trainingName', 'name'], '') || identityName || getCharacterDisplayName(char)).trim().slice(0, 40);
+        const galleryJobIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['galleryJobIds', 'gallery_job_ids', 'jobIds', 'wellspringJobIds'], []));
+        const uploadIds = svbNormalizeWellspringIdList(getKeroAssetManageValue(action, ['uploadIds', 'upload_ids', 'wellspringUploadIds'], []));
+        const trainingAssets = getKeroAssetManageTrainingAssets(refs);
+        if (!loraName) {
+            const detail = 'Wellspring LoRA 학습에는 loraName 또는 identityName이 필요합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        if (!galleryJobIds.length && !uploadIds.length && !trainingAssets.length) {
+            const detail = 'Wellspring LoRA 학습 데이터가 없습니다. names/folder/all:true로 에셋을 고르거나 galleryJobIds/uploadIds를 넣어야 합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
+        if (!isWellspringImageProvider(profile.provider)) {
+            const detail = 'Wellspring LoRA 학습에는 Wellspring 이미지 프로필이 필요합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        const signal = options.signal || action?._keroActionAbortController?.signal || getCurrentKeroTaskAbortSignal();
+        addKeroWorkstreamEvent('Wellspring LoRA 학습', `${loraName} · local ${trainingAssets.length} · gallery ${galleryJobIds.length} · upload ${uploadIds.length}`, 'action', actionProgressOptions);
+        const started = await svbStartWellspringLoraTraining(profile, {
+            loraName,
+            steps: getKeroAssetManageValue(action, ['trainingSteps', 'loraSteps', 'steps'], undefined),
+            galleryJobIds,
+            uploadIds,
+            trainingAssets,
+            signal
+        });
+        const trainingOptions = {
+            identityName,
+            loraName,
+            loraStrength: svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2),
+            autoUseTrainedLora: getKeroAssetManageValue(action, ['autoUseTrainedLora', 'autoUse', 'saveToIdentity'], true) !== false
+        };
+        await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, null);
+        let completed = null;
+        if (getKeroAssetManageBoolean(action, ['waitForTraining', 'wait', 'waitForCompletion'])) {
+            completed = await svbWaitForWellspringLoraTraining(profile, started, {
+                signal,
+                trainingTimeoutMs: Math.max(0, Number(getKeroAssetManageValue(action, ['trainingTimeoutMs', 'timeoutMs'], 0)) || 0)
+            });
+            await saveKeroAssetLoraTrainingMeta(char, trainingOptions, started, completed);
+        }
+        const detail = completed?.lora ? `Wellspring LoRA 학습 완료 및 ${identityName} identity 연결: ${loraName}` : `Wellspring LoRA 학습 시작: ${loraName}`;
+        await addBotMessage(detail);
+        return { success: true, requested: trainingAssets.length + galleryJobIds.length + uploadIds.length, changed: 1, detail, started, completed };
+    }
+
+    async function runKeroAssetRefreshLorasAction(action = {}, char = null) {
+        const profile = pickKeroAssetImageProfile(getKeroAssetManageValue(action, ['profileId', 'profile'], ''));
+        if (!isWellspringImageProvider(profile.provider)) {
+            const detail = 'Wellspring LoRA 갱신에는 Wellspring 이미지 프로필이 필요합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        const loras = await svbFetchWellspringMineLoras(profile);
+        const identityName = getKeroAssetManageTrainingIdentity(action, char);
+        const wanted = safeString(getKeroAssetManageValue(action, ['loraId', 'lora_id', 'loraName', 'lora_name', 'name'], '')).trim();
+        let attached = null;
+        if (identityName && wanted) {
+            attached = loras.find((lora) => {
+                const id = svbExtractWellspringLoraId(lora);
+                const name = safeString(lora.lora_name || lora.loraName || lora.name || lora.title).trim();
+                return id === wanted || name === wanted;
+            }) || null;
+            if (attached) {
+                const loraId = svbExtractWellspringLoraId(attached);
+                const strength = svbOptionalNumberAtLeast(getKeroAssetManageValue(action, ['loraStrength', 'strength'], 0.8), 0, 0.8, 2);
+                let meta = svbReadAssetStudioMetaFromCharacter(char);
+                meta = svbSetAssetIdentityWellspringLoras(meta, identityName, [{ id: loraId, strength }], {
+                    loraName: safeString(attached.lora_name || attached.loraName || attached.name || wanted).trim()
+                });
+                svbWriteAssetStudioMetaToCharacter(char, meta);
+                await svbSaveAssetStudioCharacter(char, 'asset-lora-refresh');
+            }
+        }
+        const detail = attached ? `Wellspring LoRA ${wanted}를 ${identityName} identity에 연결했습니다.` : `Wellspring LoRA ${loras.length}개를 확인했습니다.`;
+        await addBotMessage(detail);
+        return { success: true, requested: 1, changed: attached ? 1 : 0, detail, loras: loras.map(lora => ({ id: svbExtractWellspringLoraId(lora), name: lora.name || lora.lora_name || lora.loraName || '' })) };
+    }
+
+    async function runKeroAssetManageAction(action = {}, options = {}) {
+        const actionProgressOptions = resolveKeroActionProgressOptions(options);
+        const char = await getCharacterData();
+        if (!char) return { success: false, failed: 1, detail: 'Character data not found.' };
+
+        const operation = normalizeKeroAssetManageOperation(action);
+        if (!operation) {
+            const detail = '에셋 관리 operation이 없습니다. normalize_extensions, move_folder, pattern_rename, delete 중 하나가 필요합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        if (operation === 'batch_replace' || operation === 'zip_import') {
+            const detail = '파일 선택이 필요한 작업은 에셋 스튜디오 버튼에서 실행해야 합니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, detail };
+        }
+        if (operation === 'train_lora') return await runKeroAssetTrainLoraAction(action, char, options);
+        if (operation === 'refresh_loras') return await runKeroAssetRefreshLorasAction(action, char, options);
+
+        const lists = getKeroAssetManageLists(char);
+        const refs = selectKeroAssetManageRefs(lists, action, operation);
+        if (!refs.length) {
+            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 에셋을 찾지 못했습니다. names, folder, all:true 중 하나로 대상을 지정해야 합니다.`;
+            await addBotMessage(detail);
+            return { success: false, failed: 1, requested: 0, detail };
+        }
+
+        addKeroWorkstreamEvent('이미지 에셋 관리', `${getKeroAssetManageOperationLabel(operation)} ${refs.length}개 대상`, 'action', actionProgressOptions);
+        updateKeroProgress(0, refs.length, `${getKeroAssetManageOperationLabel(operation)} 준비 중...`, actionProgressOptions);
+
+        let changed = 0;
+        const changedAssets = [];
+        const markChanged = (ref, beforeName, afterName, detail = '') => {
+            changed += 1;
+            changedAssets.push({ kind: ref.kind, beforeName, afterName, detail });
+            updateKeroProgress(Math.min(changed, refs.length), refs.length, `${getKeroAssetManageOperationLabel(operation)} ${changed}/${refs.length}`, actionProgressOptions);
+        };
+
+        if (operation === 'normalize_extensions') {
+            refs.forEach((ref) => {
+                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+                const asset = list[ref.idx];
+                if (!asset) return;
+                const beforeName = safeString(asset.name).trim();
+                const split = svbSplitAssetDisplayName(beforeName);
+                const baseName = split.base || beforeName || (ref.kind === 'emotion' ? 'emotion' : 'asset');
+                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
+                if (ref.kind === 'emotion') {
+                    const nextName = svbMakeUniqueLooseAssetName(baseName, usedNames, 'emotion');
+                    if (nextName !== beforeName) {
+                        asset.name = nextName;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, 'name');
+                    }
+                } else {
+                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
+                    const nextName = svbMakeUniqueAssetName(baseName, usedNames);
+                    const nextExt = svbNormalizeAssetExtValue(split.ext, beforeExt, svbGetFileExt(asset.path), 'png');
+                    if (nextName !== beforeName || nextExt !== beforeExt) {
+                        asset.name = nextName;
+                        asset.ext = nextExt;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, `ext:${beforeExt || '-'}>${nextExt}`);
+                    }
+                }
+            });
+        } else if (operation === 'move_folder') {
+            const hasFolderValue = getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], undefined) !== undefined;
+            if (!hasFolderValue) {
+                const detail = '폴더 이동에는 folder 또는 toFolder 값이 필요합니다.';
+                await addBotMessage(detail);
+                return { success: false, failed: 1, requested: refs.length, detail };
+            }
+            const folder = safeString(getKeroAssetManageValue(action, ['toFolder', 'to_folder', 'folder'], '')).trim();
+            refs.forEach((ref) => {
+                const asset = ref.kind === 'emotion' ? lists.emotionAssets[ref.idx] : lists.additionalAssets[ref.idx];
+                if (!asset?.name) return;
+                const beforeFolder = svbGetAssetStudioFolder(lists.meta, ref.kind, asset.name);
+                if (beforeFolder === folder) return;
+                svbSetAssetStudioFolder(lists.meta, ref.kind, asset.name, folder);
+                markChanged(ref, asset.name, asset.name, `folder:${beforeFolder || 'root'}>${folder || 'root'}`);
+            });
+        } else if (operation === 'pattern_rename') {
+            const pattern = safeString(getKeroAssetManageValue(action, ['pattern', 'renamePattern', 'namePattern'], '')).trim();
+            if (!pattern) {
+                const detail = '패턴 이름 변경에는 pattern 값이 필요합니다. 예: "{folder}_{nn}_{base}"';
+                await addBotMessage(detail);
+                return { success: false, failed: 1, requested: refs.length, detail };
+            }
+            refs.forEach((ref, sequence) => {
+                const list = ref.kind === 'emotion' ? lists.emotionAssets : lists.additionalAssets;
+                const asset = list[ref.idx];
+                if (!asset) return;
+                const beforeName = safeString(asset.name).trim();
+                const rendered = renderKeroAssetManagePattern(pattern, ref, sequence, lists);
+                const split = svbSplitAssetDisplayName(rendered);
+                const usedNames = list.map((item, index) => index === ref.idx ? '' : safeString(item.name).trim()).filter(Boolean);
+                if (ref.kind === 'emotion') {
+                    const nextName = svbMakeUniqueLooseAssetName(split.base || rendered || beforeName, usedNames, 'emotion');
+                    if (nextName !== beforeName) {
+                        asset.name = nextName;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'emotion', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, 'rename');
+                    }
+                } else {
+                    const beforeExt = safeString(asset.ext).trim().replace(/^\./, '').toLowerCase();
+                    const nextName = svbMakeUniqueAssetName(split.base || rendered || beforeName, usedNames);
+                    const nextExt = split.ext ? svbNormalizeAssetExtValue(split.ext) : (beforeExt || svbNormalizeAssetExtValue(svbGetFileExt(asset.path), 'png'));
+                    if (nextName !== beforeName || nextExt !== beforeExt) {
+                        asset.name = nextName;
+                        asset.ext = nextExt;
+                        svbRenameAssetStudioFolderKey(lists.meta, 'additional', beforeName, nextName);
+                        markChanged(ref, beforeName, nextName, `rename/ext:${beforeExt || '-'}>${nextExt}`);
+                    }
+                }
+            });
+        } else if (operation === 'delete') {
+            const byKind = {
+                additional: [...new Set(refs.filter(ref => ref.kind === 'additional').map(ref => ref.idx))].sort((a, b) => b - a),
+                emotion: [...new Set(refs.filter(ref => ref.kind === 'emotion').map(ref => ref.idx))].sort((a, b) => b - a)
+            };
+            byKind.additional.forEach((idx) => {
+                const asset = lists.additionalAssets[idx];
+                if (!asset) return;
+                const beforeName = asset.name;
+                svbSetAssetStudioFolder(lists.meta, 'additional', beforeName, '');
+                lists.additionalAssets.splice(idx, 1);
+                markChanged({ kind: 'additional', idx }, beforeName, '', 'delete');
+            });
+            byKind.emotion.forEach((idx) => {
+                const asset = lists.emotionAssets[idx];
+                if (!asset) return;
+                const beforeName = asset.name;
+                svbSetAssetStudioFolder(lists.meta, 'emotion', beforeName, '');
+                lists.emotionAssets.splice(idx, 1);
+                markChanged({ kind: 'emotion', idx }, beforeName, '', 'delete');
+            });
+        }
+
+        if (changed <= 0) {
+            const detail = `${getKeroAssetManageOperationLabel(operation)} 대상 ${refs.length}개를 확인했지만 변경할 내용이 없었습니다.`;
+            await addBotMessage(detail);
+            return { success: true, requested: refs.length, changed: 0, skipped: refs.length, detail };
+        }
+
+        lists.meta = svbCleanAssetStudioMeta(lists.meta, lists.emotionAssets, lists.additionalAssets);
+        assertKeroActionNotTimedOut(action, '이미지 에셋 관리 저장');
+        if (typeof options.abortCheck === 'function' && options.abortCheck()) throw new Error(options.abortMessage || '현재 미션이 바뀌어 이미지 에셋 관리 저장을 중단했습니다.');
+        try {
+            await backupCharacterBeforeSave(char, 'kero-asset-manage', { strict: true });
+        } catch (error) {
+            await addBotMessage(`에셋 관리 전 백업에 실패해서 작업을 중단했습니다: ${error.message || error}`);
+            return { success: false, failed: 1, requested: refs.length, changed: 0, detail: error?.message || String(error), keepProposal: true };
+        }
+        setCharacterField(char, 'emotionImages', svbEmotionTuples(lists.emotionAssets));
+        setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(lists.additionalAssets));
+        svbWriteAssetStudioMetaToCharacter(char, lists.meta);
+        const ok = await setCharacterData(char, { ...options, skipBackup: true, label: 'kero-asset-manage' });
+        if (!ok) {
+            const detail = '캐릭터 저장에 실패했습니다.';
+            await addBotMessage(detail);
+            return { success: false, failed: 1, requested: refs.length, changed: 0, detail, keepProposal: true };
+        }
+        updateKeroProgress(refs.length, refs.length, `${getKeroAssetManageOperationLabel(operation)} 완료`, actionProgressOptions);
+        const detail = `이미지 에셋 ${getKeroAssetManageOperationLabel(operation)} ${changed}개 변경 완료`;
+        await addBotMessage(detail);
+        return { success: true, requested: refs.length, changed, failed: 0, detail, changedAssets };
+    }
+
     async function getActionPreview(action, char) {
         const { target, type, idx } = action;
 
@@ -33637,8 +34900,8 @@ ${metaBlock}
 - 로어북 폴더 예시: @action {"type":"create","target":"lorebook","payload":[{"comment":"인물","key":"folder:characters","content":"","mode":"folder"},{"comment":"기사단장 아르벤","key":"아르벤,기사단장","content":"기사단장 아르벤의 역할, 관계, 비밀을 정리한다.","mode":"normal","folder":"folder:characters"}]}
 - 모듈 생성: @action {"type":"create","target":"module","payload":{"name":"모듈 이름","description":"설명","namespace":"선택","lorebook":[],"regex":[],"trigger":[],"cjs":"","assets":[]},"enabled":false}
 - 플러그인 생성: @action {"type":"create","target":"plugin","payload":{"name":"plugin_id","displayName":"표시 이름","script":"//@name plugin_id\\n//@api 3.0\\n//@version 0.1.0\\n...","enabled":false}}
-- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"clean-anime","assets":[{"assetType":"additional","name":"character_profile","stylePreset":"dark-fantasy","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body character illustration, clear face, distinctive fantasy character design, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
-- 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt에는 설정에 맞는 성별 태그(남성은 1boy/male focus, 여성은 1girl/female focus, 불명은 solo character), 머리/눈/얼굴형/체형/복식 핵심/상징 소품/색 조합을 안정적인 2D anime tag로 쓴다. 각 assets[].prompt에는 표정/포즈/장면 차이를 쓴다. 예: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"solo character, character-accurate gender tag, distinct face shape, specific eye color, specific hair style, signature outfit, ...","identityNegative":"different character, wrong gender, wrong hair color, wrong eye color","assets":[{"assetType":"emotion","name":"neutral","prompt":"neutral expression, upper body, looking at viewer"},{"assetType":"emotion","name":"happy","prompt":"soft smile, bright eyes, upper body"}]}}
+- 이미지/프로필/스탠딩/감정 에셋 생성: @action {"type":"create","target":"asset","payload":{"stylePreset":"sharp-keyvisual","stylePrompt":"anime visual novel sprite, clean cel shading, crisp lineart, controlled color palette","artistTags":"사용자가 지정한 Danbooru artist/style tag가 있을 때만 여기에 고정","identityName":"캐릭터명","identityPrompt":"1boy, male_focus, adult_male, black_hair, short_hair, brown_eyes, military_uniform, athletic_body, distinctive_face, consistent_character_design","identityNegative":"wrong_gender, female_focus, 1girl, different_character, wrong_hair_color, wrong_eye_color","danbooruTags":"visual_novel_sprite, character_sprite, upper_body, looking_at_viewer, modern_military","assets":[{"assetType":"additional","name":"character_profile","prompt":"neutral expression, white background, upper body, confident posture","negative":"lowres, worst_quality, bad_anatomy, bad_hands, text, logo, watermark","ratioId":"13:19","steps":26}]}}
+- 같은 인물의 감정/스탠딩 묶음을 만들 때는 payload 또는 각 assets[]에 identityName과 identityPrompt를 반드시 넣는다. identityPrompt는 성별/연령/체형을 구분한다: boy는 1boy, boy/youthful_male 계열, man/guy/성인 남성은 1boy, male_focus, adult_male/young_man, girl은 1girl, girl/youthful_female, woman/성인 여성은 1girl, female_focus, adult_female/young_woman처럼 다르게 쓴다. 불명확하면 1girl로 밀지 말고 solo, character_focus와 외형 단서 중심으로 쓴다. 각 assets[].prompt에는 표정/포즈/장면 차이만 쓴다.
 - Wellspring workflow 캐릭터 에셋 생성: @action {"type":"create","target":"asset","payload":{"profileId":"wellspring-nai-compatible","presetId":"wellspring-profile-basic","wellspringMode":"workflow","wellspringWorkflowId":"Wellspring workflow id","wellspringCharacterId":"Wellspring project/character id","wellspringVariantIds":["neutral"],"wellspringLoras":[{"id":"LoRA id","strength":0.8}],"assets":[{"assetType":"additional","name":"character_profile","prompt":"2D anime illustration, anime style, cel-shaded character art, solo, upper body, looking at viewer, ...","negative":"lowres, worst quality, low quality, bad anatomy, text, logo, watermark","ratioId":"13:19","steps":26}]}}
 - 이미지 생성 직후 Wellspring LoRA 학습까지 필요하면 같은 create asset payload에 trainLora:true, loraName, trainingSteps, waitForTraining:false를 넣는다. 생성된 이미지의 Wellspring gallery job id 또는 저장 에셋을 학습 데이터로 재사용한다.
 - 생성 직후 LoRA 학습 예시: @action {"type":"create","target":"asset","payload":{"identityName":"캐릭터명","identityPrompt":"character-accurate gender tag, solo, specific hair style, specific eye color, signature outfit, consistent face, ...","trainLora":true,"loraName":"character_identity","trainingSteps":600,"waitForTraining":false,"assets":[{"assetType":"additional","name":"character_profile","prompt":"upper body, neutral expression, white background"},{"assetType":"emotion","name":"character_smile","prompt":"soft smile, upper body, white background"}]}}
@@ -33647,6 +34910,7 @@ ${metaBlock}
 - 에셋 생성 요청에서는 "직접 에셋을 생성할 수 없다"고 답하지 않는다. 이미지 API 설정이 되어 있으면 시스템이 케로가 작성한 prompt로 이미지를 생성하고 RisuAI emotionImages/additionalAssets에 등록한다.
 - 에셋 생성은 에셋 스튜디오 프리셋 파트를 고르는 작업이 아니다. 케로가 요청/컨텍스트/인물 설정에 맞춰 asset마다 최종 positive prompt와 negative prompt를 직접 작성해야 한다.
 - profileId/presetId는 기술 라우팅용 선택값일 뿐이다. 사용자가 특정 연결/워크플로를 지시하지 않으면 생략하고, 창작 내용은 반드시 assets[].prompt / assets[].negative에 완성본으로 넣는다.
+- 에셋 prompt는 네 층으로 분리한다: stylePrompt/artistTags는 같은 봇 전체의 고정 그림체, identityPrompt는 인물별 고정 외형/성별/복식/상징, danbooruTags는 세계관/장르/매체 태그, assets[].prompt는 해당 컷의 표정/포즈/구도다. 이 네 층을 한 문장으로 뭉개지 않는다.
 - Wellspring workflow를 쓸 때 wellspringWorkflowId는 Wellspring workflow id, wellspringCharacterId는 Wellspring project/character id, wellspringVariantIds는 workflow variant id 배열이다. RisuAI 캐릭터 targetCharacterId와 혼동하지 않는다.
 - 에셋 스튜디오 관리 기능도 케로가 활용한다. 확장자 정리/폴더 이동/패턴 이름 변경/삭제는 target:"asset", type:"asset_manage"로 실행한다.
 - 에셋 확장자 정리: @action {"type":"asset_manage","target":"asset","operation":"normalize_extensions","kind":"all","all":true}
@@ -33673,16 +34937,16 @@ ${metaBlock}
 - Wellspring 서버의 characterId/workflowId/presetId/modelId/variantIds가 확인된 경우에는 에셋 스튜디오 프리셋의 Wellspring 워크플로우 입력에 저장된 값을 사용한다. 필드명을 모르면 지어내지 말고 사용자가 Wellspring에서 확인한 ID/추가 payload를 넣도록 안내한다.
 - Wellspring workflow 캐릭터 일관성은 기본적으로 identityPrompt, wellspringCharacterId/projectId, wellspringVariantIds, LoRA/프리셋 조합으로 유지한다. referenceImagePath는 해당 workflow/custom endpoint가 이미지 입력을 실제로 지원할 때만 사용하고, 지원 여부를 모르면 이미지 참조를 지어내지 않는다.
 - Wellspring LoRA/고급값은 assets[] 또는 payload에 wellspringLoras, wellspringQualityPrompt, wellspringSampler, wellspringScheduler, wellspringCfg, wellspringPerVariantBatch, wellspringPayloadJson으로 전달할 수 있다. wellspringPayloadJson은 서버 추가 필드 보강용이고, prompt를 비우거나 창작 내용을 대체하는 곳이 아니다.
-- 사용자가 그림체 프롬프트팩/샘플 프롬프트를 주면 artist 이름만 복사하지 말고 stylePrompt에 구조화된 화풍 태그로 넣는다. stylePrompt에도 실사/사진/3D 단어는 넣지 않는다.
+- 사용자가 그림체 프롬프트팩/샘플 프롬프트 또는 Danbooru artist/style tag를 주면 그 태그를 stylePrompt/artistTags에 고정한다. 작가 태그가 주어진 경우에는 무시하지 말고 같은 봇의 에셋 묶음 전체에 일관되게 재사용한다. 단, 사용자가 주지 않은 작가명/trigger word/LoRA trigger는 지어내지 않는다.
 - 사용자가 특정 그림체를 지정하지 않으면 케로가 요청 장르에 맞춰 stylePreset을 고른다. 밝은 일상은 soft-pastel, 정통 판타지는 dark-fantasy/game-card, 웹툰풍은 ink-manhwa, 고전 애니풍은 retro-cel처럼 선택한다.
-- "best quality, masterpiece"만 반복하는 것은 실패다. 각 인물마다 실루엣, 머리/눈 색, 복식, 소품, 분위기, 관계에서 오는 표정 차이를 다르게 설계한다.
+- "best quality, masterpiece"만 반복하는 것은 실패다. 품질 태그 뒤에는 인물별 subject tag, 외형 tag, 복식 tag, 장르 tag, 포즈/표정 tag가 반드시 따라와야 한다. 필요한 경우 (tag:1.1), (tag:1.2)처럼 과하지 않은 Danbooru/NAI식 가중치를 쓰되, 가중치만으로 부족한 외형 설명을 대신하지 않는다.
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
-- 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. 남성 캐릭터에 1girl/female focus를 쓰거나, 여성 캐릭터에 1boy/male focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo character와 외형 단서를 중심으로 쓴다.
+- 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. boy, man, guy, male, girl, woman, lady, female은 서로 다른 subject 신호다. 남성 캐릭터에 1girl/female_focus를 쓰거나, 여성 캐릭터에 1boy/male_focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo, character_focus와 외형 단서를 중심으로 쓴다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, framing 순서로 명료하게 쓴다. profile image는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
-- Danbooru 태그 자료는 서버 호출 전제가 아니라 프롬프트 작성 기준으로 사용한다. 긴 문장을 그대로 쓰지 말고 "짧은 시각 단위"를 anime/Danbooru-style tag로 정리해 danbooruTags 또는 identityPrompt에 반영한다. 별도 도구가 없어도 케로가 직접 안정적인 2D anime tag를 작성한다.
-- Danbooru 태그는 인물 일관성 유지용 identityPrompt와 장면/표정용 assets[].prompt를 분리한다. 같은 인물 묶음 안에서는 identityName을 통일하고, identityPrompt는 매 에셋마다 다시 쓰지 않아도 런타임이 자동 합성한다.
+- Danbooru 태그 자료는 서버 호출 전제가 아니라 프롬프트 작성 기준으로 사용한다. 긴 문장을 그대로 쓰지 말고 "짧은 시각 단위"를 anime/Danbooru-style tag로 정리해 danbooruTags 또는 identityPrompt에 반영한다. 예: black_hair, short_hair, blue_eyes, military_uniform, tactical_gear, cloak, armor, adult_male, young_woman.
+- Danbooru 태그는 인물 일관성 유지용 identityPrompt와 장면/표정용 assets[].prompt를 분리한다. 같은 인물 묶음 안에서는 identityName을 통일하고, identityPrompt는 매 에셋마다 다시 쓰지 않아도 런타임이 자동 합성한다. assets[].prompt에 매번 전체 외형을 다시 쓰지 말고 neutral expression, smile, angry, embarrassed, arms_crossed, salute, white_background처럼 변화 요소를 쓴다.
 - LoRA/trigger word는 사용자가 알려준 경우에만 정확히 넣는다. 모르는 LoRA trigger를 지어내지 않는다. "LoRA가 연결된 프로필을 사용" 같은 말로 prompt를 비워두면 안 된다.
 - 프로필 에셋은 additional, 감정 슬롯은 emotion을 쓴다. 감정 슬롯은 같은 캐릭터 디자인을 유지하고 expression/action만 바꾼다.
 - 이미지에 글자/로고/상태창/UI가 필요한 요청이 아니면 negative에 text, logo, watermark를 넣어 이미지 안 글자를 막는다.
@@ -41068,7 +42332,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.96 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.97 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
