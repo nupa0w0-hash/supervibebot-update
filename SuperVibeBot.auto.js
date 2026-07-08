@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.106
-//@version 1.5.106
+//@display-name 🐸 SuperVibeBot v1.5.107
+//@version 1.5.107
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.106는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.107는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.107 Release Notes
+ * - v1.5.107: separates character visual identity from world/era constraints during Kero image asset prompt hydration
+ * - v1.5.107: stops broad lorebook/world props from being copied into every character identity prompt and filters final prompts against the detected setting era
+ * - v1.5.107: adds world-era negative prompts so modern, fantasy, historical, and sci-fi assets avoid mismatched equipment unless the character/world text explicitly allows it
+ *
  * SuperVibeBot v1.5.106 Release Notes
  * - v1.5.106: detects underfilled all/each-character image asset requests before execution by comparing planned asset actions against known lorebook/character identities
  * - v1.5.106: asks the main model to add only the missing asset create actions when a request like "각 인물들 기본 스텐딩 에셋" returns only part of the character list
@@ -12592,6 +12597,13 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             underfilledAssetActions,
             assetCoverageChar
         );
+        const modernMilitaryWorldText = '현대 한국군 미연시 롤플레잉. 전투복, 전술 조끼, 소총, 부대 작전, 현실적인 군 장비를 사용한다.';
+        const modernMilitaryProfile = inferKeroAssetWorldProfile(modernMilitaryWorldText);
+        const worldFilteredPrompt = filterKeroAssetPromptForWorld(
+            'upper_body, tactical_vest, modern military uniform, staff, shield, magic_circle, looking_at_viewer',
+            modernMilitaryProfile,
+            modernMilitaryWorldText
+        );
         return {
             generated: typeof response === 'string',
             hasAction: /@action/.test(response),
@@ -12625,7 +12637,9 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
             assetOnlyNoBulkSpecs: assetOnlyBulkSpecs.length === 0,
             assetUnderfillDetected: assetUnderfillPlan.shouldRecover === true,
             assetUnderfillRemaining: assetUnderfillPlan.remainingCount,
-            assetUnderfillMissingNames: assetUnderfillPlan.missingCandidateNames
+            assetUnderfillMissingNames: assetUnderfillPlan.missingCandidateNames,
+            modernMilitaryWorldEra: modernMilitaryProfile.era,
+            modernMilitaryPromptFiltered: !/staff|shield|magic_circle/i.test(worldFilteredPrompt) && /tactical_vest/i.test(worldFilteredPrompt)
         };
     });
     if (!result.ok) {
@@ -12666,6 +12680,7 @@ function addSvbRuntimeMissingImproveFallbackSelfTest(checks) {
     if (!value.assetOnlyNoBulkSpecs) problems.push('asset-only request inferred bulk_create specs');
     if (!value.assetUnderfillDetected || Number(value.assetUnderfillRemaining || 0) !== 5) problems.push(`asset underfill coverage failed (${value.assetUnderfillRemaining})`);
     if (!ensureArray(value.assetUnderfillMissingNames).includes('정요한') || ensureArray(value.assetUnderfillMissingNames).includes('서재윤')) problems.push('asset underfill romanized filename matching failed');
+    if (value.modernMilitaryWorldEra !== 'modern' || !value.modernMilitaryPromptFiltered) problems.push('asset world-era prompt filtering failed');
     checks.push(makeSvbRuntimeCheck(
         problems.length === 0,
         'missing improve fallback no ReferenceError self test',
@@ -13230,7 +13245,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.106',
+            '//@version 1.5.107',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -30358,6 +30373,161 @@ Rules:
         return texts.filter(Boolean).join('\n').slice(0, 32000);
     }
 
+    function collectKeroAssetWorldContextText(char, action = {}, item = {}) {
+        const requestText = safeString(action.userRequest || action.request || currentKeroMission?.objective || '').trim();
+        const texts = [requestText, item.identityName, item.label, item.name].filter(Boolean);
+        let full = null;
+        try {
+            full = typeof buildFullCharacterContext === 'function' ? buildFullCharacterContext(char) : null;
+        } catch (_) {
+            full = null;
+        }
+        const descText = safeString(full?.descriptions ? JSON.stringify(full.descriptions) : (getCharacterField(char, 'desc') || char?.desc || char?.description || '')).trim();
+        const noteText = safeString(full?.globalNote || getCharacterField(char, 'globalNote') || '').trim();
+        const firstText = safeString(full?.firstMessage || getCharacterField(char, 'firstMessage') || '').trim();
+        [descText, noteText, firstText].forEach((text) => { if (text) texts.push(text.slice(0, 6000)); });
+        const identityName = svbNormalizeAssetIdentityName(item.identityName || resolveKeroAssetActionIdentityName(action, [item]));
+        const lorebooks = ensureArray(full?.lorebooks || getCharacterField(char, 'globalLore')).filter(Boolean);
+        const worldSignal = /세계관|배경|시대|연도|역사|국가|도시|학교|학원|부대|군|작전|전쟁|현대|근미래|미래|중세|판타지|마법|기사|왕국|SF|사이버|world|setting|era|period|history|modern|contemporary|military|army|soldier|war|operation|academy|school|fantasy|medieval|magic|sci[\s-]*fi|cyber/i;
+        lorebooks.slice(0, 80).forEach((entry) => {
+            const block = [entry.comment, entry.key, entry.content].map(safeString).join('\n').trim();
+            if (!block) return;
+            const lower = block.toLowerCase();
+            if (worldSignal.test(block) || (identityName && lower.includes(identityName.toLowerCase()))) {
+                texts.push(block.slice(0, 1800));
+            }
+        });
+        return texts.filter(Boolean).join('\n').slice(0, 24000);
+    }
+
+    function countKeroAssetPatternMatches(text = '', patterns = []) {
+        return ensureArray(patterns).reduce((count, pattern) => {
+            if (!pattern) return count;
+            if (pattern instanceof RegExp) return count + (pattern.test(text) ? 1 : 0);
+            return count + (safeString(text).toLowerCase().includes(safeString(pattern).toLowerCase()) ? 1 : 0);
+        }, 0);
+    }
+
+    function inferKeroAssetWorldProfile(text = '') {
+        const source = safeString(text);
+        const modernScore = countKeroAssetPatternMatches(source, [
+            /현대|현재|21세기|근미래|도시|한국군|군대|군인|군복|전투복|전술|부대|작전|특전|정찰|소총|권총|총기|방탄|드론|차량|헬기/i,
+            /\b(modern|contemporary|urban|military|army|soldier|tactical|rifle|handgun|pistol|firearm|bulletproof|plate carrier|drone|vehicle|helicopter|special forces)\b/i
+        ]);
+        const fantasyScore = countKeroAssetPatternMatches(source, [
+            /판타지|중세|마법|마나|기사|왕국|던전|엘프|드래곤|검사|방패|지팡이|마법사|로브|마도/i,
+            /\b(fantasy|medieval|magic|mana|knight|kingdom|dungeon|elf|dragon|sword|shield|staff|wand|wizard|robe|grimoire)\b/i
+        ]);
+        const scifiScore = countKeroAssetPatternMatches(source, [
+            /SF|우주|사이버|안드로이드|AI|로봇|미래|스페이스|우주선/i,
+            /\b(sci[\s-]*fi|cyberpunk|android|robot|space|spaceship|future|futuristic)\b/i
+        ]);
+        const historicalScore = countKeroAssetPatternMatches(source, [
+            /조선|고려|삼국|시대극|고대|근대|개화기|왕조|무협|한복/i,
+            /\b(historical|ancient|dynasty|period drama|wuxia)\b/i
+        ]);
+        let era = 'unspecified';
+        if (scifiScore >= 2 && scifiScore >= modernScore && scifiScore >= fantasyScore) era = 'scifi';
+        else if (modernScore >= 2 && modernScore >= fantasyScore && modernScore >= historicalScore) era = 'modern';
+        else if (fantasyScore >= 2 && fantasyScore > modernScore) era = 'fantasy';
+        else if (historicalScore >= 2 && historicalScore > modernScore) era = 'historical';
+        const military = /한국군|군대|군인|군복|전투복|전술|부대|작전|특전|소총|권총|military|army|soldier|tactical|rifle|handgun|special forces/i.test(source);
+        const promptTags = [];
+        if (era === 'modern') {
+            keroAssetPushUnique(promptTags, 'contemporary setting');
+            if (military) keroAssetPushUnique(promptTags, 'modern military uniform');
+        } else if (era === 'scifi') {
+            keroAssetPushUnique(promptTags, 'sci-fi setting');
+        } else if (era === 'fantasy') {
+            keroAssetPushUnique(promptTags, 'fantasy setting');
+        } else if (era === 'historical') {
+            keroAssetPushUnique(promptTags, 'historical setting');
+        }
+        return {
+            era,
+            military,
+            prompt: promptTags.join(', '),
+            modernScore,
+            fantasyScore,
+            scifiScore,
+            historicalScore
+        };
+    }
+
+    function keroAssetWorldContextAllowsConcept(authorityText = '', concept = '') {
+        const source = safeString(authorityText);
+        const patterns = {
+            staff: [/지팡이|마법봉|스태프|staff|wand|cane|wizard|mage|마법사/i],
+            shield: [/방패|실드|shield|riot shield|ballistic shield|진압 방패|방탄 방패/i],
+            sword: [/검|도검|검사|sword|katana|blade|ceremonial sword/i],
+            armor: [/갑옷|armor|armour|plate armor|전신갑주/i],
+            robe: [/로브|망토|robe|cloak|cape/i],
+            firearm: [/총|소총|권총|화기|총기|rifle|handgun|pistol|firearm|gun/i],
+            tactical: [/전술|택티컬|방탄|plate carrier|tactical|bulletproof|combat uniform|military uniform/i],
+            scifi: [/SF|사이버|안드로이드|로봇|우주|sci[\s-]*fi|cyber|android|robot|space/i]
+        };
+        return ensureArray(patterns[concept]).some((pattern) => pattern.test(source));
+    }
+
+    function shouldRemoveKeroAssetPromptFragmentForWorld(fragment = '', worldProfile = {}, authorityText = '') {
+        const key = safeString(fragment).trim().toLowerCase().replace(/[\s-]+/g, '_');
+        if (!key) return false;
+        if (worldProfile.era === 'modern') {
+            if (/(magic|mana|rune|spell|wizard|fantasy|medieval|grimoire|magic_circle)/.test(key) && !keroAssetWorldContextAllowsConcept(authorityText, 'staff')) return true;
+            if (/(staff|wand)/.test(key) && !keroAssetWorldContextAllowsConcept(authorityText, 'staff')) return true;
+            if (/shield/.test(key) && !keroAssetWorldContextAllowsConcept(authorityText, 'shield')) return true;
+            if (/(sword|katana|blade)/.test(key) && !keroAssetWorldContextAllowsConcept(authorityText, 'sword')) return true;
+            if (/(plate_armor|armor|armour|cloak|cape|robe)/.test(key) && !keroAssetWorldContextAllowsConcept(authorityText, 'armor') && !keroAssetWorldContextAllowsConcept(authorityText, 'robe')) return true;
+        }
+        if (worldProfile.era === 'fantasy' || worldProfile.era === 'historical') {
+            if (/(rifle|handgun|pistol|firearm|gun|tactical_vest|plate_carrier|bulletproof|radio_headset|drone)/.test(key)
+                && !keroAssetWorldContextAllowsConcept(authorityText, 'firearm')
+                && !keroAssetWorldContextAllowsConcept(authorityText, 'tactical')) return true;
+        }
+        if (worldProfile.era !== 'scifi' && /(android|robot|cybernetic|spacesuit|laser_gun|hologram)/.test(key)
+            && !keroAssetWorldContextAllowsConcept(authorityText, 'scifi')) return true;
+        return false;
+    }
+
+    function filterKeroAssetPromptForWorld(prompt = '', worldProfile = {}, authorityText = '') {
+        if (!worldProfile || worldProfile.era === 'unspecified') return prompt;
+        const out = [];
+        safeString(prompt).split(/[,;\n]+/).forEach((fragment) => {
+            const clean = fragment.trim();
+            if (!clean) return;
+            if (shouldRemoveKeroAssetPromptFragmentForWorld(clean, worldProfile, authorityText)) return;
+            out.push(clean);
+        });
+        return out.join(', ');
+    }
+
+    function buildKeroAssetWorldNegativePrompt(worldProfile = {}, authorityText = '') {
+        if (!worldProfile || worldProfile.era === 'unspecified') return '';
+        const negative = [];
+        const pushUnlessAllowed = (tag, concept) => {
+            if (!keroAssetWorldContextAllowsConcept(authorityText, concept)) keroAssetPushUnique(negative, tag);
+        };
+        if (worldProfile.era === 'modern') {
+            ['anachronistic fantasy props', 'medieval weapon', 'magic circle'].forEach(tag => keroAssetPushUnique(negative, tag));
+            pushUnlessAllowed('magic staff', 'staff');
+            pushUnlessAllowed('wand', 'staff');
+            pushUnlessAllowed('shield', 'shield');
+            pushUnlessAllowed('sword', 'sword');
+            pushUnlessAllowed('plate armor', 'armor');
+            pushUnlessAllowed('robe', 'robe');
+        } else if (worldProfile.era === 'fantasy' || worldProfile.era === 'historical') {
+            pushUnlessAllowed('rifle', 'firearm');
+            pushUnlessAllowed('handgun', 'firearm');
+            pushUnlessAllowed('tactical vest', 'tactical');
+            pushUnlessAllowed('modern military gear', 'tactical');
+            pushUnlessAllowed('drone', 'scifi');
+        } else if (worldProfile.era === 'scifi') {
+            pushUnlessAllowed('medieval weapon', 'sword');
+            pushUnlessAllowed('magic staff', 'staff');
+        }
+        return negative.join(', ');
+    }
+
     function keroAssetRuleMatches(text = '', rule = {}) {
         const source = safeString(text);
         const patterns = ensureArray(rule?.patterns || rule?.pattern || rule);
@@ -30438,8 +30608,7 @@ Rules:
             rules.eyes,
             rules.face,
             rules.body,
-            rules.outfit,
-            rules.props
+            rules.outfit
         ].forEach((group) => collectKeroAssetDanbooruRuleTags(text, group).forEach(tag => keroAssetPushUnique(tags, tag)));
         return tags;
     }
@@ -30499,22 +30668,29 @@ Rules:
 
     function buildKeroAssetIdentityPromptFromContext(char, action = {}, item = {}) {
         const contextText = collectKeroAssetContextText(char, action, item);
+        const worldContextText = collectKeroAssetWorldContextText(char, action, item);
+        const worldProfile = inferKeroAssetWorldProfile(worldContextText);
         const profile = inferKeroAssetDanbooruSubjectProfile([item.identityPrompt, item.prompt, contextText].join('\n'));
         const tags = [];
         profile.tags.forEach(tag => keroAssetPushUnique(tags, tag));
         buildKeroAssetVisualIdentityTags(contextText).forEach(tag => keroAssetPushUnique(tags, tag));
-        const worldTags = buildKeroAssetGenreTags(contextText, item);
+        const worldTags = [];
+        keroAssetPushUnique(worldTags, worldProfile.prompt);
+        buildKeroAssetGenreTags([worldContextText, contextText].join('\n'), item).forEach(tag => keroAssetPushUnique(worldTags, tag));
         return {
             prompt: tags.join(', '),
             negative: joinKeroAssetPromptFragments(
                 profile.gender === 'male' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.male : '',
                 profile.gender === 'female' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.female : '',
                 profile.gender === 'unknown' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.unknown : '',
+                buildKeroAssetWorldNegativePrompt(worldProfile, worldContextText),
                 'different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
             ),
             danbooruTags: worldTags.join(', '),
-            stylePreset: inferKeroAssetStylePresetFromContext(contextText),
-            subjectProfile: profile
+            stylePreset: inferKeroAssetStylePresetFromContext([worldContextText, contextText].join('\n')),
+            subjectProfile: profile,
+            worldProfile,
+            worldContextText: worldContextText.slice(0, 8000)
         };
     }
 
@@ -30589,7 +30765,9 @@ Rules:
                 danbooruTags: joinKeroAssetPromptFragments(generated.danbooruTags, item.danbooruTags),
                 stylePreset: item.stylePreset || generated.stylePreset,
                 stylePresetInferred: !safeString(item.stylePreset).trim() && !!generated.stylePreset,
-                wellspringLoras: itemLoras.length ? itemLoras : storedLoras
+                wellspringLoras: itemLoras.length ? itemLoras : storedLoras,
+                worldProfile: generated.worldProfile,
+                worldContextText: generated.worldContextText
             };
         });
         if (dirty) {
@@ -30847,8 +31025,15 @@ Rules:
             const renderedIdentityPrompt = svbRenderImagePromptTemplate(item.identityPrompt, vars).trim();
             const renderedDanbooruTags = svbRenderImagePromptTemplate(item.danbooruTags, vars).trim();
             const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
-            const prompt = normalizeKeroAsset2dPositivePrompt(
+            const worldProfile = item.worldProfile || inferKeroAssetWorldProfile(item.worldContextText || [renderedIdentityPrompt, renderedDanbooruTags].join('\n'));
+            const worldAuthorityText = safeString(item.worldContextText || [renderedIdentityPrompt, renderedDanbooruTags, item.identityName].join('\n'));
+            const worldFilteredPrompt = filterKeroAssetPromptForWorld(
                 joinKeroAssetPromptFragments(renderedIdentityPrompt, renderedDanbooruTags, renderedItemPrompt),
+                worldProfile,
+                worldAuthorityText
+            );
+            const prompt = normalizeKeroAsset2dPositivePrompt(
+                worldFilteredPrompt,
                 item.stylePreset,
                 svbRenderImagePromptTemplate(item.stylePrompt, vars).trim(),
                 svbRenderImagePromptTemplate(item.artistTags, vars).trim(),
@@ -30858,6 +31043,7 @@ Rules:
             const negative = normalizeKeroAsset2dNegativePrompt(
                 joinKeroAssetPromptFragments(
                     svbRenderImagePromptTemplate(item.identityNegative, vars).trim(),
+                    buildKeroAssetWorldNegativePrompt(worldProfile, worldAuthorityText),
                     svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim()
                 ),
                 profile,
@@ -30911,6 +31097,7 @@ Rules:
                         identityName: item.identityName,
                         identityPrompt: item.identityPrompt,
                         danbooruTags: item.danbooruTags,
+                        worldEra: worldProfile.era || '',
                         ratioId,
                         steps,
                         wellspringJobId: imageResult.wellspringJobId || '',
@@ -30938,6 +31125,7 @@ Rules:
                     styleTags: item.styleTags || '',
                     identityPrompt: item.identityPrompt || '',
                     danbooruTags: item.danbooruTags || '',
+                    worldEra: worldProfile.era || '',
                     ratioId,
                     steps,
                     referenceImagePath,
@@ -43062,7 +43250,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.106 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.107 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
