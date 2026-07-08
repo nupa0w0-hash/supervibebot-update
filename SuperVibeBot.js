@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.97
-//@version 1.5.97
+//@display-name 🐸 SuperVibeBot v1.5.98
+//@version 1.5.98
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/refs/heads/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.97는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.98는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.98 Release Notes
+ * - v1.5.98: replaces the shallow Kero asset prompt helper with a Danbooru-style tag library for subject, age, hair, eyes, body, outfit, prop, genre, composition, expression, background, quality, and negative tags
+ * - v1.5.98: keeps military/genre references such as soldier, officer, and Girls' Frontline out of gender detection so character sex is inferred from actual character text instead of role words
+ * - v1.5.98: upgrades Kero asset prompting rules so one bot shares a style anchor while each identity keeps distinct hair, eyes, body, outfit silhouette, symbolic props, and age/sex subject tags
+ *
  * SuperVibeBot v1.5.97 Release Notes
  * - v1.5.97: restores the Kero image asset create/manage execution bridge that was missing from the v1.5.96 runtime cleanup
  * - v1.5.97: adds Danbooru-style prompt stack synthesis for image assets, separating fixed style/artist tags, character identity tags, world/genre tags, and per-asset pose/expression prompts
@@ -3494,6 +3499,201 @@ const KERO_ASSET_STYLE_PRESETS = Object.freeze({
     'ink-manhwa': 'inked manhwa style, clean black lineart, elegant hatching accents, restrained color accents, expressive eyes, graphic panel-ready character art',
     'retro-cel': 'retro cel anime style, hand-painted cel feeling, simple bold shadows, nostalgic color palette, clean 1990s animation character design',
     'game-card': 'anime game card illustration, premium character splash art, ornate outfit readability, dynamic but clean pose, decorative fantasy details, polished 2D rendering'
+});
+const KERO_DANBOORU_PROMPT_TAG_LIBRARY = Object.freeze({
+    quality: [
+        'masterpiece', 'best_quality', 'highres', 'absurdres', 'official_art',
+        '2d_anime', 'anime_coloring', 'cel_shading', 'clean_lineart',
+        'detailed_eyes', 'crisp_edges', 'polished_character_art'
+    ],
+    composition: {
+        default: ['solo', 'character_focus', 'upper_body', 'looking_at_viewer', 'simple_background'],
+        profile: ['solo', 'upper_body', 'portrait', 'looking_at_viewer', 'centered', 'simple_background'],
+        bust: ['solo', 'upper_body', 'cowboy_shot', 'looking_at_viewer', 'visible_outfit', 'simple_background'],
+        standing: ['solo', 'full_body', 'standing', 'looking_at_viewer', 'visible_outfit', 'simple_background'],
+        emotion: ['solo', 'upper_body', 'expression_focus', 'looking_at_viewer', 'simple_background'],
+        card: ['solo', 'character_focus', 'dynamic_pose', 'looking_at_viewer', 'detailed_background']
+    },
+    subject: {
+        male: {
+            boy: ['1boy', 'male_focus', 'boy'],
+            teen_boy: ['1boy', 'male_focus', 'teenage_boy'],
+            young_man: ['1boy', 'male_focus', 'young_man', 'guy'],
+            man: ['1boy', 'male_focus', 'adult_male', 'man'],
+            mature_male: ['1boy', 'male_focus', 'mature_male', 'middle-aged_man']
+        },
+        female: {
+            girl: ['1girl', 'female_focus', 'girl'],
+            teen_girl: ['1girl', 'female_focus', 'teenage_girl'],
+            young_woman: ['1girl', 'female_focus', 'young_woman'],
+            woman: ['1girl', 'female_focus', 'adult_female', 'woman'],
+            mature_female: ['1girl', 'female_focus', 'mature_female', 'older_woman']
+        },
+        unknown: ['solo', 'character_focus']
+    },
+    negative: {
+        base: [
+            'lowres', 'worst_quality', 'low_quality', 'normal_quality', 'bad_anatomy',
+            'bad_hands', 'extra_digits', 'missing_fingers', 'fused_fingers',
+            'extra_arms', 'extra_legs', 'malformed_limbs', 'disfigured',
+            'blurry', 'jpeg_artifacts', 'text', 'logo', 'watermark', 'signature',
+            'cropped_face', 'duplicate_character', 'multiple_views', 'same_face',
+            'different_character', 'inconsistent_face', 'wrong_hair_color', 'wrong_eye_color'
+        ],
+        male: ['wrong_gender', '1girl', 'female_focus', 'girl', 'woman', 'female'],
+        female: ['wrong_gender', '1boy', 'male_focus', 'boy', 'man', 'male'],
+        unknown: ['wrong_gender']
+    },
+    rules: {
+        genderMale: [
+            /\b(1boy|male_focus|male focus|male|man|men|boy|guy|young man|adult man|middle-aged man|older man|prince|king|father|brother|husband)\b/i,
+            /남성|남자|소년|청년|장년|중년|아저씨|할아버지|왕자|왕|아버지|형|오빠|남편/
+        ],
+        genderFemale: [
+            /\b(1girl|female_focus|female focus|female|woman|women|girl|lady|young woman|adult woman|princess|queen|mother|sister|wife)\b/i,
+            /여성|여자|소녀(?!전선)|아가씨|숙녀|여고생|여군|공주|여왕|어머니|누나|언니|아내/
+        ],
+        age: [
+            { gender: 'male', age: 'boy', patterns: [/소년|어린 남자|남자아이|boy\b|young boy|child boy/i] },
+            { gender: 'male', age: 'teen_boy', patterns: [/남고생|10대 남성|teen boy|teenage boy|schoolboy|high school boy/i] },
+            { gender: 'male', age: 'young_man', patterns: [/청년|젊은 남성|young man|young adult man|guy\b/i] },
+            { gender: 'male', age: 'mature_male', patterns: [/중년 남성|장년|아저씨|middle-aged man|older man|mature man/i] },
+            { gender: 'male', age: 'man', patterns: [/성인 남성|남자|남성|adult man|man\b/i] },
+            { gender: 'female', age: 'girl', patterns: [/소녀(?!전선)|어린 여자|여자아이|girl\b|young girl|child girl/i] },
+            { gender: 'female', age: 'teen_girl', patterns: [/여고생|10대 여성|teen girl|teenage girl|schoolgirl|high school girl/i] },
+            { gender: 'female', age: 'young_woman', patterns: [/아가씨|젊은 여성|young woman|young adult woman/i] },
+            { gender: 'female', age: 'mature_female', patterns: [/중년 여성|나이 든 여성|older woman|mature woman|middle-aged woman/i] },
+            { gender: 'female', age: 'woman', patterns: [/성인 여성|여자|여성|숙녀|adult woman|woman\b|lady\b/i] }
+        ],
+        hairColor: [
+            { tags: ['black_hair'], patterns: [/흑발|검은 머리|black hair/i] },
+            { tags: ['white_hair', 'silver_hair'], patterns: [/백발|하얀 머리|은발|white hair|silver hair/i] },
+            { tags: ['blonde_hair'], patterns: [/금발|blonde hair|blond hair|gold hair/i] },
+            { tags: ['brown_hair'], patterns: [/갈색 머리|brown hair|brunette/i] },
+            { tags: ['red_hair'], patterns: [/붉은 머리|빨간 머리|red hair|redhead/i] },
+            { tags: ['blue_hair'], patterns: [/푸른 머리|파란 머리|blue hair/i] },
+            { tags: ['pink_hair'], patterns: [/분홍 머리|pink hair/i] },
+            { tags: ['purple_hair'], patterns: [/보라 머리|purple hair|violet hair/i] },
+            { tags: ['green_hair'], patterns: [/녹색 머리|green hair/i] },
+            { tags: ['grey_hair'], patterns: [/회색 머리|gray hair|grey hair/i] }
+        ],
+        hairShape: [
+            { tags: ['short_hair'], patterns: [/단발|짧은 머리|short hair|bob cut|bobcut/i] },
+            { tags: ['medium_hair'], patterns: [/중단발|medium hair|shoulder-length hair/i] },
+            { tags: ['long_hair'], patterns: [/장발|긴 머리|long hair/i] },
+            { tags: ['messy_hair'], patterns: [/헝클어진 머리|messy hair|disheveled hair/i] },
+            { tags: ['straight_hair'], patterns: [/생머리|straight hair/i] },
+            { tags: ['wavy_hair'], patterns: [/웨이브|wavy hair/i] },
+            { tags: ['curly_hair'], patterns: [/곱슬|curly hair/i] },
+            { tags: ['ponytail'], patterns: [/포니테일|ponytail/i] },
+            { tags: ['braid'], patterns: [/땋은 머리|braid|braided hair/i] },
+            { tags: ['twintails'], patterns: [/트윈테일|twintails|twin tails/i] },
+            { tags: ['bangs'], patterns: [/앞머리|bangs/i] },
+            { tags: ['hair_between_eyes'], patterns: [/눈 사이 머리|hair between eyes/i] },
+            { tags: ['ahoge'], patterns: [/바보털|ahoge/i] }
+        ],
+        eyes: [
+            { tags: ['blue_eyes'], patterns: [/푸른 눈|파란 눈|blue eyes/i] },
+            { tags: ['red_eyes'], patterns: [/붉은 눈|빨간 눈|red eyes/i] },
+            { tags: ['golden_eyes'], patterns: [/금안|황금색 눈|gold eyes|golden eyes|amber eyes/i] },
+            { tags: ['green_eyes'], patterns: [/녹색 눈|green eyes/i] },
+            { tags: ['purple_eyes'], patterns: [/보라색 눈|purple eyes|violet eyes/i] },
+            { tags: ['brown_eyes'], patterns: [/갈색 눈|brown eyes/i] },
+            { tags: ['black_eyes'], patterns: [/검은 눈|black eyes/i] },
+            { tags: ['grey_eyes'], patterns: [/회색 눈|gray eyes|grey eyes/i] },
+            { tags: ['sharp_eyes'], patterns: [/날카로운 눈매|sharp eyes|piercing eyes/i] },
+            { tags: ['droopy_eyes'], patterns: [/처진 눈|droopy eyes|sleepy eyes/i] }
+        ],
+        face: [
+            { tags: ['glasses'], patterns: [/안경|glasses|spectacles/i] },
+            { tags: ['sunglasses'], patterns: [/선글라스|sunglasses/i] },
+            { tags: ['scar'], patterns: [/흉터|scar/i] },
+            { tags: ['mole'], patterns: [/점|mole/i] },
+            { tags: ['freckles'], patterns: [/주근깨|freckles/i] },
+            { tags: ['earrings'], patterns: [/귀걸이|earrings/i] },
+            { tags: ['hair_ornament'], patterns: [/머리 장식|hair ornament|hairpin|헤어핀/i] }
+        ],
+        body: [
+            { tags: ['muscular', 'broad_shoulders'], patterns: [/근육|muscular|well-built|broad shoulders|다부진/i] },
+            { tags: ['athletic_body'], patterns: [/탄탄|athletic|fit body|운동선수/i] },
+            { tags: ['slender'], patterns: [/마른|호리호리|slender|slim/i] },
+            { tags: ['petite'], patterns: [/작은 체구|petite|short stature/i] },
+            { tags: ['tall'], patterns: [/큰 키|장신|tall/i] },
+            { tags: ['large_breasts'], patterns: [/거유|large breasts|big breasts/i] },
+            { tags: ['small_breasts'], patterns: [/빈유|small breasts|flat chest/i] }
+        ],
+        outfit: [
+            { tags: ['military_uniform', 'combat_uniform'], patterns: [/군복|전투복|military uniform|combat uniform|bdus/i] },
+            { tags: ['tactical_vest', 'tactical_gear', 'plate_carrier'], patterns: [/전술|택티컬|방탄|bulletproof|plate carrier|tactical/i] },
+            { tags: ['armor', 'pauldrons'], patterns: [/갑옷|plate armor|armor|armour|pauldrons/i] },
+            { tags: ['cloak', 'cape'], patterns: [/망토|cloak|cape/i] },
+            { tags: ['robe'], patterns: [/로브|robe/i] },
+            { tags: ['suit', 'necktie'], patterns: [/정장|suit|necktie|tie/i] },
+            { tags: ['school_uniform'], patterns: [/교복|school uniform/i] },
+            { tags: ['hanbok'], patterns: [/한복|hanbok/i] },
+            { tags: ['dress'], patterns: [/드레스|dress|gown/i] },
+            { tags: ['coat'], patterns: [/코트|coat/i] },
+            { tags: ['jacket'], patterns: [/재킷|자켓|jacket/i] },
+            { tags: ['hoodie'], patterns: [/후드|hoodie|hooded/i] },
+            { tags: ['long_coat'], patterns: [/롱코트|long coat|trench coat/i] },
+            { tags: ['boots'], patterns: [/부츠|boots/i] },
+            { tags: ['gloves'], patterns: [/장갑|gloves/i] },
+            { tags: ['uniform'], patterns: [/제복|uniform/i] }
+        ],
+        props: [
+            { tags: ['sword', 'holding_sword'], patterns: [/검|검사|sword|blade|katana/i] },
+            { tags: ['rifle', 'holding_gun'], patterns: [/소총|rifle|assault rifle/i] },
+            { tags: ['handgun', 'holding_gun'], patterns: [/권총|handgun|pistol/i] },
+            { tags: ['firearm'], patterns: [/총|gun|firearm/i] },
+            { tags: ['shield'], patterns: [/방패|shield/i] },
+            { tags: ['staff', 'magic_staff'], patterns: [/지팡이|staff|magic staff/i] },
+            { tags: ['book'], patterns: [/책|book|grimoire/i] },
+            { tags: ['headset'], patterns: [/헤드셋|headset|radio headset/i] },
+            { tags: ['dog_tags'], patterns: [/군번줄|dog tags/i] }
+        ],
+        genre: [
+            { tags: ['fantasy', 'medieval_fantasy', 'ornate_clothes'], patterns: [/정통 판타지|중세|medieval|high fantasy|classic fantasy|rpg/i] },
+            { tags: ['dark_fantasy', 'gothic', 'dramatic_lighting'], patterns: [/다크 판타지|dark fantasy|gothic|horror/i] },
+            { tags: ['urban_fantasy', 'modern_fantasy', 'city_background'], patterns: [/어반판타지|urban fantasy|modern fantasy/i] },
+            { tags: ['visual_novel', 'dating_sim', 'character_sprite'], patterns: [/미연시|비주얼노벨|visual novel|dating sim|연애/i] },
+            { tags: ['military', 'modern_military', 'tactical_gear'], patterns: [/군|군대|한국군|military|soldier|소녀전선|girls'? frontline/i] },
+            { tags: ['science_fiction', 'futuristic', 'techwear'], patterns: [/sf|sci-fi|science fiction|cyberpunk|사이버펑크|미래|근미래/i] },
+            { tags: ['academy', 'school_life'], patterns: [/학원|학교|academy|school/i] },
+            { tags: ['martial_arts', 'eastern_fantasy'], patterns: [/무협|martial arts|wuxia|선협/i] },
+            { tags: ['idol', 'stage_costume'], patterns: [/아이돌|idol|stage costume/i] },
+            { tags: ['detective', 'noir'], patterns: [/탐정|detective|noir/i] }
+        ],
+        expression: [
+            { tags: ['neutral_expression'], patterns: [/무표정|neutral|calm expression/i] },
+            { tags: ['smile', 'gentle_smile'], patterns: [/미소|웃음|smile|gentle smile/i] },
+            { tags: ['angry', 'furrowed_brow'], patterns: [/분노|화남|angry|furious|furrowed brow/i] },
+            { tags: ['sad', 'tears'], patterns: [/슬픔|우는|눈물|sad|crying|tears/i] },
+            { tags: ['embarrassed', 'blush'], patterns: [/부끄|수줍|embarrassed|shy|blush/i] },
+            { tags: ['surprised', 'wide_eyes'], patterns: [/놀람|surprised|wide eyes|shock/i] },
+            { tags: ['serious', 'determined'], patterns: [/진지|결의|serious|determined/i] },
+            { tags: ['smirk'], patterns: [/능글|비웃|smirk|confident smile/i] }
+        ],
+        pose: [
+            { tags: ['standing'], patterns: [/스탠딩|서 있는|standing/i] },
+            { tags: ['upper_body'], patterns: [/상반신|bust|upper body/i] },
+            { tags: ['full_body'], patterns: [/전신|full body/i] },
+            { tags: ['arms_crossed'], patterns: [/팔짱|arms crossed/i] },
+            { tags: ['salute'], patterns: [/경례|salute/i] },
+            { tags: ['hand_on_hip'], patterns: [/허리에 손|hand on hip/i] },
+            { tags: ['holding_weapon'], patterns: [/무기를 든|holding weapon/i] },
+            { tags: ['looking_at_viewer'], patterns: [/정면|looking at viewer|front view/i] },
+            { tags: ['three-quarter_view'], patterns: [/반측면|three-quarter|3\/4 view/i] }
+        ],
+        background: [
+            { tags: ['white_background', 'simple_background'], patterns: [/흰 배경|하얀 배경|white background/i] },
+            { tags: ['transparent_background', 'simple_background'], patterns: [/투명 배경|transparent background/i] },
+            { tags: ['plain_background', 'simple_background'], patterns: [/단색 배경|plain background|clean background/i] },
+            { tags: ['city_background'], patterns: [/도시|city|street|urban/i] },
+            { tags: ['forest_background'], patterns: [/숲|forest|woods/i] },
+            { tags: ['castle_background'], patterns: [/성채|성벽|고성|왕성|castle/i] },
+            { tags: ['barracks_background'], patterns: [/막사|barracks|military base/i] }
+        ]
+    }
 });
 const KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT = 3;
 const KERO_BULK_NO_PROGRESS_RETRY_LIMIT = 3;
@@ -13033,7 +13233,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.97',
+            '//@version 1.5.98',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -29706,117 +29906,127 @@ ${currentVars || '{}'}
         return texts.filter(Boolean).join('\n').slice(0, 32000);
     }
 
-    function inferKeroAssetDanbooruSubjectProfile(text = '') {
+    function keroAssetRuleMatches(text = '', rule = {}) {
+        const source = safeString(text);
+        const patterns = ensureArray(rule?.patterns || rule?.pattern || rule);
+        return patterns.some((pattern) => {
+            if (!pattern) return false;
+            if (pattern instanceof RegExp) return pattern.test(source);
+            return source.toLowerCase().includes(safeString(pattern).toLowerCase());
+        });
+    }
+
+    function keroAssetCountPatternMatches(text = '', patterns = []) {
+        const source = safeString(text);
+        return ensureArray(patterns).reduce((count, pattern) => {
+            if (!pattern) return count;
+            if (pattern instanceof RegExp) return count + (pattern.test(source) ? 1 : 0);
+            return count + (source.toLowerCase().includes(safeString(pattern).toLowerCase()) ? 1 : 0);
+        }, 0);
+    }
+
+    function collectKeroAssetDanbooruRuleTags(text = '', rules = [], options = {}) {
+        const tags = [];
+        ensureArray(rules).forEach((rule) => {
+            if (!rule || !keroAssetRuleMatches(text, rule)) return;
+            ensureArray(rule.tags || rule.tag || rule.value).forEach(tag => keroAssetPushUnique(tags, tag));
+        });
+        const limit = Number(options.limit);
+        return Number.isFinite(limit) && limit > 0 ? tags.slice(0, limit) : tags;
+    }
+
+    function inferKeroAssetDanbooruGender(text = '') {
+        const rules = KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules;
         const source = safeString(text);
         const lower = source.toLowerCase();
-        const maleStrong = /\b(1boy|male focus|male_focus|male|man|men|boy|guy|young man|adult man|middle-aged man|soldier|officer|prince|king|father|brother|husband)\b|남성|남자|소년|청년|장년|중년|아저씨|할아버지|군인|장교|왕자|왕|아버지|형|오빠|남편/.test(lower);
-        const femaleStrong = /\b(1girl|female focus|female_focus|female|woman|women|girl|lady|young woman|adult woman|princess|queen|mother|sister|wife)\b|여성|여자|소녀|아가씨|숙녀|여고생|여군|공주|여왕|어머니|누나|언니|아내/.test(lower);
-        let gender = 'unknown';
-        if (maleStrong && !femaleStrong) gender = 'male';
-        else if (femaleStrong && !maleStrong) gender = 'female';
-        else if (/\b1boy\b|male[_ ]focus/.test(lower)) gender = 'male';
-        else if (/\b1girl\b|female[_ ]focus/.test(lower)) gender = 'female';
+        if (/\b1boy\b|male[_ ]focus/.test(lower)) return 'male';
+        if (/\b1girl\b|female[_ ]focus/.test(lower)) return 'female';
+        const maleScore = keroAssetCountPatternMatches(source, rules.genderMale);
+        const femaleScore = keroAssetCountPatternMatches(source, rules.genderFemale);
+        if (maleScore > femaleScore) return 'male';
+        if (femaleScore > maleScore) return 'female';
+        return 'unknown';
+    }
 
-        let age = 'adult';
-        if (/소년|boy\b|teen boy|adolescent boy|학생|student|youth|young boy/.test(lower)) age = 'boy';
-        if (/소녀|girl\b|teen girl|adolescent girl|여고생|schoolgirl|young girl/.test(lower)) age = 'girl';
-        if (/청년|young man|guy|young adult man/.test(lower)) age = 'young_man';
-        if (/청년 여성|young woman|young adult woman|아가씨/.test(lower)) age = 'young_woman';
-        if (/중년|장년|middle-aged|older man|mature man|아저씨/.test(lower)) age = gender === 'female' ? 'mature_female' : 'mature_male';
-        if (/성인 여성|adult woman|woman\b|lady|숙녀/.test(lower)) age = 'woman';
-        if (/성인 남성|adult man|man\b|남자|남성/.test(lower)) age = 'man';
+    function inferKeroAssetDanbooruAge(text = '', gender = 'unknown') {
+        const rules = KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules.age;
+        const source = safeString(text);
+        const candidate = rules.find((rule) => (!rule.gender || rule.gender === gender) && keroAssetRuleMatches(source, rule));
+        if (candidate) return candidate.age;
+        if (gender === 'male') return 'man';
+        if (gender === 'female') return 'woman';
+        return 'unknown';
+    }
 
-        const tags = ['solo'];
+    function inferKeroAssetDanbooruSubjectProfile(text = '') {
+        const source = safeString(text);
+        const gender = inferKeroAssetDanbooruGender(source);
+        const age = inferKeroAssetDanbooruAge(source, gender);
+        const tags = [];
         if (gender === 'male') {
-            keroAssetPushUnique(tags, '1boy');
-            keroAssetPushUnique(tags, 'male_focus');
-            if (age === 'boy') keroAssetPushUnique(tags, 'boy');
-            else if (age === 'mature_male') keroAssetPushUnique(tags, 'mature_male');
-            else keroAssetPushUnique(tags, age === 'young_man' ? 'young_man' : 'adult_male');
+            ensureArray(KERO_DANBOORU_PROMPT_TAG_LIBRARY.subject.male[age] || KERO_DANBOORU_PROMPT_TAG_LIBRARY.subject.male.man)
+                .forEach(tag => keroAssetPushUnique(tags, tag));
         } else if (gender === 'female') {
-            keroAssetPushUnique(tags, '1girl');
-            keroAssetPushUnique(tags, 'female_focus');
-            if (age === 'girl') keroAssetPushUnique(tags, 'girl');
-            else if (age === 'mature_female') keroAssetPushUnique(tags, 'mature_female');
-            else keroAssetPushUnique(tags, age === 'young_woman' ? 'young_woman' : 'adult_female');
+            ensureArray(KERO_DANBOORU_PROMPT_TAG_LIBRARY.subject.female[age] || KERO_DANBOORU_PROMPT_TAG_LIBRARY.subject.female.woman)
+                .forEach(tag => keroAssetPushUnique(tags, tag));
         } else {
-            keroAssetPushUnique(tags, 'character_focus');
+            KERO_DANBOORU_PROMPT_TAG_LIBRARY.subject.unknown.forEach(tag => keroAssetPushUnique(tags, tag));
         }
         return { gender, age, tags };
     }
 
     function buildKeroAssetVisualIdentityTags(text = '') {
-        const source = safeString(text).toLowerCase();
         const tags = [];
-        const rules = [
-            [/흑발|검은 머리|black hair/, 'black_hair'],
-            [/백발|하얀 머리|은발|silver hair|white hair/, 'silver_hair'],
-            [/금발|blonde hair|blond hair|gold hair/, 'blonde_hair'],
-            [/갈색 머리|brown hair|brunette/, 'brown_hair'],
-            [/붉은 머리|red hair|redhead/, 'red_hair'],
-            [/푸른 머리|blue hair/, 'blue_hair'],
-            [/분홍 머리|pink hair/, 'pink_hair'],
-            [/보라 머리|purple hair/, 'purple_hair'],
-            [/녹색 머리|green hair/, 'green_hair'],
-            [/장발|long hair/, 'long_hair'],
-            [/단발|short hair|bob cut|bobcut/, 'short_hair'],
-            [/포니테일|ponytail/, 'ponytail'],
-            [/땋은 머리|braid|braided hair/, 'braid'],
-            [/앞머리|bangs/, 'bangs'],
-            [/푸른 눈|blue eyes/, 'blue_eyes'],
-            [/붉은 눈|red eyes/, 'red_eyes'],
-            [/금안|황금색 눈|gold eyes|golden eyes|amber eyes/, 'golden_eyes'],
-            [/녹색 눈|green eyes/, 'green_eyes'],
-            [/보라색 눈|purple eyes|violet eyes/, 'purple_eyes'],
-            [/갈색 눈|brown eyes/, 'brown_eyes'],
-            [/검은 눈|black eyes/, 'black_eyes'],
-            [/회색 눈|gray eyes|grey eyes/, 'gray_eyes'],
-            [/안경|glasses/, 'glasses'],
-            [/흉터|scar/, 'scar'],
-            [/점|mole/, 'mole'],
-            [/근육|muscular|well-built|broad shoulders/, 'muscular'],
-            [/탄탄|athletic|fit body/, 'athletic_body'],
-            [/마른|slender|slim/, 'slender'],
-            [/작은 체구|petite|short stature/, 'petite'],
-            [/큰 키|tall/, 'tall'],
-            [/군복|military uniform|combat uniform/, 'military_uniform'],
-            [/전술|tactical|방탄|bulletproof|plate carrier/, 'tactical_gear'],
-            [/갑옷|armor|armour/, 'armor'],
-            [/망토|cloak|cape/, 'cloak'],
-            [/정장|suit/, 'suit'],
-            [/교복|school uniform/, 'school_uniform'],
-            [/한복|hanbok/, 'hanbok'],
-            [/드레스|dress|gown/, 'dress'],
-            [/코트|coat/, 'coat'],
-            [/재킷|jacket/, 'jacket'],
-            [/검|sword/, 'sword'],
-            [/총|rifle|gun|firearm/, 'firearm']
-        ];
-        rules.forEach(([pattern, tag]) => {
-            if (keroAssetTextHas(source, pattern)) keroAssetPushUnique(tags, tag);
-        });
+        const rules = KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules;
+        [
+            rules.hairColor,
+            rules.hairShape,
+            rules.eyes,
+            rules.face,
+            rules.body,
+            rules.outfit,
+            rules.props
+        ].forEach((group) => collectKeroAssetDanbooruRuleTags(text, group).forEach(tag => keroAssetPushUnique(tags, tag)));
+        keroAssetPushUnique(tags, 'detailed_eyes');
         keroAssetPushUnique(tags, 'distinctive_face');
+        keroAssetPushUnique(tags, 'recognizable_character');
         keroAssetPushUnique(tags, 'consistent_character_design');
         return tags;
     }
 
-    function buildKeroAssetGenreTags(text = '') {
-        const source = safeString(text).toLowerCase();
-        const tags = ['visual_novel_sprite', 'character_sprite', 'upper_body', 'looking_at_viewer'];
-        const rules = [
-            [/정통 판타지|medieval|high fantasy|classic fantasy/, ['fantasy', 'medieval_fantasy']],
-            [/다크 판타지|dark fantasy|gothic/, ['dark_fantasy', 'dramatic_lighting']],
-            [/어반판타지|urban fantasy/, ['urban_fantasy', 'modern_fantasy']],
-            [/미연시|visual novel|dating sim|연애/, ['visual_novel', 'dating_sim']],
-            [/군|군대|한국군|military|soldier|소녀전선|girls'? frontline/, ['military', 'modern_military', 'tactical_gear']],
-            [/sf|sci-fi|science fiction|cyberpunk|사이버펑크|미래/, ['science_fiction', 'futuristic']],
-            [/학원|학교|academy|school/, ['academy', 'school_life']],
-            [/무협|martial arts|wuxia/, ['martial_arts', 'eastern_fantasy']],
-            [/아이돌|idol/, ['idol', 'stage_costume']]
-        ];
-        rules.forEach(([pattern, values]) => {
-            if (keroAssetTextHas(source, pattern)) values.forEach(tag => keroAssetPushUnique(tags, tag));
-        });
+    function buildKeroAssetCompositionTags(text = '', item = {}) {
+        const source = [text, item?.name, item?.label, item?.assetType, item?.target, item?.prompt].map(safeString).join('\n');
+        const lower = source.toLowerCase();
+        let key = 'default';
+        if (item?.target === 'emotion' || /감정|표정|emotion|expression/.test(lower)) key = 'emotion';
+        else if (/상반신|바스트|bust|upper body|half body|cowboy shot/.test(lower)) key = 'bust';
+        else if (/스탠딩|전신|standing|full body|sprite/.test(lower)) key = 'standing';
+        else if (/프로필|초상|portrait|profile/.test(lower)) key = 'profile';
+        else if (/카드|일러스트|splash|key visual|card/.test(lower)) key = 'card';
+        const tags = [];
+        ensureArray(KERO_DANBOORU_PROMPT_TAG_LIBRARY.composition[key] || KERO_DANBOORU_PROMPT_TAG_LIBRARY.composition.default)
+            .forEach(tag => keroAssetPushUnique(tags, tag));
+        collectKeroAssetDanbooruRuleTags(source, KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules.pose).forEach(tag => keroAssetPushUnique(tags, tag));
+        collectKeroAssetDanbooruRuleTags(source, KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules.background).forEach(tag => keroAssetPushUnique(tags, tag));
+        return tags;
+    }
+
+    function buildKeroAssetExpressionTags(text = '', item = {}) {
+        const source = [text, item?.name, item?.label, item?.emotion, item?.emotionTarget, item?.prompt].map(safeString).join('\n');
+        const tags = collectKeroAssetDanbooruRuleTags(source, KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules.expression);
+        if (item?.target === 'emotion' && !tags.length) keroAssetPushUnique(tags, 'expressive_face');
+        return tags;
+    }
+
+    function buildKeroAssetGenreTags(text = '', item = {}) {
+        const tags = [];
+        collectKeroAssetDanbooruRuleTags(text, KERO_DANBOORU_PROMPT_TAG_LIBRARY.rules.genre).forEach(tag => keroAssetPushUnique(tags, tag));
+        buildKeroAssetCompositionTags(text, item).forEach(tag => keroAssetPushUnique(tags, tag));
+        buildKeroAssetExpressionTags(text, item).forEach(tag => keroAssetPushUnique(tags, tag));
+        if (!tags.some(tag => /visual_novel|character_sprite|game_card|splash/.test(tag))) {
+            keroAssetPushUnique(tags, 'visual_novel_sprite');
+            keroAssetPushUnique(tags, 'character_sprite');
+        }
         return tags;
     }
 
@@ -29837,9 +30047,9 @@ ${currentVars || '{}'}
         safeString(prompt).split(/[,;\n]+/).forEach((fragment) => {
             const clean = fragment.trim();
             if (!clean) return;
-            const key = clean.toLowerCase().replace(/\s+/g, '_');
-            if (profile.gender === 'male' && /^(1girl|female_focus|girl|woman|adult_female|young_woman|mature_female)$/.test(key)) return;
-            if (profile.gender === 'female' && /^(1boy|male_focus|boy|man|adult_male|young_man|mature_male)$/.test(key)) return;
+            const key = clean.toLowerCase().replace(/[\s-]+/g, '_');
+            if (profile.gender === 'male' && /^(1girl|female_focus|girl|woman|adult_female|young_woman|mature_female|older_woman|female)$/.test(key)) return;
+            if (profile.gender === 'female' && /^(1boy|male_focus|boy|man|guy|adult_male|young_man|mature_male|middle_aged_man|male)$/.test(key)) return;
             fragments.push(clean);
         });
         return fragments.join(', ');
@@ -29851,14 +30061,16 @@ ${currentVars || '{}'}
         const tags = [];
         profile.tags.forEach(tag => keroAssetPushUnique(tags, tag));
         buildKeroAssetVisualIdentityTags(contextText).forEach(tag => keroAssetPushUnique(tags, tag));
+        const worldTags = buildKeroAssetGenreTags(contextText, item);
         return {
             prompt: tags.join(', '),
-            negative: profile.gender === 'male'
-                ? 'wrong_gender, female_focus, 1girl, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
-                : (profile.gender === 'female'
-                    ? 'wrong_gender, male_focus, 1boy, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
-                    : 'wrong_gender, different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'),
-            danbooruTags: buildKeroAssetGenreTags(contextText).join(', '),
+            negative: joinKeroAssetPromptFragments(
+                profile.gender === 'male' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.male : '',
+                profile.gender === 'female' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.female : '',
+                profile.gender === 'unknown' ? KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.unknown : '',
+                'different_character, inconsistent_face, wrong_hair_color, wrong_eye_color'
+            ),
+            danbooruTags: worldTags.join(', '),
             stylePreset: inferKeroAssetStylePresetFromContext(contextText),
             subjectProfile: profile
         };
@@ -29974,7 +30186,7 @@ ${currentVars || '{}'}
         return joinKeroAssetPromptFragments(
             preset.negative,
             profile.negative,
-            'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry, cropped_face, duplicate_character, same_face, different_character'
+            KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.base
         );
     }
 
@@ -30005,7 +30217,7 @@ ${currentVars || '{}'}
     function buildKeroAssetStylePrompt(stylePreset = '', stylePrompt = '', artistTags = '', styleTags = '') {
         const presetPrompt = KERO_ASSET_STYLE_PRESETS[normalizeKeroAssetStyleKey(stylePreset)] || KERO_ASSET_STYLE_PRESETS['clean-anime'];
         return joinKeroAssetPromptFragments(
-            'masterpiece, best_quality, highres, 2d_anime, anime_coloring, official_art, clean_lineart, consistent_art_style',
+            KERO_DANBOORU_PROMPT_TAG_LIBRARY.quality,
             presetPrompt,
             stripKeroAssetRealismRiskFragments(styleTags),
             stripKeroAssetRealismRiskFragments(artistTags),
@@ -30017,14 +30229,14 @@ ${currentVars || '{}'}
         const safePrompt = stripKeroAssetRealismRiskFragments(prompt);
         return joinKeroAssetPromptFragments(
             buildKeroAssetStylePrompt(stylePreset, stylePrompt, artistTags, styleTags),
-            safePrompt || 'solo, character_focus, upper_body, looking_at_viewer, detailed_eyes, clean_background'
+            safePrompt || KERO_DANBOORU_PROMPT_TAG_LIBRARY.composition.default
         );
     }
 
     function normalizeKeroAsset2dNegativePrompt(negative = '', profile = {}, preset = {}) {
         return joinKeroAssetPromptFragments(
             stripKeroAssetRealismRiskFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset)),
-            'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry, cropped_face, duplicate_character, different_character'
+            KERO_DANBOORU_PROMPT_TAG_LIBRARY.negative.base
         );
     }
 
@@ -34942,6 +35154,11 @@ ${metaBlock}
 - "best quality, masterpiece"만 반복하는 것은 실패다. 품질 태그 뒤에는 인물별 subject tag, 외형 tag, 복식 tag, 장르 tag, 포즈/표정 tag가 반드시 따라와야 한다. 필요한 경우 (tag:1.1), (tag:1.2)처럼 과하지 않은 Danbooru/NAI식 가중치를 쓰되, 가중치만으로 부족한 외형 설명을 대신하지 않는다.
 - 컨텍스트에 외형 정보가 있으면 그 정보를 우선한다. 없으면 장르와 역할에 맞춰 합리적으로 디자인하되, 모두 비슷한 미소년/미소녀가 되지 않게 대비를 만든다.
 - 성별/연령/체형은 캐릭터 설정에서 먼저 추론한다. boy, man, guy, male, girl, woman, lady, female은 서로 다른 subject 신호다. 남성 캐릭터에 1girl/female_focus를 쓰거나, 여성 캐릭터에 1boy/male_focus를 쓰지 않는다. 설정이 불명확하면 1girl로 기본값을 밀지 말고 solo, character_focus와 외형 단서를 중심으로 쓴다.
+- Danbooru식 태그 조립 순서는 품질/화풍 anchor -> subject cardinality/성별/연령 -> 얼굴/머리/눈/체형 -> 복장/재질/소품 -> 장르/세계관 -> 구도/배경 -> 표정/포즈 순서다. 이 순서를 무너뜨려 긴 자연어만 쓰지 않는다.
+- 남성 예시: 1boy, male_focus, adult_male, man, short_black_hair, brown_eyes, broad_shoulders, military_uniform, tactical_vest, rifle, upper_body, looking_at_viewer, white_background.
+- 여성 예시: 1girl, female_focus, young_woman, long_brown_hair, green_eyes, slender, school_uniform, cardigan, upper_body, looking_at_viewer, smile, simple_background.
+- 소년/소녀/청년/성인/중년은 같은 얼굴로 만들지 않는다. boy/girl은 어린 인상, young_man/young_woman은 청년 인상, man/woman은 성인 인상, mature_male/mature_female은 나이감 있는 얼굴선과 체형을 prompt에 반영한다.
+- 같은 봇의 여러 인물 에셋은 하나의 기본 그림체(stylePreset/stylePrompt/artistTags)를 공유하고, identityPrompt는 인물마다 다르게 둔다. “전부 비슷한 여자/남자”가 되지 않도록 머리색, 눈색, 체형, 복식 실루엣, 상징 소품을 각 인물마다 다르게 만든다.
 - ComfyUI: 워크플로 JSON을 새로 만들지 말고 prompt/negative만 넘긴다. workflow의 {{prompt}}/{{negative}}에 들어가도 깨지지 않게 쉼표 태그와 짧은 자연어를 섞어 안정적으로 작성한다.
 - SDXL/ADXL 계열: subject, composition, anatomy, outfit, material, lighting, background, framing 순서로 명료하게 쓴다. profile image는 "upper body, looking at viewer, clean background", standing은 "full body, standing pose, visible outfit"을 넣는다.
 - Animagine/anime XL 계열: anime tag 문법을 우선한다. 예: "1girl" 또는 "1boy", "solo", "upper body", "looking at viewer", "detailed eyes", hair/eye/outfit tags, expression tags. negative에는 "lowres, bad anatomy, bad hands, extra digits, text, watermark"를 넣는다.
@@ -42332,7 +42549,7 @@ function getBulkOutputHint(targetType) {
     return 'result는 항목 JSON 배열이어야 합니다.';
 }
 
-/* === RisuAI SuperVibeBot v1.5.97 Guide (Concise Version) === */
+/* === RisuAI SuperVibeBot v1.5.98 Guide (Concise Version) === */
 const RISUAI_GUIDE = {
     overview: `
 ## System Overview
