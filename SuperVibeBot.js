@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.137
-//@version 1.5.137
+//@display-name 🐸 SuperVibeBot v1.5.138
+//@version 1.5.138
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.137는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.138는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.138 Release Notes
+ * - v1.5.138: separates the Asset Studio artist prompt into the canonical artistPrompt field
+ * - v1.5.138: stops legacy stylePrompt/baseStylePrompt metadata from being treated as an active artist prefix
+ * - v1.5.138: tightens Kero image asset instructions so medium/style labels are outside Kero's prompt body contract
+ *
  * SuperVibeBot v1.5.137 Release Notes
  * - v1.5.137: removes the previous artist prompt repair stack instead of patching more escape cases
  * - v1.5.137: deletes legacy hidden image preset promptPrefix/promptSuffix fields from the generation path
@@ -1955,8 +1960,8 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the character/world/composition/background Positive body, assets[].negative is Negative, and wellspringQualityPrompt is final Quality. For asset actions, the runtime only prepends the user's saved Asset Studio artist prompt verbatim when one exists.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Before writing any assets[] item, use artist tags only when the user supplied explicit artist tags or the action needs to reference a user sample. The saved Asset Studio artist prefix is added by the runtime; do not restate it unless it is already part of the user's direct request.
-- Do not invent non-artist tags, generic filler, natural-language artist credits, or fixed medium/style labels unless the user explicitly supplied that exact phrase.
+- Before writing any assets[] item, keep artist/style/medium terms out of assets[].prompt. The saved Asset Studio artist prompt is added by the runtime; do not restate it inside Kero-authored prompt bodies.
+- Kero's assets[].prompt contract is visible subject/world/composition only. Artist/style/medium labels belong to the Asset Studio artist prompt field, not to Kero asset action JSON.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
 - Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use exactly one primary subject count tag when the subject count is clear: 1boy for one male subject, 1girl for one female subject, or 1other only when the character is explicitly nonbinary/other. Do not write male_focus, female_focus, Korean man, Korean woman, male, or female. Age depiction nouns may be used once when they come from source age/body context: boy, girl, man, woman, old man, or old woman.
@@ -22364,8 +22369,8 @@ function collectKeroAssetStudioPromptReferenceLines(char = null) {
         const styleEntries = Object.entries(meta?.styles || {}).slice(0, 8);
         styleEntries.forEach(([name, style]) => {
             const parts = [];
+            pushUniquePromptReference(parts, style?.artistPrompt, 260);
             pushUniquePromptReference(parts, style?.artistTags, 260);
-            pushUniquePromptReference(parts, style?.stylePrompt, 260);
             if (parts.length) lines.push(`- stored artist prompt ${name}: ${parts.join(', ')}`);
             const qualityParts = [];
             pushUniquePromptReference(qualityParts, style?.qualityPrompt || style?.wellspringQualityPrompt, 180);
@@ -22375,8 +22380,8 @@ function collectKeroAssetStudioPromptReferenceLines(char = null) {
         identityEntries.forEach((entry) => {
             const name = svbNormalizeAssetIdentityName(entry?.name);
             const parts = [];
+            pushUniquePromptReference(parts, entry?.artistPrompt, 240);
             pushUniquePromptReference(parts, entry?.artistTags, 240);
-            pushUniquePromptReference(parts, entry?.stylePrompt, 240);
             pushUniquePromptReference(parts, entry?.prompt, 260);
             if (name && parts.length) lines.push(`- stored identity ${name}: ${parts.join(', ')}`);
         });
@@ -22394,7 +22399,7 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
         '',
         '## Wellspring/Danbooru Prompt Reference',
         '- This block is reference material for concrete visible terms only. The runtime will not rewrite generated prompts.',
-        '- Do not copy gallery/sample style phrases. Do not add fixed medium/style labels unless the user explicitly supplied them.',
+        '- Do not copy gallery/sample style phrases. Artist/style/medium labels belong only to the saved Asset Studio artist prompt, not to Kero-authored assets[].prompt.',
         '- Build each image from the selected bot world, era, genre, scene, and character settings. Use short visible cues for face, hair, body silhouette, outfit, equipment, pose, framing, and background.'
     ];
 
@@ -22434,10 +22439,10 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
     }
 
     lines.push('### Required Output Behavior');
-    lines.push('- If Asset Studio Stored References contains "stored artist prompt default:", treat it as a runtime-fixed artist prefix. Do not omit it from your reasoning, but do not duplicate it inside assets[].prompt unless the user directly asked for that exact text.');
+    lines.push('- If Asset Studio Stored References contains "stored artist prompt default:", treat it as a runtime-fixed artist prefix. Do not duplicate it inside assets[].prompt.');
     lines.push('- Stored identity/artist references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
     lines.push('- Prefer the selected bot world/character text for assets[].prompt. Asset Studio artist prompt is a user input string that is prepended verbatim by the runtime when saved.');
-    lines.push('- Do not infer a style from Wellspring gallery/library examples. They are not a source for Kero image prompts.');
+    lines.push('- Do not infer a style from Wellspring gallery/library examples. Artist/style/medium labels belong only to the saved Asset Studio artist prompt, not to assets[].prompt.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
 
     if (liveReferenceCount > 0) {
@@ -30432,14 +30437,14 @@ Rules:
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
 - Use the same image prompt writer rules as normal Kero asset creation.
-- Use an artist anchor only when the user fixed one in Asset Studio, supplied a sample, or provided explicit artist tags. If previous plannedAssetItems already used that user-backed anchor, continue it. Do not invent generic style filler when no real artist source exists.
+- Do not write artist/style/medium terms in assets[].prompt. If an artist anchor exists, it is supplied by Asset Studio at runtime, not by Kero recovery JSON.
 - Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: one subject count tag, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
 - Use exactly one subject count tag: 1boy, 1girl, or 1other. Do not add male_focus, female_focus, boy, girl, man, woman, Korean man, or Korean woman as extra subject prose.
-- Do not add canned medium/style phrases unless the user explicitly supplied that exact phrase.
+- Do not add canned medium/style phrases to assets[].prompt.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists. Convert vague source prose into concrete visible cues, e.g. "regulation hair length" -> short_hair; do not copy the vague phrase itself.
 - Put only global quality direction in wellspringQualityPrompt. Put visible studio/background direction such as white background or simple background in assets[].prompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
-- Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
+- Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting/style-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
 - Put only technical image failure terms in negative.`;
         const payload = {
             userRequest: request,
@@ -35932,10 +35937,10 @@ ${metaBlock}
 - SuperVibeBot 업데이트 URL은 검증된 기존 raw URL을 유지한다. 임의 GitHub/CDN/대체 update-url로 바꾸지 않는다.
 
 ### 이미지 에셋 프롬프팅 전문 규칙
-- 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 직접 작성한다. 런타임은 프롬프트를 고치거나 합치거나 정리하지 않고 그대로 전달한다.
-- artist anchor는 사용자가 Asset Studio에서 고정한 작가 프롬프트, 직접 준 샘플, 명시한 작가 태그가 있을 때만 쓴다. 근거 없는 새 작가명이나 generic style filler를 지어내지 않는다.
-- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 사용자가 고정한 artist anchor가 있을 때만 모든 assets[].prompt의 맨 앞에 정확히 반복한다. 저장된 작가 프롬프트가 없으면 artist anchor를 억지로 만들지 않는다.
-- 고정 매체/화풍 라벨은 사용자가 그 문구를 직접 준 경우가 아니면 쓰지 않는다.
+- 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 작성하되, assets[].prompt는 인물/세계관/구도/배경의 시각 본문만 담당한다. 저장된 Asset Studio 작가 프롬프트는 런타임이 최종 Positive 맨 앞에 그대로 붙인다.
+- artist/style/medium 계열 문구는 케로가 assets[].prompt에 쓰지 않는다. 작가 태그와 화풍 고정은 Asset Studio 작가 프롬프트 입력칸의 책임이다.
+- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들 때도 케로는 작가 anchor를 반복 작성하지 않는다. 런타임 prepend가 한 번만 처리한다.
+- 고정 매체/화풍 라벨을 assets[].prompt 본문에 넣지 않는다.
 - Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
 - Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 피사체 수 태그 1개, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
 - 피사체가 남성 1명이면 1boy 하나만, 여성 1명이면 1girl 하나만 쓴다. boy/girl/man/woman/male/female/male_focus/female_focus/Korean man/Korean woman을 함께 덧붙이지 않는다.
@@ -35946,8 +35951,8 @@ ${metaBlock}
 - Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
 - 프롬프트 문법은 쉼표로 분리된 짧은 시각 단위와 괄호/중괄호/대괄호 가중치를 그대로 쓴다. 괄호를 마크다운처럼 백슬래시로 이스케이프하지 않는다. 작가 가중치는 artist:(tag:weight) 또는 artist:tag 형태 그대로 쓴다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 작성한다. assets[].prompt는 세계관/인물 설정 기반 시각 단서 본문이고, Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 런타임이 최종 Positive 맨 앞에 그대로 붙인다. identityPrompt, stylePrompt, danbooruTags 같은 분리 계층을 새로 만들거나 직접 수정하지 않는다.
-- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 artist anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 작성한다. assets[].prompt는 세계관/인물 설정 기반 시각 단서 본문이다. identityPrompt, stylePrompt, danbooruTags 같은 분리 계층을 새로 만들거나 직접 수정하지 않는다.
+- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 런타임이 붙이는 Asset Studio 작가 프롬프트, 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
 
@@ -52110,8 +52115,9 @@ function svbNormalizeAssetIdentityEntry(value = {}, fallbackName = '') {
         name,
         prompt: safeString(source.prompt || source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.positive || source.tags).trim(),
         negative: safeString(source.negative || source.identityNegative || source.characterNegative || source.uc).trim(),
-        stylePrompt: safeString(source.stylePrompt || source.artistStyle || source.baseStylePrompt).trim(),
-        artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
+        artistPrompt: safeString(source.artistPrompt || source.artistTags || source.artist).trim(),
+        stylePrompt: '',
+        artistTags: '',
         qualityPrompt: safeString(source.qualityPrompt || source.wellspringQualityPrompt || source.quality_prompt).trim(),
         wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt).trim(),
         wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || source.wellspringLora || source.lora),
@@ -52126,7 +52132,7 @@ function svbNormalizeAssetIdentityMap(value = {}) {
     const addEntry = (entry, fallbackName = '') => {
         const normalized = svbNormalizeAssetIdentityEntry(entry, fallbackName);
         if (!normalized.name) return;
-        const hasStyleState = normalized.stylePrompt || normalized.artistTags || normalized.qualityPrompt || normalized.wellspringQualityPrompt;
+        const hasStyleState = normalized.artistPrompt || normalized.artistTags || normalized.qualityPrompt || normalized.wellspringQualityPrompt;
         if (!normalized.prompt && !normalized.negative && !hasStyleState && !ensureArray(normalized.wellspringLoras).length && !normalized.wellspringTrainingId && !normalized.wellspringLoraName) return;
         identities[normalized.name] = {
             ...normalized,
@@ -52144,27 +52150,23 @@ function svbNormalizeAssetIdentityMap(value = {}) {
 function svbNormalizeAssetStyleEntry(value = {}, fallbackName = 'default') {
     const source = (value && typeof value === 'object' && !Array.isArray(value))
         ? value
-        : { stylePrompt: value };
+        : { artistPrompt: value };
     const name = safeString(source.name || source.styleName || source.label || fallbackName).trim() || fallbackName;
     const prompt = safeString(
-        source.stylePrompt
-        || source.prompt
-        || source.positive
-        || source.baseStylePrompt
-        || source.artistStyle
-        || source.artistPrompt
+        source.artistPrompt
         || source.artistTags
         || source.artist
     ).trim();
     const entry = {
         name,
+        artistPrompt: prompt,
         artistTags: '',
-        stylePrompt: prompt,
+        stylePrompt: '',
         qualityPrompt: safeString(source.qualityPrompt || source.wellspringQualityPrompt || source.quality_prompt).trim(),
         negativePrompt: safeString(source.negativePrompt || source.negative || source.uc).trim(),
         updatedAt: safeString(source.updatedAt || source.date).trim()
     };
-    if (!entry.artistTags && !entry.stylePrompt && !entry.qualityPrompt && !entry.negativePrompt) return null;
+    if (!entry.artistPrompt && !entry.artistTags && !entry.qualityPrompt && !entry.negativePrompt) return null;
     return {
         ...entry,
         updatedAt: entry.updatedAt || new Date().toISOString()
@@ -52183,7 +52185,7 @@ function svbNormalizeAssetStyleMap(value = {}) {
     } else if (value && typeof value === 'object') {
         Object.entries(value).forEach(([name, entry]) => addEntry(entry, name));
     } else if (safeString(value).trim()) {
-        addEntry({ stylePrompt: value }, 'default');
+        addEntry({ artistPrompt: value }, 'default');
     }
     return styles;
 }
@@ -52210,7 +52212,7 @@ function svbGetAssetStudioDefaultStyle(meta = {}) {
 function svbBuildAssetStylePrompt(style = null) {
     const normalized = svbNormalizeAssetStyleEntry(style || {}, 'default');
     if (!normalized) return '';
-    return safeString(normalized.stylePrompt).trim();
+    return safeString(normalized.artistPrompt || normalized.artistTags || normalized.artist).trim();
 }
 
 function svbSetAssetStudioDefaultStyle(meta = {}, style = {}) {
@@ -52364,7 +52366,7 @@ function svbSetAssetIdentityPrompt(meta = {}, name = '', prompt = '', negative =
         const hasPersistentIdentityState = ensureArray(previous.wellspringLoras).length
             || safeString(previous.wellspringLoraName || previous.wellspringTrainingId).trim();
         const hasStyleState = [
-            previous.stylePrompt,
+            previous.artistPrompt,
             previous.artistTags,
             previous.qualityPrompt,
             previous.wellspringQualityPrompt
@@ -52398,8 +52400,9 @@ function svbSetAssetIdentityStylePrompt(meta = {}, name = '', style = {}) {
     if (!cleanName) return next;
     const previous = next.identities[cleanName] || { name: cleanName, prompt: '', negative: '' };
     const incoming = {
-        stylePrompt: safeString(style.stylePrompt || style.artistStyle || style.baseStylePrompt).trim(),
-        artistTags: safeString(style.artistTags || style.artistPrompt || style.artist).trim(),
+        artistPrompt: safeString(style.artistPrompt || style.artistTags || style.artist).trim(),
+        stylePrompt: '',
+        artistTags: '',
         qualityPrompt: safeString(style.qualityPrompt || style.wellspringQualityPrompt || style.quality_prompt).trim(),
         wellspringQualityPrompt: safeString(style.wellspringQualityPrompt || style.qualityPrompt || style.quality_prompt).trim()
     };
@@ -52432,7 +52435,7 @@ function svbSetAssetIdentityWellspringLoras(meta = {}, name = '', loras = [], de
     if (!normalizedLoras.length) {
         const nextLoraName = safeString(details.loraName || details.name || previous.wellspringLoraName).trim();
         const nextTrainingId = safeString(details.trainingId || details.training_id || previous.wellspringTrainingId).trim();
-        const hasStyleState = [previous.stylePrompt, previous.artistTags, previous.qualityPrompt, previous.wellspringQualityPrompt]
+        const hasStyleState = [previous.artistPrompt, previous.artistTags, previous.qualityPrompt, previous.wellspringQualityPrompt]
             .some(value => safeString(value).trim());
         if (previous.prompt || previous.negative || hasStyleState || nextLoraName || nextTrainingId) {
             next.identities[cleanName] = {
@@ -52900,7 +52903,8 @@ async function openAssetStudio() {
         return {
             name,
             artistTags: '',
-            stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
+            artistPrompt: document.getElementById('svb-as-style-prompt')?.value || '',
+            stylePrompt: '',
             qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
             negativePrompt: document.getElementById('svb-as-style-negative')?.value || ''
         };
@@ -52936,7 +52940,7 @@ async function openAssetStudio() {
             index += 1;
             name = `style_${index}`;
         }
-        fillAssetStylePanel({ name, stylePrompt: '', qualityPrompt: '', negativePrompt: '' }, name);
+        fillAssetStylePanel({ name, artistPrompt: '', qualityPrompt: '', negativePrompt: '' }, name);
     }
 
     async function deleteAssetStylePresetFromPanel() {
