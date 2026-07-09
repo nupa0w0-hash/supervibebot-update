@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.134
-//@version 1.5.134
+//@display-name 🐸 SuperVibeBot v1.5.135
+//@version 1.5.135
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.134는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.135는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.135 Release Notes
+ * - v1.5.135: restores artist: namespace for escaped artist-weight atoms inside Kero-generated Positive prompt bodies
+ * - v1.5.135: removes visible version text from the Risu chat menu and settings menu entries
+ *
  * SuperVibeBot v1.5.134 Release Notes
  * - v1.5.134: stops copying the Asset Studio artist prompt preset into the old internal fixed-prefix slot
  * - v1.5.134: makes Kero read the selected Asset Studio artist preset directly instead of merging it with any copied prefix
@@ -30709,6 +30713,8 @@ Rules:
 
     function normalizeKeroConcreteVisualAtom(atom = '', options = {}) {
         const raw = safeString(atom).trim();
+        const restoredArtist = restoreKeroFixedArtistPromptSyntax(raw);
+        if (/^artist\s*:/i.test(restoredArtist)) return restoredArtist;
         const text = normalizeKeroGeneratedPromptAtom(raw);
         if (!text) return '';
         const ageCue = normalizeKeroVisualAgeAtom(text, options.subjectTag);
@@ -30969,6 +30975,7 @@ Rules:
         const explicitSubjectTag = atoms.map(getKeroExplicitSubjectCountTagFromAtom).find(Boolean) || '';
         const inferredSubjectTag = explicitSubjectTag || atoms.map(getKeroSubjectCountTagFromAtom).find(Boolean) || '';
         let fallbackSubjectTag = '';
+        const artistAtoms = [];
         const visualAtoms = [];
         atoms.forEach((atom) => {
             const subject = getKeroSubjectCountTagFromAtom(atom);
@@ -30984,10 +30991,15 @@ Rules:
             const ageCue = normalizeKeroVisualAgeAtom(sourceText, subjectTag);
             const concrete = normalizeKeroConcreteVisualAtom(atom, { subjectTag });
             if (!concrete) return;
+            if (/^artist\s*:/i.test(concrete)) {
+                keroAssetPushUnique(artistAtoms, concrete);
+                return;
+            }
             if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete, { allowAgeDepictionNoun: !!ageCue })) return;
             keroAssetPushUnique(visualAtoms, concrete);
         });
         return joinKeroPromptAtoms([
+            ...artistAtoms,
             explicitSubjectTag || fallbackSubjectTag,
             ...compactKeroVisualPromptAtoms(visualAtoms)
         ]);
@@ -58448,7 +58460,7 @@ async function loadInitialSettings() {
 async function registerUIElements() {
     // 채팅 화면 메뉴에 버튼 추가 (플로팅 버튼 대신)
     await risuai.registerButton({
-        name: "SuperVibeBot v1.5.89",
+        name: "SuperVibeBot",
         icon: "🐸",
         iconType: "html",
         location: "chat"  // 채팅 메뉴에 배치 (화면 가림 방지)
@@ -58457,7 +58469,7 @@ async function registerUIElements() {
     });
 
     await risuai.registerSetting(
-        "SuperVibeBot v1.5.89 Settings",
+        "SuperVibeBot Settings",
         async () => {
             await openSettingsWindow();
         },
@@ -58500,7 +58512,7 @@ function cleanup() {
 (async () => {
     try {
         Logger.info("=".repeat(50));
-        Logger.info("SuperVibeBot v1.5.89");
+        Logger.info("SuperVibeBot v1.5.135");
         Logger.info("RisuAI Plugin API 3.0");
         Logger.info("=".repeat(50));
         await loadInitialSettings();
