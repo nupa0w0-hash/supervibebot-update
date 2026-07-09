@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.126
-//@version 1.5.126
+//@display-name 🐸 SuperVibeBot v1.5.127
+//@version 1.5.127
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.126는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.127는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.127 Release Notes
+ * - v1.5.127: adds Asset Studio artist prompt presets with active preset selection
+ * - v1.5.127: adds artist preset save, delete, export, and import controls
+ * - v1.5.127: applies the selected artist preset to Kero image generation and the active image preset prefix
+ *
  * SuperVibeBot v1.5.126 Release Notes
  * - v1.5.126: keeps Kero quality terms in wellspringQualityPrompt instead of Positive
  * - v1.5.126: adds the default Kero asset Quality fallback "masterpiece, best_quality, highres" when no user/preset quality is set
@@ -51886,9 +51891,23 @@ function svbNormalizeAssetStyleMap(value = {}) {
     return styles;
 }
 
+function svbGetAssetStudioStyleMap(meta = {}) {
+    return svbNormalizeAssetStyleMap(meta?.styles || meta?.stylePresets || meta?.artStyles);
+}
+
+function svbGetAssetStudioActiveStyleName(meta = {}) {
+    const styles = svbGetAssetStudioStyleMap(meta);
+    const active = safeString(meta?.activeStyle || meta?.activeStyleName || meta?.selectedStyle || meta?.selectedStyleName).trim();
+    if (active && styles[active]) return active;
+    if (styles.default) return 'default';
+    if (styles['기본']) return '기본';
+    return Object.keys(styles)[0] || '';
+}
+
 function svbGetAssetStudioDefaultStyle(meta = {}) {
-    const styles = svbNormalizeAssetStyleMap(meta?.styles || meta?.stylePresets || meta?.artStyles);
-    return styles.default || styles['기본'] || Object.values(styles)[0] || null;
+    const styles = svbGetAssetStudioStyleMap(meta);
+    const activeName = svbGetAssetStudioActiveStyleName({ ...meta, styles });
+    return activeName ? (styles[activeName] || null) : null;
 }
 
 function svbBuildAssetStylePrompt(style = null) {
@@ -51900,9 +51919,36 @@ function svbBuildAssetStylePrompt(style = null) {
 function svbSetAssetStudioDefaultStyle(meta = {}, style = {}) {
     const next = svbNormalizeAssetStudioMeta(meta);
     if (!next.styles) next.styles = {};
-    const normalized = svbNormalizeAssetStyleEntry({ ...style, name: 'default' }, 'default');
-    if (normalized) next.styles.default = normalized;
-    else delete next.styles.default;
+    const name = safeString(style?.name || next.activeStyle || 'default').trim() || 'default';
+    const normalized = svbNormalizeAssetStyleEntry({ ...style, name }, name);
+    if (normalized) {
+        next.styles[name] = normalized;
+        next.activeStyle = name;
+    } else {
+        delete next.styles[name];
+        if (next.activeStyle === name) next.activeStyle = svbGetAssetStudioActiveStyleName(next);
+    }
+    return next;
+}
+
+function svbSetAssetStudioStylePreset(meta = {}, name = '', style = {}, options = {}) {
+    const next = svbNormalizeAssetStudioMeta(meta);
+    const cleanName = safeString(name || style?.name || 'default').trim() || 'default';
+    if (!next.styles) next.styles = {};
+    const normalized = svbNormalizeAssetStyleEntry({ ...style, name: cleanName }, cleanName);
+    if (normalized) next.styles[cleanName] = normalized;
+    else delete next.styles[cleanName];
+    if (options.activate !== false) next.activeStyle = cleanName;
+    if (!Object.keys(next.styles || {}).length) next.activeStyle = '';
+    return next;
+}
+
+function svbDeleteAssetStudioStylePreset(meta = {}, name = '') {
+    const next = svbNormalizeAssetStudioMeta(meta);
+    const cleanName = safeString(name).trim();
+    if (!cleanName || !next.styles?.[cleanName]) return next;
+    delete next.styles[cleanName];
+    if (next.activeStyle === cleanName) next.activeStyle = svbGetAssetStudioActiveStyleName(next);
     return next;
 }
 
@@ -52125,6 +52171,8 @@ function svbNormalizeAssetStudioMeta(raw = {}) {
             .map(([name, folder]) => [safeString(name).trim(), safeString(folder).trim()])
             .filter(([name, folder]) => name && folder));
     };
+    const styles = svbNormalizeAssetStyleMap(raw?.styles || raw?.stylePresets || raw?.artStyles);
+    const activeStyle = safeString(raw?.activeStyle || raw?.activeStyleName || raw?.selectedStyle || raw?.selectedStyleName).trim();
     return {
         folders: {
             additional: normalizeMap(folders.additional),
@@ -52137,7 +52185,10 @@ function svbNormalizeAssetStudioMeta(raw = {}) {
             ),
             emotion: svbNormalizeAssetPromptMap(prompts.emotion || prompts.emotionImages || prompts.emotions)
         },
-        styles: svbNormalizeAssetStyleMap(raw?.styles || raw?.stylePresets || raw?.artStyles),
+        styles,
+        activeStyle: activeStyle && styles[activeStyle]
+            ? activeStyle
+            : svbGetAssetStudioActiveStyleName({ styles }),
         identities: svbNormalizeAssetIdentityMap(raw?.identities || raw?.identityPrompts || raw?.characterPrompts)
     };
 }
@@ -52449,12 +52500,31 @@ async function openAssetStudio() {
         return svbGetAssetStudioDefaultStyle(assetStudioMeta);
     }
 
+    function getAssetStylePresetMap() {
+        return svbGetAssetStudioStyleMap(assetStudioMeta);
+    }
+
+    function getActiveAssetStyleName() {
+        return svbGetAssetStudioActiveStyleName(assetStudioMeta);
+    }
+
+    function renderAssetStyleOptions(selectedName = getActiveAssetStyleName()) {
+        const styles = getAssetStylePresetMap();
+        const names = Object.keys(styles);
+        const active = selectedName || names[0] || 'default';
+        const options = names.map((name) => {
+            const label = styles[name]?.name || name;
+            return `<option value="${escapeHtml(name)}"${name === active ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('');
+        return options || '<option value="default" selected>default</option>';
+    }
+
     async function applyDefaultStyleToCurrentPreset(style = getDefaultAssetStyle()) {
         const stylePrompt = svbBuildAssetStylePrompt(style);
         const preset = normalizeImageGenerationPreset(readGenerationPresetFromUI(getSelectedImagePreset()));
         preset.promptPrefix = stylePrompt;
-        if (style?.qualityPrompt) preset.wellspringQualityPrompt = style.qualityPrompt;
-        if (style?.negativePrompt) preset.negativePrefix = style.negativePrompt;
+        preset.wellspringQualityPrompt = safeString(style?.qualityPrompt || style?.wellspringQualityPrompt).trim();
+        preset.negativePrefix = safeString(style?.negativePrompt).trim();
         const saved = upsertImageGenerationPreset(preset);
         activeImageGenerationPresetId = saved.id;
         await saveImageGenerationPresets();
@@ -52462,8 +52532,8 @@ async function openAssetStudio() {
         const qualityInput = document.getElementById('svb-as-wellspring-quality-prompt');
         const negativePrefixInput = document.getElementById('svb-as-negative-prefix');
         if (prefixInput) prefixInput.value = saved.promptPrefix || '';
-        if (qualityInput && style?.qualityPrompt) qualityInput.value = style.qualityPrompt;
-        if (negativePrefixInput && style?.negativePrompt) negativePrefixInput.value = style.negativePrompt;
+        if (qualityInput) qualityInput.value = saved.wellspringQualityPrompt || '';
+        if (negativePrefixInput) negativePrefixInput.value = saved.negativePrefix || '';
         renderGenerationControls();
         renderGenerationConnectionSummary();
         return saved;
@@ -52475,7 +52545,8 @@ async function openAssetStudio() {
 
     function openAssetStylePanel() {
         closeAssetStylePanel();
-        const style = getDefaultAssetStyle() || {};
+        const activeStyleName = getActiveAssetStyleName() || 'default';
+        const style = getDefaultAssetStyle() || { name: activeStyleName };
         const fixedStylePrompt = svbBuildAssetStylePrompt(style);
         const modal = document.createElement('div');
         modal.id = 'svb-as-style-panel';
@@ -52487,6 +52558,14 @@ async function openAssetStudio() {
                     <button class="svb-as-btn svb-as-close" data-action="close-style-panel" type="button" title="닫기">×</button>
                 </div>
                 <div class="svb-as-style-body">
+                    <div class="svb-as-grid">
+                        <label class="svb-as-mini-field">프리셋
+                            <select class="svb-as-input" id="svb-as-style-preset">${renderAssetStyleOptions(activeStyleName)}</select>
+                        </label>
+                        <label class="svb-as-mini-field">이름
+                            <input class="svb-as-input" id="svb-as-style-name" value="${escapeHtml(style.name || activeStyleName)}" placeholder="preset name">
+                        </label>
+                    </div>
                     <label class="svb-as-mini-field svb-as-style-wide">작가 프롬프트
                         <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="예: (artist_name:1.05), second_artist, (third_artist:0.85)">${escapeHtml(fixedStylePrompt || '')}</textarea>
                     </label>
@@ -52499,17 +52578,36 @@ async function openAssetStudio() {
                 </div>
                 <div class="svb-as-style-actions">
                     <button class="svb-as-btn" data-action="recommend-style" type="button">AI 추천</button>
+                    <button class="svb-as-btn" data-action="new-style" type="button">새 프리셋</button>
+                    <button class="svb-as-btn" data-action="export-style" type="button">내보내기</button>
+                    <button class="svb-as-btn" data-action="import-style" type="button">불러오기</button>
                     <button class="svb-as-btn danger" data-action="clear-style" type="button">비우기</button>
+                    <button class="svb-as-btn danger" data-action="delete-style" type="button">삭제</button>
                     <button class="svb-as-btn primary" data-action="save-style" type="button">저장</button>
+                    <input id="svb-as-style-import-file" type="file" accept="application/json,.json" style="display:none">
                 </div>
             </div>
         `;
         studioWindow.appendChild(modal);
     }
 
+    function fillAssetStylePanel(style = {}, name = 'default') {
+        const presetSelect = document.getElementById('svb-as-style-preset');
+        const nameInput = document.getElementById('svb-as-style-name');
+        const promptInput = document.getElementById('svb-as-style-prompt');
+        const qualityInput = document.getElementById('svb-as-style-quality');
+        const negativeInput = document.getElementById('svb-as-style-negative');
+        if (presetSelect) presetSelect.value = name;
+        if (nameInput) nameInput.value = style.name || name || 'default';
+        if (promptInput) promptInput.value = svbBuildAssetStylePrompt(style);
+        if (qualityInput) qualityInput.value = style.qualityPrompt || style.wellspringQualityPrompt || '';
+        if (negativeInput) negativeInput.value = style.negativePrompt || '';
+    }
+
     function readAssetStylePanelValues() {
+        const name = safeString(document.getElementById('svb-as-style-name')?.value || document.getElementById('svb-as-style-preset')?.value || 'default').trim() || 'default';
         return {
-            name: 'default',
+            name,
             artistTags: '',
             stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
             qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
@@ -52519,9 +52617,79 @@ async function openAssetStudio() {
 
     async function saveDefaultStyleFromPanel() {
         const style = readAssetStylePanelValues();
-        assetStudioMeta = svbSetAssetStudioDefaultStyle(assetStudioMeta, style);
+        assetStudioMeta = svbSetAssetStudioStylePreset(assetStudioMeta, style.name, style, { activate: true });
         await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
-        await saveCurrentAssets('작가 프롬프트를 저장하고 현재 이미지 프리셋 맨 앞 prefix에 적용했습니다.');
+        await saveCurrentAssets(`작가 프리셋 "${style.name}"을 저장하고 현재 이미지 프리셋 prefix에 적용했습니다.`);
+        closeAssetStylePanel();
+        renderAll();
+    }
+
+    async function selectAssetStylePresetFromPanel(name = '') {
+        const cleanName = safeString(name).trim();
+        const styles = getAssetStylePresetMap();
+        const style = styles[cleanName];
+        if (!cleanName || !style) return;
+        assetStudioMeta = svbNormalizeAssetStudioMeta({ ...assetStudioMeta, activeStyle: cleanName });
+        await applyDefaultStyleToCurrentPreset(style);
+        await saveCurrentAssets(`작가 프리셋 "${style.name || cleanName}"을 선택했습니다.`);
+        closeAssetStylePanel();
+        renderAll();
+        openAssetStylePanel();
+    }
+
+    function createNewAssetStylePresetInPanel() {
+        const styles = getAssetStylePresetMap();
+        let index = Object.keys(styles).length + 1;
+        let name = `style_${index}`;
+        while (styles[name]) {
+            index += 1;
+            name = `style_${index}`;
+        }
+        fillAssetStylePanel({ name, stylePrompt: '', qualityPrompt: '', negativePrompt: '' }, name);
+    }
+
+    async function deleteAssetStylePresetFromPanel() {
+        const name = safeString(document.getElementById('svb-as-style-preset')?.value || document.getElementById('svb-as-style-name')?.value).trim();
+        if (!name || !getAssetStylePresetMap()[name]) {
+            setStatus('삭제할 작가 프리셋이 없습니다.', 'error');
+            return;
+        }
+        if (!confirm(`작가 프리셋 "${name}"을 삭제할까요?`)) return;
+        assetStudioMeta = svbDeleteAssetStudioStylePreset(assetStudioMeta, name);
+        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
+        await saveCurrentAssets(`작가 프리셋 "${name}"을 삭제했습니다.`);
+        closeAssetStylePanel();
+        renderAll();
+    }
+
+    function exportAssetStylePresetsFromPanel() {
+        const payload = {
+            version: 'SuperVibeBot Asset Style Presets v1',
+            character: getCharacterDisplayName(char),
+            exportedAt: new Date().toISOString(),
+            activeStyle: getActiveAssetStyleName(),
+            styles: getAssetStylePresetMap()
+        };
+        downloadStudioJson(payload, `${svbNormalizeAssetName(getCharacterDisplayName(char), 'character')}_artist_presets.json`);
+        setStatus('작가 프리셋 JSON을 내보냈습니다.', 'success');
+    }
+
+    async function importAssetStylePresetsFromPanel(file) {
+        if (!file) return;
+        const data = await svbReadSafeJsonFile(file, 'artist preset JSON');
+        const importedStyles = svbNormalizeAssetStyleMap(data.styles || data.stylePresets || data.artStyles || data);
+        const names = Object.keys(importedStyles);
+        if (!names.length) {
+            setStatus('가져올 작가 프리셋이 없습니다.', 'error');
+            return;
+        }
+        assetStudioMeta = svbNormalizeAssetStudioMeta({
+            ...assetStudioMeta,
+            styles: { ...(assetStudioMeta.styles || {}), ...importedStyles },
+            activeStyle: safeString(data.activeStyle).trim() || names[0]
+        });
+        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
+        await saveCurrentAssets(`작가 프리셋 ${names.length}개를 가져왔습니다.`);
         closeAssetStylePanel();
         renderAll();
     }
@@ -54711,6 +54879,8 @@ async function openAssetStudio() {
                     additional: { ...(assetStudioMeta.prompts?.additional || {}), ...(importedMeta.prompts?.additional || {}) },
                     emotion: { ...(assetStudioMeta.prompts?.emotion || {}), ...(importedMeta.prompts?.emotion || {}) }
                 },
+                styles: { ...(assetStudioMeta.styles || {}), ...(importedMeta.styles || {}) },
+                activeStyle: importedMeta.activeStyle || assetStudioMeta.activeStyle,
                 identities: { ...(assetStudioMeta.identities || {}), ...(importedMeta.identities || {}) }
             });
             syncCharacterAssetFields();
@@ -56454,7 +56624,13 @@ async function openAssetStudio() {
     try {
         renderAll();
         const defaultStyle = getDefaultAssetStyle();
-        if (svbBuildAssetStylePrompt(defaultStyle) && !safeString(getSelectedImagePreset()?.promptPrefix).trim()) {
+        const hasDefaultStyle = [
+            svbBuildAssetStylePrompt(defaultStyle),
+            defaultStyle?.qualityPrompt,
+            defaultStyle?.wellspringQualityPrompt,
+            defaultStyle?.negativePrompt
+        ].some(value => safeString(value).trim());
+        if (hasDefaultStyle && !safeString(getSelectedImagePreset()?.promptPrefix).trim()) {
             await applyDefaultStyleToCurrentPreset(defaultStyle);
             renderAll();
         }
@@ -56503,6 +56679,28 @@ async function openAssetStudio() {
     addLocal(document.getElementById('svb-as-replace-file'), 'change', async event => {
         await batchReplaceSelectedAssets(pendingBatchReplaceKind, event.target.files);
         event.target.value = '';
+    });
+    addLocal(studioWindow, 'change', async event => {
+        const target = event.target;
+        if (target?.id === 'svb-as-style-preset') {
+            try {
+                await selectAssetStylePresetFromPanel(target.value || '');
+            } catch (error) {
+                Logger.error('Asset style preset select failed:', error);
+                setStatus(`작가 프리셋 선택 실패: ${error?.message || error}`, 'error');
+            }
+            return;
+        }
+        if (target?.id === 'svb-as-style-import-file') {
+            try {
+                await importAssetStylePresetsFromPanel(target.files?.[0]);
+            } catch (error) {
+                Logger.error('Asset style preset import failed:', error);
+                setStatus(`작가 프리셋 불러오기 실패: ${error?.message || error}`, 'error');
+            } finally {
+                target.value = '';
+            }
+        }
     });
     addLocal(document.getElementById('svb-as-module-export'), 'click', exportPersonaEmotionModule);
     addLocal(document.getElementById('svb-as-module-import'), 'click', () => document.getElementById('svb-as-module-import-file')?.click());
@@ -56732,6 +56930,22 @@ async function openAssetStudio() {
             }
             if (action === 'save-style') {
                 await saveDefaultStyleFromPanel();
+                return;
+            }
+            if (action === 'new-style') {
+                createNewAssetStylePresetInPanel();
+                return;
+            }
+            if (action === 'delete-style') {
+                await deleteAssetStylePresetFromPanel();
+                return;
+            }
+            if (action === 'export-style') {
+                exportAssetStylePresetsFromPanel();
+                return;
+            }
+            if (action === 'import-style') {
+                document.getElementById('svb-as-style-import-file')?.click();
                 return;
             }
             if (action === 'clear-style') {
