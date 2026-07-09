@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.119
-//@version 1.5.119
+//@display-name 🐸 SuperVibeBot v1.5.120
+//@version 1.5.120
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.119는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.120는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.120 Release Notes
+ * - v1.5.120: connects the Asset Studio style AI recommendation button to the same Wellspring/Danbooru prompt reference block used by Kero image asset work
+ * - v1.5.120: makes style recommendation use reference-backed prompt atoms instead of natural-language artist credits such as "by Artist"
+ * - v1.5.120: asks the main LLM to rewrite invalid style recommendations instead of locally converting or filtering artist/style text
+ *
  * SuperVibeBot v1.5.119 Release Notes
  * - v1.5.119: routes Asset Studio style AI recommendation through Kero's main LLM translateSingleChunk path instead of a separate API dispatcher
  * - v1.5.119: fixes Asset Studio style recommendation parsing by reading parseJsonFromAI().data and allowing normal model repair
@@ -22207,6 +22212,9 @@ function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload =
     const queries = [];
     const text = safeString(userInput);
     ['artist', 'upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    if (/(style|artist|prompt|그림체|화풍|작가|프롬프트)/i.test(text)) {
+        ['style', 'prompt'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    }
     if (/(군|military|army|soldier|uniform|rok|rank|계급|제복|전투복)/i.test(text)) {
         ['military uniform', 'army uniform', 'camouflage', 'olive drab', 'rank insignia'].forEach(query => pushUniquePromptReference(queries, query, 80));
     }
@@ -52438,6 +52446,64 @@ async function openAssetStudio() {
         });
     }
 
+    function buildAssetStyleRecommendationUserText(context, referenceBlock = '') {
+        const referenceText = safeString(referenceBlock).trim() || [
+            '## Wellspring/Danbooru Prompt Reference',
+            '- No live Wellspring reference material was loaded.',
+            '- Do not invent artist names or natural-language style credits.',
+            '- If the current Asset Studio style has no usable prompt atoms, return an empty stylePrompt and explain that source style material is missing.'
+        ].join('\n');
+        return [
+            'Use the character/context JSON and prompt reference block below.',
+            'Recommend a reusable Asset Studio style prefix only. Do not generate image assets.',
+            '',
+            'Character/context JSON:',
+            JSON.stringify(context, null, 2),
+            '',
+            referenceText
+        ].join('\n');
+    }
+
+    function svbAssetStyleRecommendationNeedsModelRewrite(value = '') {
+        const text = safeString(value).trim();
+        if (!text) return false;
+        return /\b(?:by|in\s+the\s+style\s+of|style\s+of|inspired\s+by)\s+[^,]+/i.test(text);
+    }
+
+    async function parseAssetStyleRecommendationResponse(response) {
+        const parsedPack = await parseJsonFromAI(response, {
+            schemaHint: '{"stylePrompt":"fixed artist/style prompt prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
+            allowModelRepair: true
+        });
+        const parsed = parsedPack?.data;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('LLM 추천 응답이 JSON 객체가 아닙니다.');
+        }
+        return parsed;
+    }
+
+    async function rewriteAssetStyleRecommendationWithModel(previous, context, referenceBlock = '') {
+        const systemPrompt = [
+            'You rewrite an Asset Studio style recommendation into Wellspring/Danbooru-compatible prompt fields.',
+            'Use only the provided character/context JSON, current style, stored references, Wellspring library entries, and Wellspring gallery prompt samples.',
+            'Do not convert artist names locally or invent new artists.',
+            'If there is no reliable artist/style source in the provided material, return an empty stylePrompt instead of prose.',
+            'Return only JSON with keys: stylePrompt, qualityPrompt, negativePrompt, rationale.'
+        ].join('\n');
+        const userText = [
+            'The previous recommendation used natural-language artist/style credit text instead of prompt atoms.',
+            'Rewrite it as a direct comma-separated prompt prefix for the Asset Studio style field.',
+            'Never use "by Artist", "in the style of Artist", or full sentences in stylePrompt.',
+            '',
+            'Previous recommendation JSON:',
+            JSON.stringify(previous, null, 2),
+            '',
+            buildAssetStyleRecommendationUserText(context, referenceBlock)
+        ].join('\n');
+        const response = await callAssetStudioMainModel(systemPrompt, userText);
+        return await parseAssetStyleRecommendationResponse(response);
+    }
+
     function buildAssetStyleRecommendationContext() {
         const fields = buildFullCharacterContext(char) || {};
         const lorebooks = ensureArray(fields.lorebooks).slice(0, 40).map((entry) => ({
@@ -52466,26 +52532,39 @@ async function openAssetStudio() {
             setStatus('LLM으로 캐릭터 설정 기반 그림체 조합을 추천받는 중...', 'info');
             const systemPrompt = [
                 'You are an image prompt style curator for Wellspring/Danbooru-style generation.',
-                'Use the provided character context to recommend a single coherent art-style prefix.',
+                'Use the provided character context and Wellspring/Danbooru prompt reference block to recommend a single coherent art-style prefix.',
                 'Do not use local rules, do not mention code, do not create images.',
                 'Return only JSON with keys: stylePrompt, qualityPrompt, negativePrompt, rationale.',
-                'stylePrompt should include any weighted artist/style atoms and be a concise prompt prefix placed before every Positive prompt for this character.',
-                'Do not add generic style filler unless the supplied context explicitly asks for that exact style.'
+                'stylePrompt must be direct comma-separated prompt atoms for the Asset Studio style field.',
+                'Use artist/style atoms only when they are present in the current style, stored references, Wellspring library, or gallery prompt samples.',
+                'Do not write natural-language credits such as "by Artist", "in the style of Artist", or full sentences.',
+                'If there is no reliable artist/style source, return an empty stylePrompt instead of inventing one.',
+                'Keep qualityPrompt and negativePrompt separate from stylePrompt.'
             ].join('\n');
-            const response = await callAssetStudioMainModel(systemPrompt, JSON.stringify(buildAssetStyleRecommendationContext(), null, 2));
-            const parsedPack = await parseJsonFromAI(response, {
-                schemaHint: '{"stylePrompt":"fixed artist/style prompt prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
-                allowModelRepair: true
+            const styleContext = buildAssetStyleRecommendationContext();
+            const referenceBlock = await buildKeroImagePromptReferenceBlock({
+                userInput: 'Asset Studio artist style prompt recommendation Wellspring Danbooru 그림체 작가 프롬프트',
+                visibleUserInput: 'Asset Studio artist style prompt recommendation Wellspring Danbooru 그림체 작가 프롬프트',
+                char,
+                progressOptions: { detached: true, allowCurrentJobFallback: false }
             });
-            const parsed = parsedPack?.data;
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                throw new Error('LLM 추천 응답이 JSON 객체가 아닙니다.');
+            const response = await callAssetStudioMainModel(systemPrompt, buildAssetStyleRecommendationUserText(styleContext, referenceBlock));
+            let parsed = await parseAssetStyleRecommendationResponse(response);
+            const initialStylePrompt = svbJoinPromptFragments(
+                parsed.artistTags || parsed.artist_tags || parsed.artists,
+                parsed.stylePrompt || parsed.style_prompt || parsed.prompt
+            );
+            if (svbAssetStyleRecommendationNeedsModelRewrite(initialStylePrompt)) {
+                parsed = await rewriteAssetStyleRecommendationWithModel(parsed, styleContext, referenceBlock);
             }
             const artistTags = safeString(parsed.artistTags || parsed.artist_tags || parsed.artists).trim();
             const stylePrompt = safeString(parsed.stylePrompt || parsed.style_prompt || parsed.prompt).trim();
             const fixedStylePrompt = svbJoinPromptFragments(artistTags, stylePrompt);
             const qualityPrompt = safeString(parsed.qualityPrompt || parsed.quality_prompt || parsed.quality).trim();
             const negativePrompt = safeString(parsed.negativePrompt || parsed.negative_prompt || parsed.negative).trim();
+            if (svbAssetStyleRecommendationNeedsModelRewrite(fixedStylePrompt)) {
+                throw new Error('LLM이 Danbooru/Wellspring 태그 대신 자연어 작가 크레딧을 반환했습니다. 저장된 그림체나 Wellspring reference를 먼저 확인해주세요.');
+            }
             if (!fixedStylePrompt && !qualityPrompt && !negativePrompt) {
                 throw new Error('LLM 추천 응답에 적용할 그림체/퀄리티/네거티브 값이 없습니다.');
             }
