@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.121
-//@version 1.5.121
+//@display-name 🐸 SuperVibeBot v1.5.122
+//@version 1.5.122
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.121는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.122는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.122 Release Notes
+ * - v1.5.122: deletes the free-form Asset Studio artist/style recommendation path and replaces it with a compact Danbooru taxonomy-derived candidate DB
+ * - v1.5.122: makes the main LLM choose only candidate pack/tag IDs while final artist/style prompt text is assembled from validated DB tags
+ * - v1.5.122: prevents unknown artist names such as non-Danbooru natural-language credits from entering the style prompt field
+ *
  * SuperVibeBot v1.5.121 Release Notes
  * - v1.5.121: tells Kero that stored Asset Studio identity/style prompts are read-only reference material unless the user explicitly asks to edit them
  * - v1.5.121: prevents asset work from being framed as hidden stored-prompt cleanup while keeping final image prompts LLM-authored
@@ -52453,62 +52458,197 @@ async function openAssetStudio() {
         });
     }
 
-    function buildAssetStyleRecommendationUserText(context, referenceBlock = '') {
-        const referenceText = safeString(referenceBlock).trim() || [
-            '## Wellspring/Danbooru Prompt Reference',
-            '- No live Wellspring reference material was loaded.',
-            '- Do not invent artist names or natural-language style credits.',
-            '- If the current Asset Studio style has no usable prompt atoms, return an empty stylePrompt and explain that source style material is missing.'
-        ].join('\n');
-        return [
-            'Use the character/context JSON and prompt reference block below.',
-            'Recommend a reusable Asset Studio style prefix only. Do not generate image assets.',
-            '',
-            'Character/context JSON:',
-            JSON.stringify(context, null, 2),
-            '',
-            referenceText
-        ].join('\n');
+    const SVB_DANBOORU_STYLE_DB_VERSION = 'danbooru-taxonomy-artist-style-compact-2026-07-09';
+    const SVB_DANBOORU_ARTIST_TAG_DB = Object.freeze([
+        ['hiyori_(rindou66)', 357], ['ratatatat74', 470], ['doremi_(doremi4704)', 391], ['mikozin', 1295],
+        ['kadeart', 542], ['mayo_(becky2006)', 329], ['asako_(itiba)', 145], ['dino_(dinoartforame)', 487],
+        ['ask_(askzy)', 482], ['wlop', 365], ['tony_taka', 3147], ['kantoku', 2340], ['redjuice', 418],
+        ['huke', 456], ['honjou_raita', 517], ['takeuchi_takashi', 1721], ['mika_pikazo', 1016],
+        ['lam_(ramdayo)', 394], ['rurudo', 196], ['torino_aqua', 519], ['anmi', 639], ['saitou_masatsugu', 639],
+        ['neco', 398], ['yd_(orange_maru)', 1687], ['ciloranko', 205], ['sho_(sho_lwlw)', 98],
+        ['yutokamizu', 63], ['nakta', 114], ['swd3e2', 1337], ['morikura_en', 696], ['lack', 1108],
+        ['toi8', 340], ['baffu', 795], ['carnelian', 2480], ['tsunako', 2042], ['bunbun', 597],
+        ['wada_arco', 681], ['fuzichoco', 889], ['yoshida_akihiko', 182], ['shinkawa_youji', 71],
+        ['namori', 1296], ['aoki_ume', 400], ['shibafu_(glock23)', 577], ['mignon', 870],
+        ['noco_(adamas)', 566], ['tiv', 376], ['yoneyama_mai', 262], ['ebifurya', 5991]
+    ].map(([tag, posts]) => Object.freeze({ tag, posts })));
+    const SVB_DANBOORU_STYLE_TAG_DB = Object.freeze([
+        'flat_color', 'anime_coloring', 'lineart', 'no_lineart', 'painterly', 'blending', 'cel_rendering',
+        'watercolor_effect', 'watercolor_(medium)', 'painting_(medium)', 'colored_pencil_(medium)',
+        'sketch', 'oekaki', 'tegaki', 'crosshatching', 'retro_artstyle', '1990s_(style)', '2000s_(style)',
+        '1980s_(style)', 'toon_(style)', 'official_style', 'monochrome', 'spot_color', 'partially_colored',
+        'muted_color', 'pastel_colors'
+    ]);
+    const SVB_DANBOORU_STYLE_PACK_DB = Object.freeze([
+        Object.freeze({
+            id: 'clean_character_flat',
+            label: 'clean character flat color',
+            match: ['default', 'standing', 'profile', 'visual novel', 'white background', '상반신', '스탠딩', '프로필', '미연시'],
+            artists: ['hiyori_(rindou66)', 'ratatatat74', 'doremi_(doremi4704)', 'mikozin'],
+            styles: ['flat_color', 'anime_coloring', 'lineart'],
+            quality: 'white background, simple background, best quality, amazing quality, very aesthetic, highres',
+            negative: 'photo, realistic, 3d, text, logo, watermark, messy lineart, muddy colors'
+        }),
+        Object.freeze({
+            id: 'modern_military_clean',
+            label: 'modern military clean illustration',
+            match: ['military', 'army', 'soldier', 'uniform', 'rank', 'rok', '군', '군복', '한국군', '장교', '부사관', '전투복'],
+            artists: ['shibafu_(glock23)', 'huke', 'redjuice', 'neco'],
+            styles: ['lineart', 'anime_coloring', 'muted_color'],
+            quality: 'white background, simple background, clean lineart, best quality, amazing quality, highres',
+            negative: 'photo, realistic, 3d, fantasy armor, medieval weapon, text, logo, watermark, muddy colors'
+        }),
+        Object.freeze({
+            id: 'polished_key_visual',
+            label: 'polished key visual color',
+            match: ['hero', 'main character', 'key visual', 'bright', '주인공', '대표', '화려', '키비주얼'],
+            artists: ['mika_pikazo', 'yoneyama_mai', 'lam_(ramdayo)', 'lack'],
+            styles: ['anime_coloring', 'lineart', 'pastel_colors'],
+            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
+            negative: 'photo, realistic, 3d, text, logo, watermark, low contrast'
+        }),
+        Object.freeze({
+            id: 'soft_visual_novel',
+            label: 'soft visual novel illustration',
+            match: ['romance', 'school', 'soft', 'daily', 'visual novel', '연애', '일상', '부드러운', '학교'],
+            artists: ['kantoku', 'tony_taka', 'carnelian', 'torino_aqua'],
+            styles: ['anime_coloring', 'lineart', 'pastel_colors'],
+            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
+            negative: 'photo, realistic, 3d, harsh shadows, text, logo, watermark'
+        }),
+        Object.freeze({
+            id: 'painterly_fantasy',
+            label: 'painterly fantasy illustration',
+            match: ['fantasy', 'magic', 'kingdom', 'myth', '판타지', '마법', '왕국', '신화'],
+            artists: ['wlop', 'fuzichoco', 'swd3e2', 'ask_(askzy)'],
+            styles: ['painterly', 'blending', 'painting_(medium)'],
+            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
+            negative: 'photo, realistic, 3d, muddy colors, text, logo, watermark'
+        }),
+        Object.freeze({
+            id: 'sharp_scifi',
+            label: 'sharp sci-fi character illustration',
+            match: ['sci-fi', 'scifi', 'cyber', 'future', 'mecha', 'sf', '사이버', '미래', '기계', '메카'],
+            artists: ['redjuice', 'huke', 'neco', 'shinkawa_youji'],
+            styles: ['lineart', 'anime_coloring', 'muted_color'],
+            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
+            negative: 'photo, realistic, 3d, fantasy robe, medieval weapon, text, logo, watermark'
+        }),
+        Object.freeze({
+            id: 'retro_manga',
+            label: 'retro manga illustration',
+            match: ['retro', 'manga', 'old anime', 'classic', '복고', '만화', '고전'],
+            artists: ['takeuchi_takashi', 'yoshida_akihiko', 'aoki_ume', 'namori'],
+            styles: ['retro_artstyle', '1990s_(style)', 'lineart'],
+            quality: 'simple background, best quality, amazing quality, highres',
+            negative: 'photo, realistic, 3d, text, logo, watermark'
+        })
+    ]);
+
+    function svbDanbooruTagSet(list) {
+        return new Set(ensureArray(list).map((item) => safeString(item?.tag || item).trim()).filter(Boolean));
     }
 
-    function svbAssetStyleRecommendationNeedsModelRewrite(value = '') {
-        const text = safeString(value).trim();
-        if (!text) return false;
-        return /\b(?:by|in\s+the\s+style\s+of|style\s+of|inspired\s+by)\s+[^,]+/i.test(text);
+    function svbNormalizeStyleSelectionList(value) {
+        if (Array.isArray(value)) return value.map(item => safeString(item?.tag || item).trim()).filter(Boolean);
+        return safeString(value)
+            .split(',')
+            .map(part => part.replace(/^[([{]+|[)\]}]+$/g, '').replace(/:[\d.]+$/, '').trim())
+            .filter(Boolean);
     }
 
-    async function parseAssetStyleRecommendationResponse(response) {
+    function svbPromptAtomFromDanbooruTag(tag = '') {
+        return safeString(tag).trim().replace(/_/g, ' ').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+    }
+
+    function svbWeightedDanbooruTag(tag = '', weight = 1) {
+        const atom = svbPromptAtomFromDanbooruTag(tag);
+        if (!atom) return '';
+        const fixedWeight = Number(weight);
+        if (!Number.isFinite(fixedWeight) || Math.abs(fixedWeight - 1) < 0.01) return atom;
+        return `(${atom}:${fixedWeight.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')})`;
+    }
+
+    function svbFindDanbooruStylePackById(id = '') {
+        return SVB_DANBOORU_STYLE_PACK_DB.find(pack => pack.id === safeString(id).trim()) || null;
+    }
+
+    function svbChooseDanbooruStylePack(context = {}) {
+        const text = JSON.stringify(context || {}).toLowerCase();
+        let best = SVB_DANBOORU_STYLE_PACK_DB[0];
+        let bestScore = -1;
+        SVB_DANBOORU_STYLE_PACK_DB.forEach((pack) => {
+            const score = ensureArray(pack.match).reduce((sum, key) => sum + (text.includes(safeString(key).toLowerCase()) ? 1 : 0), 0);
+            if (score > bestScore) {
+                best = pack;
+                bestScore = score;
+            }
+        });
+        return best || SVB_DANBOORU_STYLE_PACK_DB[0];
+    }
+
+    function svbBuildDanbooruStyleCandidatePayload(context = {}) {
+        return {
+            dbVersion: SVB_DANBOORU_STYLE_DB_VERSION,
+            rule: 'Choose only packId and tags that exactly exist in this payload. Do not invent names. Do not write by/inspired-by/style-of prose.',
+            packs: SVB_DANBOORU_STYLE_PACK_DB.map(pack => ({
+                id: pack.id,
+                label: pack.label,
+                match: pack.match,
+                artistTags: pack.artists,
+                styleTags: pack.styles,
+                qualityPrompt: pack.quality,
+                negativePrompt: pack.negative
+            })),
+            allowedArtistTags: SVB_DANBOORU_ARTIST_TAG_DB.map(item => item.tag),
+            allowedStyleTags: SVB_DANBOORU_STYLE_TAG_DB,
+            context
+        };
+    }
+
+    async function chooseAssetStylePackWithMainModel(context = {}) {
+        const systemPrompt = [
+            'You choose an Asset Studio art style pack from a compact Danbooru taxonomy-derived candidate DB.',
+            'You do not write final prompts. You only choose packId and optional tag arrays from the provided candidate DB.',
+            'Every artistTags/styleTags item must exactly match an allowed candidate tag.',
+            'Never invent artist names. Never output natural-language credits such as by Artist, style of Artist, inspired by Artist.',
+            'Return only JSON: {"packId":"...", "artistTags":["..."], "styleTags":["..."], "rationale":"short Korean reason"}'
+        ].join('\n');
+        const userText = JSON.stringify(svbBuildDanbooruStyleCandidatePayload(context), null, 2);
+        const response = await callAssetStudioMainModel(systemPrompt, userText);
         const parsedPack = await parseJsonFromAI(response, {
-            schemaHint: '{"stylePrompt":"fixed artist/style prompt prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
+            schemaHint: '{"packId":"candidate pack id","artistTags":["allowed artist tag"],"styleTags":["allowed style tag"],"rationale":"short Korean reason"}',
             allowModelRepair: true
         });
         const parsed = parsedPack?.data;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('LLM 추천 응답이 JSON 객체가 아닙니다.');
-        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
         return parsed;
     }
 
-    async function rewriteAssetStyleRecommendationWithModel(previous, context, referenceBlock = '') {
-        const systemPrompt = [
-            'You rewrite an Asset Studio style recommendation into Wellspring/Danbooru-compatible prompt fields.',
-            'Use only the provided character/context JSON, current style, stored references, Wellspring library entries, and Wellspring gallery prompt samples.',
-            'Do not convert artist names locally or invent new artists.',
-            'If there is no reliable artist/style source in the provided material, return an empty stylePrompt instead of prose.',
-            'Return only JSON with keys: stylePrompt, qualityPrompt, negativePrompt, rationale.'
-        ].join('\n');
-        const userText = [
-            'The previous recommendation used natural-language artist/style credit text instead of prompt atoms.',
-            'Rewrite it as a direct comma-separated prompt prefix for the Asset Studio style field.',
-            'Never use "by Artist", "in the style of Artist", or full sentences in stylePrompt.',
-            '',
-            'Previous recommendation JSON:',
-            JSON.stringify(previous, null, 2),
-            '',
-            buildAssetStyleRecommendationUserText(context, referenceBlock)
-        ].join('\n');
-        const response = await callAssetStudioMainModel(systemPrompt, userText);
-        return await parseAssetStyleRecommendationResponse(response);
+    function svbResolveDanbooruStyleSelection(selection = {}, context = {}) {
+        const artistSet = svbDanbooruTagSet(SVB_DANBOORU_ARTIST_TAG_DB);
+        const styleSet = svbDanbooruTagSet(SVB_DANBOORU_STYLE_TAG_DB);
+        const pack = svbFindDanbooruStylePackById(selection.packId || selection.pack_id)
+            || svbChooseDanbooruStylePack(context);
+        const selectedArtists = svbNormalizeStyleSelectionList(selection.artistTags || selection.artist_tags || selection.artists)
+            .filter(tag => artistSet.has(tag))
+            .slice(0, 4);
+        const selectedStyles = svbNormalizeStyleSelectionList(selection.styleTags || selection.style_tags || selection.styles)
+            .filter(tag => styleSet.has(tag))
+            .slice(0, 5);
+        const artists = selectedArtists.length ? selectedArtists : ensureArray(pack.artists).slice(0, 3);
+        const styles = selectedStyles.length ? selectedStyles : ensureArray(pack.styles).slice(0, 4);
+        const weightedArtists = artists.map((tag, index) => svbWeightedDanbooruTag(tag, [1.08, 0.95, 0.82, 0.72][index] || 0.7));
+        const stylePrompt = svbJoinPromptFragments(weightedArtists, styles.map(svbPromptAtomFromDanbooruTag));
+        return {
+            pack,
+            artists,
+            styles,
+            stylePrompt,
+            qualityPrompt: pack.quality,
+            negativePrompt: pack.negative,
+            rationale: safeString(selection.rationale).trim()
+        };
     }
 
     function buildAssetStyleRecommendationContext() {
@@ -52537,43 +52677,17 @@ async function openAssetStudio() {
         }
         try {
             setStatus('LLM으로 캐릭터 설정 기반 그림체 조합을 추천받는 중...', 'info');
-            const systemPrompt = [
-                'You are an image prompt style curator for Wellspring/Danbooru-style generation.',
-                'Use the provided character context and Wellspring/Danbooru prompt reference block to recommend a single coherent art-style prefix.',
-                'Do not use local rules, do not mention code, do not create images.',
-                'Return only JSON with keys: stylePrompt, qualityPrompt, negativePrompt, rationale.',
-                'stylePrompt must be direct comma-separated prompt atoms for the Asset Studio style field.',
-                'Use artist/style atoms only when they are present in the current style, stored references, Wellspring library, or gallery prompt samples.',
-                'Do not write natural-language credits such as "by Artist", "in the style of Artist", or full sentences.',
-                'If there is no reliable artist/style source, return an empty stylePrompt instead of inventing one.',
-                'Keep qualityPrompt and negativePrompt separate from stylePrompt.'
-            ].join('\n');
             const styleContext = buildAssetStyleRecommendationContext();
-            const referenceBlock = await buildKeroImagePromptReferenceBlock({
-                userInput: 'Asset Studio artist style prompt recommendation Wellspring Danbooru 그림체 작가 프롬프트',
-                visibleUserInput: 'Asset Studio artist style prompt recommendation Wellspring Danbooru 그림체 작가 프롬프트',
-                char,
-                progressOptions: { detached: true, allowCurrentJobFallback: false }
+            const selection = await chooseAssetStylePackWithMainModel(styleContext).catch(error => {
+                Logger.warn('Asset Studio DB style chooser fell back to deterministic pack:', error?.message || error);
+                return {};
             });
-            const response = await callAssetStudioMainModel(systemPrompt, buildAssetStyleRecommendationUserText(styleContext, referenceBlock));
-            let parsed = await parseAssetStyleRecommendationResponse(response);
-            const initialStylePrompt = svbJoinPromptFragments(
-                parsed.artistTags || parsed.artist_tags || parsed.artists,
-                parsed.stylePrompt || parsed.style_prompt || parsed.prompt
-            );
-            if (svbAssetStyleRecommendationNeedsModelRewrite(initialStylePrompt)) {
-                parsed = await rewriteAssetStyleRecommendationWithModel(parsed, styleContext, referenceBlock);
-            }
-            const artistTags = safeString(parsed.artistTags || parsed.artist_tags || parsed.artists).trim();
-            const stylePrompt = safeString(parsed.stylePrompt || parsed.style_prompt || parsed.prompt).trim();
-            const fixedStylePrompt = svbJoinPromptFragments(artistTags, stylePrompt);
-            const qualityPrompt = safeString(parsed.qualityPrompt || parsed.quality_prompt || parsed.quality).trim();
-            const negativePrompt = safeString(parsed.negativePrompt || parsed.negative_prompt || parsed.negative).trim();
-            if (svbAssetStyleRecommendationNeedsModelRewrite(fixedStylePrompt)) {
-                throw new Error('LLM이 Danbooru/Wellspring 태그 대신 자연어 작가 크레딧을 반환했습니다. 저장된 그림체나 Wellspring reference를 먼저 확인해주세요.');
-            }
+            const resolved = svbResolveDanbooruStyleSelection(selection, styleContext);
+            const fixedStylePrompt = resolved.stylePrompt;
+            const qualityPrompt = resolved.qualityPrompt;
+            const negativePrompt = resolved.negativePrompt;
             if (!fixedStylePrompt && !qualityPrompt && !negativePrompt) {
-                throw new Error('LLM 추천 응답에 적용할 그림체/퀄리티/네거티브 값이 없습니다.');
+                throw new Error('Danbooru compact DB에서 적용할 그림체/퀄리티/네거티브 값을 만들지 못했습니다.');
             }
             const styleInput = document.getElementById('svb-as-style-prompt');
             const qualityInput = document.getElementById('svb-as-style-quality');
@@ -52581,7 +52695,7 @@ async function openAssetStudio() {
             if (styleInput) styleInput.value = fixedStylePrompt;
             if (qualityInput) qualityInput.value = qualityPrompt;
             if (negativeInput) negativeInput.value = negativePrompt;
-            setStatus('메인 LLM 추천을 입력칸에 채웠습니다. 적용하려면 저장을 누르세요.', 'success');
+            setStatus(`Danbooru DB 후보 기반 그림체를 입력칸에 채웠습니다: ${resolved.pack.label}. 저장을 누르면 적용됩니다.`, 'success');
         } catch (error) {
             Logger.error('Asset Studio style recommendation failed:', error);
             setStatus(`그림체 AI 추천 실패: ${error?.message || error}`, 'error');
