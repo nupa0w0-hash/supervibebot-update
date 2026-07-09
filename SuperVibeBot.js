@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.117
-//@version 1.5.117
+//@display-name 🐸 SuperVibeBot v1.5.118
+//@version 1.5.118
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.117는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.118는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,12 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.118 Release Notes
+ * - v1.5.118: replaces Asset Studio folder mode with a real folder tile browser and click-through folder contents instead of grouped list sections
+ * - v1.5.118: merges artist/style input into one fixed art-style prompt field while keeping quality and negative separate
+ * - v1.5.118: moves bulk asset operations into a compact selected-action menu and removes the always-visible static CBS help bar
+ * - v1.5.118: tightens mobile Asset Studio action layout so library buttons wrap as a compact grid instead of overflowing
+ *
  * SuperVibeBot v1.5.117 Release Notes
  * - v1.5.117: simplifies Asset Studio library controls by removing the separate direct-registration panel, moving selection/delete controls together, and adding a folder-grouped view
  * - v1.5.117: adds an Asset Library style button for a user-saved fixed art-style prefix that is stored in Asset Studio metadata and applied as the generation promptPrefix
@@ -52308,6 +52314,8 @@ async function openAssetStudio() {
         if (!el) return;
         el.textContent = message || '';
         el.className = `svb-as-status ${type}`;
+        const bar = el.closest('.svb-as-statusbar');
+        if (bar) bar.style.display = message ? 'block' : 'none';
     }
 
     function syncCharacterAssetFields() {
@@ -52357,6 +52365,7 @@ async function openAssetStudio() {
     function openAssetStylePanel() {
         closeAssetStylePanel();
         const style = getDefaultAssetStyle() || {};
+        const fixedStylePrompt = svbBuildAssetStylePrompt(style);
         const modal = document.createElement('div');
         modal.id = 'svb-as-style-panel';
         modal.className = 'svb-as-style-modal';
@@ -52367,11 +52376,8 @@ async function openAssetStudio() {
                     <button class="svb-as-btn svb-as-close" data-action="close-style-panel" type="button" title="닫기">×</button>
                 </div>
                 <div class="svb-as-style-body">
-                    <label class="svb-as-mini-field">작가 태그
-                        <textarea class="svb-as-input" id="svb-as-style-artists" placeholder="예: artist_a:0.8, (artist_b:1.1)">${escapeHtml(style.artistTags || '')}</textarea>
-                    </label>
-                    <label class="svb-as-mini-field">그림체 프롬프트
-                        <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="사용자가 고정할 그림체/채색/선화 프롬프트">${escapeHtml(style.stylePrompt || '')}</textarea>
+                    <label class="svb-as-mini-field svb-as-style-wide">작가/그림체 프롬프트
+                        <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="예: (artist_name:1.05), linework cue, color/shading cue">${escapeHtml(fixedStylePrompt || '')}</textarea>
                     </label>
                     <label class="svb-as-mini-field">퀄리티
                         <textarea class="svb-as-input" id="svb-as-style-quality" placeholder="white background, simple background, masterpiece...">${escapeHtml(style.qualityPrompt || '')}</textarea>
@@ -52393,7 +52399,7 @@ async function openAssetStudio() {
     function readAssetStylePanelValues() {
         return {
             name: 'default',
-            artistTags: document.getElementById('svb-as-style-artists')?.value || '',
+            artistTags: '',
             stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
             qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
             negativePrompt: document.getElementById('svb-as-style-negative')?.value || ''
@@ -52410,7 +52416,7 @@ async function openAssetStudio() {
     }
 
     function clearAssetStylePanelFields() {
-        ['svb-as-style-artists', 'svb-as-style-prompt', 'svb-as-style-quality', 'svb-as-style-negative'].forEach((id) => {
+        ['svb-as-style-prompt', 'svb-as-style-quality', 'svb-as-style-negative'].forEach((id) => {
             const node = document.getElementById(id);
             if (node) node.value = '';
         });
@@ -52460,14 +52466,13 @@ async function openAssetStudio() {
                 'You are an image prompt style curator for Wellspring/Danbooru-style generation.',
                 'Use the provided character context to recommend a single coherent art-style prefix.',
                 'Do not use local rules, do not mention code, do not create images.',
-                'Return only JSON with keys: artistTags, stylePrompt, qualityPrompt, negativePrompt, rationale.',
-                'artistTags should contain weighted artist/style atoms when appropriate.',
-                'stylePrompt should be a concise prompt prefix that can be placed before every Positive prompt for this character.',
+                'Return only JSON with keys: stylePrompt, qualityPrompt, negativePrompt, rationale.',
+                'stylePrompt should include any weighted artist/style atoms and be a concise prompt prefix placed before every Positive prompt for this character.',
                 'Do not add generic style filler unless the supplied context explicitly asks for that exact style.'
             ].join('\n');
             const response = await callAssetStudioMainModel(systemPrompt, JSON.stringify(buildAssetStyleRecommendationContext(), null, 2));
             const parsed = await parseJsonFromAI(response, {
-                schemaHint: '{"artistTags":"artist/style weighted tags","stylePrompt":"fixed style prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
+                schemaHint: '{"stylePrompt":"fixed artist/style prompt prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
                 allowModelRepair: false
             });
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -52475,14 +52480,13 @@ async function openAssetStudio() {
             }
             const artistTags = safeString(parsed.artistTags || parsed.artist_tags || parsed.artists).trim();
             const stylePrompt = safeString(parsed.stylePrompt || parsed.style_prompt || parsed.prompt).trim();
+            const fixedStylePrompt = svbJoinPromptFragments(artistTags, stylePrompt);
             const qualityPrompt = safeString(parsed.qualityPrompt || parsed.quality_prompt || parsed.quality).trim();
             const negativePrompt = safeString(parsed.negativePrompt || parsed.negative_prompt || parsed.negative).trim();
-            const artistInput = document.getElementById('svb-as-style-artists');
             const styleInput = document.getElementById('svb-as-style-prompt');
             const qualityInput = document.getElementById('svb-as-style-quality');
             const negativeInput = document.getElementById('svb-as-style-negative');
-            if (artistInput) artistInput.value = artistTags;
-            if (styleInput) styleInput.value = stylePrompt;
+            if (styleInput) styleInput.value = fixedStylePrompt;
             if (qualityInput) qualityInput.value = qualityPrompt;
             if (negativeInput) negativeInput.value = negativePrompt;
             setStatus('AI 추천을 입력칸에 채웠습니다. 적용하려면 저장을 누르세요.', 'success');
@@ -52698,6 +52702,12 @@ async function openAssetStudio() {
     function renderAssetFolderShelf(refs = []) {
         const shelf = document.getElementById('svb-as-folder-shelf');
         if (!shelf) return;
+        if ((assetViewModes.all || 'gallery') === 'folder') {
+            shelf.innerHTML = '';
+            shelf.style.display = 'none';
+            return;
+        }
+        shelf.style.display = '';
         const filter = document.getElementById('svb-as-asset-folder-filter')?.value || '';
         const counts = getFolderCountsForRefs(refs);
         const folders = [...counts.keys()].sort((a, b) => {
@@ -52715,6 +52725,16 @@ async function openAssetStudio() {
             })
         ];
         shelf.innerHTML = buttons.join('');
+    }
+
+    function getFolderFilterLabel(value = '') {
+        const clean = safeString(value).trim();
+        if (!clean) return '전체';
+        return clean === '__none__' ? '미분류' : clean;
+    }
+
+    function getFolderFilterValue(folder = '') {
+        return folder === '미분류' ? '__none__' : folder;
     }
 
     function setAssetViewMode(kind, mode) {
@@ -52801,6 +52821,20 @@ async function openAssetStudio() {
                 </div>
             </details>
         </article>`;
+    }
+
+    function renderAssetFolderTileHtml(folder, refs = []) {
+        const value = getFolderFilterValue(folder);
+        const sampleNames = refs
+            .slice(0, 4)
+            .map(ref => safeString(ref.asset?.name).trim())
+            .filter(Boolean);
+        return `<button class="svb-as-folder-tile" data-action="open-folder" data-folder="${escapeHtml(value)}" type="button">
+            <span class="svb-as-folder-tab"></span>
+            <span class="svb-as-folder-title">${escapeHtml(folder)}</span>
+            <span class="svb-as-folder-count">${refs.length}개 항목</span>
+            <span class="svb-as-folder-samples">${sampleNames.length ? sampleNames.map(name => `<em>${escapeHtml(name)}</em>`).join('') : '<em>비어 있음</em>'}</span>
+        </button>`;
     }
 
     function getAssetRefsForKind(kind, selectedOnly = true) {
@@ -54098,11 +54132,15 @@ async function openAssetStudio() {
         if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind('all')}개 선택`;
         const viewMode = assetViewModes.all || 'gallery';
         list.className = `svb-as-list svb-as-asset-grid svb-as-unified-list ${viewMode}`;
-        const filtered = allRefs.filter(({ kind, asset }) => {
+        const queryFiltered = allRefs.filter(({ kind, asset }) => {
+            const folder = getAssetFolder(kind, asset.name);
+            return !query || [asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
+        });
+        const filtered = queryFiltered.filter(({ kind, asset }) => {
             const folder = getAssetFolder(kind, asset.name);
             if (folderFilter === '__none__' && folder) return false;
             if (folderFilter && folderFilter !== '__none__' && folder !== folderFilter) return false;
-            return !query || [asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
+            return true;
         });
         if (!filtered.length) {
             list.innerHTML = '<div class="svb-as-empty">표시할 에셋이 없습니다. 파일을 업로드하세요.</div>';
@@ -54110,7 +54148,7 @@ async function openAssetStudio() {
         }
         if (viewMode === 'folder') {
             const groups = new Map();
-            filtered.forEach((ref) => {
+            queryFiltered.forEach((ref) => {
                 const folder = getAssetFolder(ref.kind, ref.asset.name) || '미분류';
                 if (!groups.has(folder)) groups.set(folder, []);
                 groups.get(folder).push(ref);
@@ -54120,18 +54158,24 @@ async function openAssetStudio() {
                 if (b === '미분류') return -1;
                 return a.localeCompare(b);
             });
-            list.innerHTML = folders.map(folder => {
-                const refs = groups.get(folder) || [];
-                return `<section class="svb-as-folder-group">
-                    <div class="svb-as-folder-head"><strong>${escapeHtml(folder)}</strong><span>${refs.length}</span></div>
-                    <div class="svb-as-folder-grid">
-                        ${refs.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
-                            usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
-                            folder: getAssetFolder(kind, asset.name)
-                        })).join('')}
-                    </div>
-                </section>`;
-            }).join('');
+            if (!folderFilter) {
+                list.className = `svb-as-list svb-as-asset-grid svb-as-unified-list folder svb-as-folder-home`;
+                list.innerHTML = folders.length
+                    ? folders.map(folder => renderAssetFolderTileHtml(folder, groups.get(folder) || [])).join('')
+                    : '<div class="svb-as-empty">표시할 폴더가 없습니다.</div>';
+                return;
+            }
+            list.innerHTML = `<div class="svb-as-folder-path">
+                    <button class="svb-as-btn" data-action="folder-back" type="button">전체 폴더</button>
+                    <strong>${escapeHtml(getFolderFilterLabel(folderFilter))}</strong>
+                    <span>${filtered.length}개 항목</span>
+                </div>
+                <div class="svb-as-folder-grid">
+                    ${filtered.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
+                        usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
+                        folder: getAssetFolder(kind, asset.name)
+                    })).join('')}
+                </div>`;
         } else {
             list.innerHTML = filtered.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
                 usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
@@ -55676,7 +55720,7 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-hidden-actions{display:none}
             #svb-asset-studio-window .svb-as-body{flex:1;min-height:0;display:flex;background:#f8fafc}
             #svb-asset-studio-window .svb-as-left{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff}
-            #svb-asset-studio-window .svb-as-statusbar{min-height:38px;padding:8px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;box-sizing:border-box}
+            #svb-asset-studio-window .svb-as-statusbar{display:none;padding:7px 12px;border-bottom:1px solid #e5e7eb;background:#f8fafc;box-sizing:border-box}
             #svb-asset-studio-window .svb-as-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto;padding:12px}
             #svb-asset-studio-window .svb-as-form{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:10px;display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-form-title{font-size:12px;font-weight:850;color:#334155}
@@ -55715,10 +55759,17 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-info{grid-column:3}
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:4;display:flex}
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-prompt-details,#svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-edit{grid-column:1 / -1}
-            #svb-asset-studio-window .svb-as-folder-group{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:8px;display:flex;flex-direction:column;gap:8px}
-            #svb-asset-studio-window .svb-as-folder-head{height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px}
-            #svb-asset-studio-window .svb-as-folder-head strong{font-size:13px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-            #svb-asset-studio-window .svb-as-folder-head span{min-width:24px;height:22px;border-radius:999px;background:#e2e8f0;color:#475569;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:850}
+            #svb-asset-studio-window .svb-as-asset-grid.folder.svb-as-folder-home{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:stretch}
+            #svb-asset-studio-window .svb-as-folder-tile{position:relative;min-height:118px;border:1px solid #dbe3ef;border-radius:10px;background:#fff;color:#111827;padding:12px 10px 10px;display:flex;flex-direction:column;gap:6px;text-align:left;cursor:pointer;overflow:hidden}
+            #svb-asset-studio-window .svb-as-folder-tile:hover{border-color:#0f766e;background:#f0fdfa}
+            #svb-asset-studio-window .svb-as-folder-tab{width:52px;height:34px;border-radius:7px 7px 5px 5px;background:#facc15;box-shadow:inset 0 -10px 0 rgba(251,191,36,.8);display:block}
+            #svb-asset-studio-window .svb-as-folder-title{font-size:13px;font-weight:900;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-folder-count{font-size:11px;font-weight:800;color:#64748b}
+            #svb-asset-studio-window .svb-as-folder-samples{display:flex;flex-direction:column;gap:2px;min-height:34px}
+            #svb-asset-studio-window .svb-as-folder-samples em{font-style:normal;font-size:10px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-folder-path{grid-column:1 / -1;display:flex;align-items:center;gap:8px;min-width:0;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:8px}
+            #svb-asset-studio-window .svb-as-folder-path strong{min-width:0;font-size:13px;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-folder-path span{font-size:11px;color:#64748b;white-space:nowrap}
             #svb-asset-studio-window .svb-as-folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
             #svb-asset-studio-window .svb-as-row-main{display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:8px;align-items:center}
             #svb-asset-studio-window .svb-as-select{width:16px;height:16px;margin:0;accent-color:#0f766e}
@@ -55751,6 +55802,9 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
             #svb-asset-studio-window .svb-as-toolbar-left,#svb-asset-studio-window .svb-as-toolbar-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
             #svb-asset-studio-window .svb-as-inline-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+            #svb-asset-studio-window .svb-as-library-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,max-content));justify-content:start;gap:6px}
+            #svb-asset-studio-window .svb-as-tools-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,170px);gap:8px;align-items:center}
+            #svb-asset-studio-window .svb-as-bulk-select{min-width:0}
             #svb-asset-studio-window .svb-as-view-btn.active{border-color:#0f766e;background:#ecfdf5;color:#047857}
             #svb-asset-studio-window .svb-as-selected-count{font-size:11px;color:#64748b;font-weight:750}
             #svb-asset-studio-window .svb-as-style-modal{position:absolute;inset:0;z-index:6;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box}
@@ -55758,6 +55812,7 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-style-head{height:48px;padding:0 12px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;gap:8px}
             #svb-asset-studio-window .svb-as-style-head strong{font-size:14px;color:#111827}
             #svb-asset-studio-window .svb-as-style-body{padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;overflow:auto}
+            #svb-asset-studio-window .svb-as-style-wide{grid-column:1 / -1}
             #svb-asset-studio-window .svb-as-style-body textarea{min-height:110px}
             #svb-asset-studio-window .svb-as-style-actions{padding:10px 12px;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;background:#f8fafc}
             #svb-asset-studio-window .svb-as-folder-shelf{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:none}
@@ -55815,7 +55870,10 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-title{flex:1 1 auto}
                 #svb-asset-studio-window .svb-as-title strong{font-size:14px}
                 #svb-asset-studio-window .svb-as-title span{font-size:11px;max-width:calc(100vw - 190px)}
-                #svb-asset-studio-window .svb-as-actions{flex:0 0 auto;width:auto;overflow:visible;flex-wrap:nowrap;gap:4px;padding-bottom:0}
+                #svb-asset-studio-window .svb-as-header > .svb-as-actions{flex:0 0 auto;width:auto;overflow:visible;flex-wrap:nowrap;gap:4px;padding-bottom:0}
+                #svb-asset-studio-window .svb-as-library-actions{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+                #svb-asset-studio-window .svb-as-library-actions .svb-as-btn{padding:0 6px}
+                #svb-asset-studio-window .svb-as-tools-grid{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-manage-select{width:74px}
                 #svb-asset-studio-window #svb-as-refresh{width:34px;padding:0;font-size:0}
                 #svb-asset-studio-window #svb-as-refresh::before{content:"새로";font-size:11px}
@@ -55830,6 +55888,7 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-part-check{justify-self:start}
                 #svb-asset-studio-window .svb-as-output-list{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+                #svb-asset-studio-window .svb-as-asset-grid.folder.svb-as-folder-home{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
                 #svb-asset-studio-window .svb-as-folder-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
                 #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-asset-card{grid-template-columns:22px 60px minmax(0,1fr)}
                 #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:1 / -1}
@@ -55843,6 +55902,8 @@ async function openAssetStudio() {
             @media (max-width:420px){
                 #svb-asset-studio-window .svb-as-panel{padding:10px}
                 #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:1fr}
+                #svb-asset-studio-window .svb-as-library-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+                #svb-asset-studio-window .svb-as-asset-grid.folder.svb-as-folder-home{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-folder-grid{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-card-actions{grid-template-columns:1fr 1fr 1fr}
             }
@@ -55885,7 +55946,7 @@ async function openAssetStudio() {
                 <div class="svb-as-body">
                     <section class="svb-as-left">
                         <div class="svb-as-statusbar">
-                            <div class="svb-as-status" id="svb-as-status">에셋은 CBS에서 {{image::이름}} 또는 {{asset::이름}} 형태로 사용할 수 있습니다. 기존 호환 태그도 같은 목록에서 관리됩니다.</div>
+                            <div class="svb-as-status" id="svb-as-status"></div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-assets-panel">
                             <div class="svb-as-form">
@@ -55900,7 +55961,7 @@ async function openAssetStudio() {
                                         <button class="svb-as-btn svb-as-view-btn" data-action="set-asset-view" data-kind="all" data-view="folder" type="button">폴더</button>
                                     </div>
                                 </div>
-                                <div class="svb-as-actions">
+                                <div class="svb-as-actions svb-as-library-actions">
                                     <button class="svb-as-btn primary" id="svb-as-upload-btn" type="button">파일 업로드</button>
                                     <button class="svb-as-btn primary" data-action="open-style-panel" type="button">그림체</button>
                                     <button class="svb-as-btn" data-action="select-all" data-kind="all" type="button">전체 선택</button>
@@ -55911,14 +55972,15 @@ async function openAssetStudio() {
                             </div>
                             <div class="svb-as-form">
                                 <div class="svb-as-folder-shelf" id="svb-as-folder-shelf"></div>
-                                <div class="svb-as-grid">
-                                    <input class="svb-as-input" id="svb-as-asset-search" placeholder="에셋/폴더/경로 검색" style="grid-column:1 / -1">
+                                <div class="svb-as-tools-grid">
+                                    <input class="svb-as-input" id="svb-as-asset-search" placeholder="에셋/폴더/경로 검색">
                                     <select class="svb-as-input svb-as-folder-filter" id="svb-as-asset-folder-filter" data-kind="all" style="display:none"></select>
-                                </div>
-                                <div class="svb-as-actions">
-                                    <button class="svb-as-btn" data-action="pattern-rename" data-kind="all" type="button">패턴 변경</button>
-                                    <button class="svb-as-btn" data-action="move-folder" data-kind="all" type="button">폴더 이동</button>
-                                    <button class="svb-as-btn" data-action="batch-replace" data-kind="all" type="button">일괄 교체</button>
+                                    <select class="svb-as-input svb-as-bulk-select" id="svb-as-bulk-action">
+                                        <option value="">선택 작업</option>
+                                        <option value="pattern-rename">패턴 변경</option>
+                                        <option value="move-folder">폴더 이동</option>
+                                        <option value="batch-replace">일괄 교체</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="svb-as-list svb-as-unified-list" id="svb-as-asset-list"></div>
@@ -56097,6 +56159,21 @@ async function openAssetStudio() {
 
     addLocal(document.getElementById('svb-as-asset-search'), 'input', renderAssetLibrary);
     addLocal(document.getElementById('svb-as-asset-folder-filter'), 'change', renderAssetLibrary);
+    addLocal(document.getElementById('svb-as-bulk-action'), 'change', async event => {
+        const action = event.target.value || '';
+        event.target.value = '';
+        try {
+            if (action === 'pattern-rename') await patternRenameSelectedAssets('all');
+            if (action === 'move-folder') await moveSelectedAssetsToFolder('all');
+            if (action === 'batch-replace') {
+                pendingBatchReplaceKind = 'all';
+                document.getElementById('svb-as-replace-file')?.click();
+            }
+        } catch (error) {
+            Logger.error('Asset Studio bulk action failed:', error);
+            setStatus(`선택 작업 실패: ${error?.message || error}`, 'error');
+        }
+    });
     addLocal(document.getElementById('svb-as-upload-btn'), 'click', () => document.getElementById('svb-as-file-input')?.click());
     addLocal(document.getElementById('svb-as-file-input'), 'change', async event => {
         await uploadFiles(event.target.files);
@@ -56427,6 +56504,18 @@ async function openAssetStudio() {
             if (action === 'filter-folder') {
                 const select = document.getElementById('svb-as-asset-folder-filter');
                 if (select) select.value = btn.dataset.folder || '';
+                renderAssetLibrary();
+                return;
+            }
+            if (action === 'open-folder') {
+                const select = document.getElementById('svb-as-asset-folder-filter');
+                if (select) select.value = btn.dataset.folder || '';
+                renderAssetLibrary();
+                return;
+            }
+            if (action === 'folder-back') {
+                const select = document.getElementById('svb-as-asset-folder-filter');
+                if (select) select.value = '';
                 renderAssetLibrary();
                 return;
             }
