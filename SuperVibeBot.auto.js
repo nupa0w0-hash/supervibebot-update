@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.120
-//@version 1.5.120
+//@display-name 🐸 SuperVibeBot v1.5.121
+//@version 1.5.121
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.120는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.121는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.121 Release Notes
+ * - v1.5.121: tells Kero that stored Asset Studio identity/style prompts are read-only reference material unless the user explicitly asks to edit them
+ * - v1.5.121: prevents asset work from being framed as hidden stored-prompt cleanup while keeping final image prompts LLM-authored
+ *
  * SuperVibeBot v1.5.120 Release Notes
  * - v1.5.120: connects the Asset Studio style AI recommendation button to the same Wellspring/Danbooru prompt reference block used by Kero image asset work
  * - v1.5.120: makes style recommendation use reference-backed prompt atoms instead of natural-language artist credits such as "by Artist"
@@ -1873,6 +1877,7 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
 - Before writing any assets[] item, choose one style anchor for the whole requested asset set. The style anchor is a comma-separated prompt prefix from the user's fixed Asset Studio style, user sample, saved Asset Studio metadata, or Wellspring reference block. If no real style source exists, keep the style anchor minimal instead of inventing generic style filler. Copy the exact same style anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed styles.
 - If the user asks for artist tags or the Wellspring reference block provides artist/style atoms, include them in that style anchor. Do not leave the style anchor empty and do not switch art style between characters in one batch.
+- Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
 - Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable style anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use real Danbooru/Wellspring prompt language and compact natural visual phrases. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. For specific local concepts that have no reliable tag, use common visual tags plus a short natural phrase.
 - Character consistency comes from repeating the same style anchor and visible identity anchors, plus LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
@@ -22388,6 +22393,7 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
 
     lines.push('### Required Output Behavior');
     lines.push('- If Asset Studio Stored References contains "stored style default:", treat only that line value as the user-fixed style prefix and put it first in every assets[].prompt. Use stored style quality/negative lines for wellspringQualityPrompt or Negative, not as Positive prefix.');
+    lines.push('- Stored identity/style references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
     lines.push('- Prefer user samples, stored Asset Studio styles, Wellspring library entries, and Wellspring gallery samples. Do not invent generic style filler when no real style source exists.');
     lines.push('- Choose one real style anchor and reuse it exactly for every asset in the batch.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
@@ -35544,6 +35550,7 @@ ${metaBlock}
 - 먼저 이번 asset batch 전체의 style anchor를 하나 정한다. style anchor는 사용자가 Asset Studio에서 고정한 그림체, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 쉼표 단위 prefix다.
 - 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 style anchor를 정확히 반복한다. 한 batch 안에서 그림체가 바뀌면 실패다.
 - 사용자가 작가 태그를 원했거나 reference block에 작가/스타일 태그가 있으면 style anchor에 포함한다. 근거 없는 새 작가명이나 generic style filler를 지어내지 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
+- Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
 - Positive는 style anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
