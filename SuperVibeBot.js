@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.138
-//@version 1.5.138
+//@display-name 🐸 SuperVibeBot v1.5.139
+//@version 1.5.139
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.138는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.139는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.139 Release Notes
+ * - v1.5.139: reconnects the final Kero asset positive-prompt canonicalizer instead of sending raw model subject stacks
+ * - v1.5.139: removes duplicate youth nouns such as "1boy, boy" while preserving adult/senior cues as "man/woman/old man/old woman"
+ * - v1.5.139: canonicalizes common age, height, and body-shape prose before image API calls
+ *
  * SuperVibeBot v1.5.138 Release Notes
  * - v1.5.138: separates the Asset Studio artist prompt into the canonical artistPrompt field
  * - v1.5.138: stops legacy stylePrompt/baseStylePrompt metadata from being treated as an active artist prefix
@@ -1964,9 +1969,9 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Kero's assets[].prompt contract is visible subject/world/composition only. Artist/style/medium labels belong to the Asset Studio artist prompt field, not to Kero asset action JSON.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
 - Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
-- Use exactly one primary subject count tag when the subject count is clear: 1boy for one male subject, 1girl for one female subject, or 1other only when the character is explicitly nonbinary/other. Do not write male_focus, female_focus, Korean man, Korean woman, male, or female. Age depiction nouns may be used once when they come from source age/body context: boy, girl, man, woman, old man, or old woman.
+- Use exactly one primary subject count tag when the subject count is clear: 1boy for one male subject, 1girl for one female subject, or 1other only when the character is explicitly nonbinary/other. Do not write male_focus, female_focus, Korean man, Korean woman, male, or female. Do not add bare boy/girl after 1boy/1girl. Use man/woman or old man/old woman once only when source age/body context needs an adult or senior visual cue. For teen/youth subjects, 1boy/1girl is enough; use child only for clearly preteen subjects.
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
-- Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, or young woman unless the user explicitly asks for that wording. Convert height and body shape into direct image prompt tags: short, tall, very tall, slender, broad shoulders, muscular, petite, stocky, small body, large body, huge body. Do not write tall stature, short stature, average height, lean build, or broad-shouldered in final Positive prompts.
+- Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, adult female, young man, or young woman unless the user explicitly asks for that wording. Convert height and body shape into direct image prompt tags: short, tall, very tall, slender, broad shoulders, muscular, petite, stocky, small body, large body, huge body. Do not write tall stature, short stature, average height, lean build, or broad-shouldered in final Positive prompts.
 - Distinct identity marks must include a stable visible location. Write "small mole under left eye", "scar across right eyebrow", or "birthmark on left cheek"; do not write bare "mole", "scar", "tattoo", "birthmark", or "freckles". If the source only says the mark exists without a location, choose one consistent visible location for that character in the generated prompt or omit the mark.
 - Character consistency comes from visible identity anchors, the user-saved Asset Studio artist prompt prepended verbatim when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
@@ -30439,7 +30444,7 @@ Rules:
 - Use the same image prompt writer rules as normal Kero asset creation.
 - Do not write artist/style/medium terms in assets[].prompt. If an artist anchor exists, it is supplied by Asset Studio at runtime, not by Kero recovery JSON.
 - Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: one subject count tag, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
-- Use exactly one subject count tag: 1boy, 1girl, or 1other. Do not add male_focus, female_focus, boy, girl, man, woman, Korean man, or Korean woman as extra subject prose.
+- Use exactly one subject count tag: 1boy, 1girl, or 1other. Do not add male_focus, female_focus, Korean man, or Korean woman. Do not add bare boy/girl after 1boy/1girl. Add man/woman or old man/old woman only when adult or senior age/body context is a useful visible cue.
 - Do not add canned medium/style phrases to assets[].prompt.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists. Convert vague source prose into concrete visible cues, e.g. "regulation hair length" -> short_hair; do not copy the vague phrase itself.
 - Put only global quality direction in wellspringQualityPrompt. Put visible studio/background direction such as white background or simple background in assets[].prompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
@@ -30663,7 +30668,7 @@ Rules:
         const text = normalizeKeroGeneratedPromptAtom(atom);
         if (!isKeroAgeDepictionNounAtom(text)) return false;
         if (text === 'child') return true;
-        if (hasExplicitSubjectTag && /^(?:boy|girl)$/.test(text)) return false;
+        if (/^(?:boy|girl)$/.test(text)) return false;
         return true;
     }
 
@@ -30696,9 +30701,24 @@ Rules:
         const female = subject === '1girl';
         if (!male && !female) return '';
         if (age < 13) return 'child';
-        if (age < 18) return male ? 'boy' : 'girl';
+        if (age < 18) return '';
         if (age < 60) return male ? 'man' : 'woman';
         return male ? 'old man' : 'old woman';
+    }
+
+    function normalizeKeroAgeNounAtom(text = '', subjectTag = '') {
+        const clean = normalizeKeroGeneratedPromptAtom(text);
+        if (!clean) return '';
+        const subject = safeString(subjectTag).trim().toLowerCase();
+        const male = subject === '1boy';
+        const female = subject === '1girl';
+        if (/^(?:boy|girl)$/.test(clean)) return '';
+        if (/^(?:adult|young adult|mature adult)$/.test(clean)) return '';
+        if (/^(?:adult man|adult male|young man|young male|mature man|mature male|guy)$/.test(clean)) return male || !female ? 'man' : '';
+        if (/^(?:adult woman|adult female|young woman|young female|mature woman|mature female|gal)$/.test(clean)) return female || !male ? 'woman' : '';
+        if (/^(?:elderly man|old male|senior man|senior male)$/.test(clean)) return male || !female ? 'old man' : '';
+        if (/^(?:elderly woman|old female|senior woman|senior female)$/.test(clean)) return female || !male ? 'old woman' : '';
+        return '';
     }
 
     function normalizeKeroVisualHeightAtom(text = '') {
@@ -30736,6 +30756,8 @@ Rules:
         if (!text) return '';
         const ageCue = normalizeKeroVisualAgeAtom(text, options.subjectTag);
         if (ageCue) return ageCue;
+        const ageNounCue = normalizeKeroAgeNounAtom(text, options.subjectTag);
+        if (ageNounCue) return ageNounCue;
         const heightCue = normalizeKeroVisualHeightAtom(text);
         if (heightCue) return heightCue;
         const bodyCue = normalizeKeroBodyShapeAtom(text);
@@ -30846,7 +30868,7 @@ Rules:
     }
 
     function buildKeroAssetPositivePrompt(prompt = '', options = {}) {
-        return safeString(prompt).trim();
+        return normalizeKeroAssetPositivePrompt(prompt, options);
     }
 
     function buildKeroAssetQualityPrompt(qualityPrompt = '') {
@@ -30931,7 +30953,11 @@ Rules:
             const subject = getKeroSubjectCountTagFromAtom(atom);
             if (subject) {
                 if (!fallbackSubjectTag) fallbackSubjectTag = subject;
-                if (shouldKeepKeroSubjectNounAsAgeCue(atom, !!explicitSubjectTag)) {
+                const subjectTag = explicitSubjectTag || inferredSubjectTag || fallbackSubjectTag || subject;
+                const ageNounCue = normalizeKeroAgeNounAtom(atom, subjectTag);
+                if (ageNounCue) {
+                    keroAssetPushUnique(visualAtoms, ageNounCue);
+                } else if (shouldKeepKeroSubjectNounAsAgeCue(atom, !!explicitSubjectTag)) {
                     keroAssetPushUnique(visualAtoms, safeString(atom).trim());
                 }
                 return;
@@ -30939,13 +30965,14 @@ Rules:
             const subjectTag = explicitSubjectTag || inferredSubjectTag || fallbackSubjectTag;
             const sourceText = normalizeKeroGeneratedPromptAtom(atom);
             const ageCue = normalizeKeroVisualAgeAtom(sourceText, subjectTag);
-            const concrete = normalizeKeroConcreteVisualAtom(atom, { subjectTag });
+            const ageNounCue = normalizeKeroAgeNounAtom(sourceText, subjectTag);
+            const concrete = ageCue || ageNounCue || normalizeKeroConcreteVisualAtom(atom, { subjectTag });
             if (!concrete) return;
             if (/^artist\s*:/i.test(concrete)) {
                 keroAssetPushUnique(artistAtoms, concrete);
                 return;
             }
-            if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete, { allowAgeDepictionNoun: !!ageCue })) return;
+            if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete, { allowAgeDepictionNoun: !!(ageCue || ageNounCue) })) return;
             keroAssetPushUnique(visualAtoms, concrete);
         });
         return joinKeroPromptAtoms([
@@ -35943,8 +35970,8 @@ ${metaBlock}
 - 고정 매체/화풍 라벨을 assets[].prompt 본문에 넣지 않는다.
 - Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
 - Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 피사체 수 태그 1개, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
-- 피사체가 남성 1명이면 1boy 하나만, 여성 1명이면 1girl 하나만 쓴다. boy/girl/man/woman/male/female/male_focus/female_focus/Korean man/Korean woman을 함께 덧붙이지 않는다.
-- 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
+- 피사체가 남성 1명이면 피사체 수 태그는 1boy 하나만, 여성 1명이면 1girl 하나만 쓴다. male_focus/female_focus/male/female/Korean man/Korean woman은 쓰지 않는다. 1boy/1girl 뒤에 bare boy/girl을 다시 붙이지 않는다. 성인/노년 외형 단서가 필요할 때만 man/woman 또는 old man/old woman을 한 번 쓴다.
+- 나이, 키, 체형, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 나이대는 man/woman/old man/old woman처럼 이미지 모델이 이해하는 단서로, 키와 체형은 short/tall/very tall/slender/broad shoulders/muscular/petite/stocky/large body/huge body처럼 직접 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - "규정된 머리길이", regulation length, vivid expression, quick eyebrows, nursing officer, precise appearance처럼 이미지 모델이 직접 그리기 어려운 추상/역할/해석 문구는 쓰지 않는다. 필요한 경우 short_hair, bright smile, stern expression처럼 구체적 시각 단서로 바꾼다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 단, white background, simple background, plain background, studio background처럼 실제 화면에 보이는 배경/구도 조건은 Quality가 아니라 assets[].prompt의 Positive에 넣는다. wellspringQualityPrompt에는 masterpiece, best_quality, highres처럼 품질/미감/해상도 계열만 둔다.
