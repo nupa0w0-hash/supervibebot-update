@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.114
-//@version 1.5.114
+//@display-name 🐸 SuperVibeBot v1.5.115
+//@version 1.5.115
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.114는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.115는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.115 Release Notes
+ * - v1.5.115: removes local Kero image prompt judgment/filtering from the execution path; runtime now renders and sends model-authored Positive, Negative, and Quality fields without rewriting them
+ * - v1.5.115: keeps the v1.5.114 split-layer removal, but stops the local runtime from deciding which prompt fragments are visually valid
+ * - v1.5.115: moves image prompt quality responsibility back into Kero's LLM instructions, where final asset prompts must be real Danbooru/Wellspring prompt atoms instead of prose
+ *
  * SuperVibeBot v1.5.114 Release Notes
  * - v1.5.114: removes the remaining split prompt merge path from Kero image asset generation so assets[].prompt is the only Positive body sent to the image API
  * - v1.5.114: stops Kero asset generation from reusing stored identity/style prompt layers and from saving new identity style prompt layers after generation
@@ -1837,17 +1842,13 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use registered asset references in saved code: {{asset::asset_name}}, {{image::asset_name}}, or <img src="{{asset::asset_name}}"> inside backgroundHTML/regex display HTML.
 - Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
 - Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
-- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality.
+- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality. The runtime passes these fields through; it does not repair, merge, sanitize, or reinterpret split prompt layers.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Danbooru taxonomy, related-tag data, Wellspring gallery prompts, and user samples are reference dictionaries. Do not dump every matching tag into Positive. Select only the few tags that fit the bot world, the character, and the requested image.
-- Compile Positive from source context in this order: world/genre/era constraints, reusable style pack, subject/focus, visible identity anchors, outfit/equipment that actually appears on the character, pose/framing, then scene only when the scene matters. World/genre/era is a gate for choosing visible cues, not text to paste. Treat age, height, nationality, rank, and job as lore for interpreting visible cues, not as prompt text to copy.
-- Keep Positive compact by slot budget: style pack 3-6 fragments, subject/focus 2-3, identity anchors 6-10, outfit/equipment 3-6, pose/framing 2-4, scene 0-4. A normal profile/standing asset should usually stay under 28 comma fragments and under 700 characters.
-- Do not write bare age, height, nationality, media genre, setting label, rank, or job-label prose in Positive. Convert them into visible features only: face maturity, body silhouette, uniform details, insignia, posture, equipment that truly exists in context, and role-specific clothing cues.
-- A style pack is a compact set of real prompt tags such as artist tags, year tags, coloring/style tags, and medium tags chosen from user samples, Wellspring gallery patterns, or the bot's genre. Keep one style pack per character or asset set so variations still look like the same project.
-- Put global quality and neutral studio background direction in wellspringQualityPrompt. For neutral studio/profile assets, omit background tags from Positive entirely; put white/simple/neutral studio background only in wellspringQualityPrompt. Use Positive background tags only for meaningful scene content.
-- Keep Negative short. Use 8-18 failure-direction fragments such as anatomy, watermark/text, identity drift, wrong props, and wrong setting. Do not write a long thesaurus of every possible defect.
-- For the same character across multiple images, repeat the same visible identity anchors: face shape, eye shape and color, hair cut/color/part, body silhouette, core outfit, and unique marks or accessories that exist in context. Vary only expression, pose, framing, or scene.
+- Danbooru taxonomy, related-tag data, Wellspring gallery prompts, and user samples are reference dictionaries. Select real prompt atoms that fit the bot world, character, and requested image; do not dump lists, prose traits, or local helper labels into Positive.
+- Positive must already be the final image prompt. Use concise comma-separated visual atoms: chosen artist/style/year tags when useful, subject/focus, recognizable face/hair/body/outfit/equipment marks, pose/framing, and scene cues that actually appear. If a lore trait is not visible, omit it instead of writing the trait as text.
+- Keep one coherent style direction per character or asset set unless the user asks otherwise. Character consistency comes from repeated visible anchors, LoRA/workflow/project fields when available, and the same style direction, not from local identityPrompt/stylePrompt/danbooruTags fields.
+- Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on likely failures such as anatomy, text/watermark, identity drift, wrong props, or wrong setting.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
 - If the visual result depends on Wellspring workflow/character/preset/profile fields provided in context, preserve and pass those fields in the asset create payload instead of inventing incompatible route fields.`;
@@ -3583,7 +3584,6 @@ const KERO_CREATE_MIN_CHUNK_CHAR_LIMIT = 1800;
 const KERO_CREATE_MAX_CHUNK_CHAR_LIMIT = 600000;
 const KERO_CREATE_ENTRY_OVERHEAD_CHARS = 180;
 const KERO_CREATE_ADAPTIVE_RETRIES = 8;
-const KERO_DEFAULT_ASSET_QUALITY_PROMPT = 'masterpiece, best quality, amazing quality, very aesthetic, highres';
 const KERO_BULK_CHUNK_TRANSPORT_RETRY_LIMIT = 3;
 const KERO_BULK_NO_PROGRESS_RETRY_LIMIT = 3;
 const KERO_GATEWAY_RECOVERY_USER_TEXT_LIMIT = 4000;
@@ -10235,7 +10235,7 @@ function normalizeKeroRawActionShape(entry) {
         if (target === 'character') {
             ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'asset') {
-            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt', 'styleTags', 'danbooruStyleTags', 'baseStylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+            ['assets', 'items', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'identityName', 'identityKey', 'subjectName', 'subject', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
         } else if (target === 'module') {
             const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
             const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -13153,7 +13153,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.114',
+            '//@version 1.5.115',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -27543,7 +27543,7 @@ ${currentVars || '{}'}
             if (target === 'character') {
                 ['name', 'desc', 'description', 'firstMessage', 'alternateGreetings', 'globalNote', 'backgroundHTML', 'backgroundHtml', 'background', 'defaultVariables', 'variables', 'lorebooks', 'lorebook', 'regexScripts', 'regex', 'triggers', 'trigger'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'asset') {
-                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt', 'styleTags', 'danbooruStyleTags', 'baseStylePrompt', 'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt', 'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags', 'tagPrompt', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
+                ['operation', 'op', 'mode', 'kind', 'folder', 'fromFolder', 'toFolder', 'pattern', 'names', 'items', 'assets', 'images', 'prompts', 'parts', 'prompt', 'positive', 'positivePrompt', 'negative', 'negativePrompt', 'identityName', 'identityKey', 'subjectName', 'subject', 'profileId', 'presetId', 'ratioId', 'steps', 'count', 'name', 'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength', 'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'wellspringVariantIds', 'wellspringPerVariantBatch', 'wellspringQualityPrompt', 'wellspringCfg', 'wellspringSampler', 'wellspringScheduler', 'wellspringLoras', 'wellspringPayloadJson', 'workflowId', 'characterId', 'projectId', 'variantIds', 'variantId', 'trainLora', 'trainLoRA', 'wellspringTrainLora', 'wellspringTraining', 'loraTraining', 'loraName', 'trainingName', 'trainingSteps', 'loraSteps', 'galleryJobIds', 'uploadIds', 'waitForTraining', 'trainingTimeoutMs', 'loraStrength', 'autoUseTrainedLora', 'all'].forEach((key) => copyKeroTopLevelPayloadField(entry, payload, key));
             } else if (target === 'module') {
                 const charOnlyFields = ['desc', 'firstMessage', 'alternateGreetings', 'personality', 'scenario', '성격', '시나리오'];
                 const hasCharacterOnlyFields = hasKeroAnyOwnField(entry, charOnlyFields);
@@ -29832,11 +29832,8 @@ ${currentVars || '{}'}
         const direct = {};
         [
             'prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt',
-            'stylePreset', 'style', 'styleId', 'stylePrompt', 'artistTags', 'artistStyle', 'artistPrompt',
-            'styleTags', 'danbooruStyleTags', 'baseStylePrompt',
-            'identityName', 'identityKey', 'identityPrompt', 'identityNegative', 'characterPrompt',
-            'characterNegative', 'visualIdentityPrompt', 'subjectName', 'subject', 'danbooruTags',
-            'tagPrompt', 'tags', 'profileId', 'presetId', 'ratioId', 'ratio', 'steps', 'count', 'name',
+            'identityName', 'identityKey', 'subjectName', 'subject',
+            'profileId', 'presetId', 'ratioId', 'ratio', 'steps', 'count', 'name',
             'label', 'assetName', 'slotName', 'emotionTarget', 'emotion', 'assetType', 'target',
             'referenceImagePath', 'referenceImage', 'referenceImageName', 'referenceStrength',
             'referenceInformationExtracted', 'wellspringMode', 'wellspringApiMode', 'wellspringPresetId',
@@ -29887,16 +29884,9 @@ ${currentVars || '{}'}
                 ratioId: safeString(source.ratioId || source.ratio || payloadObj.ratioId || payloadObj.ratio || action.ratioId || action.ratio).trim(),
                 steps: Number.isFinite(rawSteps) && rawSteps > 0 ? Math.max(1, Math.min(150, Math.floor(rawSteps))) : 0,
                 count: Math.max(1, Number.isFinite(rawCount) ? Math.floor(rawCount) : 1),
-                stylePreset: safeString(source.stylePreset || source.style || source.styleId || payloadObj.stylePreset || payloadObj.style || payloadObj.styleId || action.stylePreset || action.style || action.styleId).trim(),
-                stylePrompt: safeString(source.stylePrompt || source.promptStyle || source.artStyle || payloadObj.stylePrompt || payloadObj.promptStyle || payloadObj.artStyle || action.stylePrompt || action.promptStyle || action.artStyle).trim(),
-                artistTags: safeString(source.artistTags || source.artistStyle || source.artistPrompt || payloadObj.artistTags || payloadObj.artistStyle || payloadObj.artistPrompt || action.artistTags || action.artistStyle || action.artistPrompt).trim(),
-                styleTags: safeString(source.styleTags || source.danbooruStyleTags || source.baseStylePrompt || payloadObj.styleTags || payloadObj.danbooruStyleTags || payloadObj.baseStylePrompt || action.styleTags || action.danbooruStyleTags || action.baseStylePrompt).trim(),
                 profileId: safeString(source.profileId || source.profile || payloadObj.profileId || payloadObj.profile || action.profileId || action.profile).trim(),
                 presetId: safeString(source.presetId || source.preset || payloadObj.presetId || payloadObj.preset || action.presetId || action.preset).trim(),
                 identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject || payloadObj.identityName || payloadObj.identityKey || payloadObj.characterName || payloadObj.subjectName || payloadObj.subject || action.identityName || action.identityKey || action.characterName || action.subjectName || action.subject),
-                identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt || source.characterConsistencyPrompt || payloadObj.identityPrompt || payloadObj.characterPrompt || payloadObj.visualIdentityPrompt || payloadObj.characterConsistencyPrompt || action.identityPrompt || action.characterPrompt || action.visualIdentityPrompt || action.characterConsistencyPrompt).trim(),
-                identityNegative: safeString(source.identityNegative || source.characterNegative || payloadObj.identityNegative || payloadObj.characterNegative || action.identityNegative || action.characterNegative).trim(),
-                danbooruTags: safeString(source.danbooruTags || source.tagPrompt || source.tags || payloadObj.danbooruTags || payloadObj.tagPrompt || payloadObj.tags || action.danbooruTags || action.tagPrompt || action.tags).trim(),
                 referenceImagePath: safeString(source.referenceImagePath || source.referenceImage || source.characterReferenceImagePath || payloadObj.referenceImagePath || payloadObj.referenceImage || action.referenceImagePath || action.referenceImage).trim(),
                 referenceImageName: safeString(source.referenceImageName || payloadObj.referenceImageName || action.referenceImageName).trim(),
                 referenceStrength: svbOptionalNumber(source.referenceStrength ?? payloadObj.referenceStrength ?? action.referenceStrength, undefined),
@@ -29922,7 +29912,7 @@ ${currentVars || '{}'}
     function hasExplicitKeroAssetCreatePayload(action = {}) {
         const payloadObj = getKeroAssetPayloadObject(action);
         const arrayKeys = ['assets', 'items', 'images', 'prompts', 'parts', 'assetPrompts', 'imagePrompts', 'profileAssets', 'standingAssets', 'emotionAssets', 'expressionAssets', 'additionalAssets', 'emotionImages'];
-        const scalarKeys = ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'stylePreset', 'style', 'stylePrompt', 'artistTags', 'styleTags', 'identityName', 'identityKey', 'identityPrompt', 'characterPrompt', 'visualIdentityPrompt', 'danbooruTags', 'tagPrompt', 'wellspringMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'workflowId', 'projectId', 'variantIds', 'variantId'];
+        const scalarKeys = ['prompt', 'positive', 'positivePrompt', 'caption', 'imagePrompt', 'negative', 'negativePrompt', 'identityName', 'identityKey', 'subjectName', 'subject', 'wellspringMode', 'wellspringPresetId', 'wellspringModelId', 'wellspringWorkflowId', 'wellspringCharacterId', 'workflowId', 'projectId', 'variantIds', 'variantId', 'wellspringQualityPrompt', 'wellspringPayloadJson', 'referenceImagePath', 'referenceImage'];
         return arrayKeys.some((key) => Array.isArray(payloadObj?.[key]) || Array.isArray(action?.[key]))
             || scalarKeys.some((key) => Object.prototype.hasOwnProperty.call(payloadObj, key) || Object.prototype.hasOwnProperty.call(action || {}, key));
     }
@@ -29933,7 +29923,7 @@ ${currentVars || '{}'}
         if (!isKeroAssetFocusedRequest(request)) return null;
         if (!hasExplicitKeroAssetCreatePayload(action)) return null;
         const items = normalizeKeroAssetCreatePayloads(action).filter((item) =>
-            safeString(item.prompt || item.wellspringPayloadJson || item.danbooruTags || item.identityPrompt || item.referenceImagePath).trim()
+            safeString(item.prompt || item.wellspringPayloadJson || item.referenceImagePath).trim()
         );
         if (!items.length) return null;
         const payloadObj = getKeroAssetPayloadObject(action);
@@ -30079,7 +30069,6 @@ ${currentVars || '{}'}
                     identityName,
                     prompt: safeString(item.prompt).replace(/\s+/g, ' ').slice(0, 260),
                     count: Math.max(1, Math.floor(Number(item.count) || 1)),
-                    stylePreset: safeString(item.stylePreset).trim(),
                     presetId: safeString(item.presetId).trim(),
                     profileId: safeString(item.profileId).trim()
                 });
@@ -30267,7 +30256,7 @@ Rules:
     function collectKeroAssetContextText(char, action = {}, item = {}) {
         const identityName = svbNormalizeAssetIdentityName(item.identityName || resolveKeroAssetActionIdentityName(action, [item]));
         const requestText = safeString(action.userRequest || action.request || currentKeroMission?.objective || '').trim();
-        const texts = [identityName, item.label, item.name, item.prompt, item.identityPrompt, item.danbooruTags, requestText].filter(Boolean);
+        const texts = [identityName, item.label, item.name, item.prompt, requestText].filter(Boolean);
         let full = null;
         try {
             full = typeof buildFullCharacterContext === 'function' ? buildFullCharacterContext(char) : null;
@@ -30291,97 +30280,12 @@ Rules:
         return texts.filter(Boolean).join('\n').slice(0, 32000);
     }
 
-    function splitKeroAssetPromptFragments(text = '') {
-        const source = safeString(text);
-        const out = [];
-        let current = '';
-        const depth = { paren: 0, bracket: 0, brace: 0 };
-        let escaped = false;
-        const push = () => {
-            const clean = current.trim();
-            if (clean) out.push(clean);
-            current = '';
-        };
-        for (let i = 0; i < source.length; i += 1) {
-            const ch = source[i];
-            if (escaped) {
-                current += ch;
-                escaped = false;
-                continue;
-            }
-            if (ch === '\\') {
-                current += ch;
-                escaped = true;
-                continue;
-            }
-            if (ch === '(') depth.paren += 1;
-            else if (ch === ')' && depth.paren > 0) depth.paren -= 1;
-            else if (ch === '[') depth.bracket += 1;
-            else if (ch === ']' && depth.bracket > 0) depth.bracket -= 1;
-            else if (ch === '{') depth.brace += 1;
-            else if (ch === '}' && depth.brace > 0) depth.brace -= 1;
-            const atTopLevel = depth.paren === 0 && depth.bracket === 0 && depth.brace === 0;
-            if ((ch === ',' || ch === ';' || ch === '\n' || ch === '\r') && atTopLevel) {
-                push();
-                continue;
-            }
-            current += ch;
-        }
-        push();
-        return out;
-    }
-
-    function compactKeroAssetPrompt(text = '', options = {}) {
-        const seen = new Set();
-        const out = [];
-        const maxFragments = Math.max(1, Number(options.maxFragments) || 32);
-        const maxChars = Math.max(120, Number(options.maxChars) || 760);
-        splitKeroAssetPromptFragments(text).forEach((fragment) => {
-            if (out.length >= maxFragments) return;
-            const key = fragment.toLowerCase().replace(/[\s_-]+/g, '_');
-            if (!key || seen.has(key)) return;
-            const candidate = [...out, fragment].join(', ');
-            if (candidate.length > maxChars) return;
-            seen.add(key);
-            out.push(fragment);
-        });
-        return out.join(', ');
-    }
-
     function buildKeroAssetPositivePrompt(prompt = '', options = {}) {
         return normalizeKeroAssetPositivePrompt(prompt, options);
     }
 
     function buildKeroAssetQualityPrompt(qualityPrompt = '') {
-        return compactKeroAssetPrompt(
-            joinKeroAssetPromptFragments(qualityPrompt),
-            { maxFragments: 12, maxChars: 280, dropStyle: false }
-        );
-    }
-
-    function joinKeroAssetPromptFragments(...values) {
-        const seen = new Set();
-        const out = [];
-        const push = (value) => {
-            if (Array.isArray(value)) {
-                value.forEach(push);
-                return;
-            }
-            if (value && typeof value === 'object') {
-                push(value.prompt || value.positive || value.tags || value.text || '');
-                return;
-            }
-            splitKeroAssetPromptFragments(value).forEach((fragment) => {
-                const clean = fragment.trim();
-                if (!clean) return;
-                const key = clean.toLowerCase().replace(/[\s_-]+/g, '_');
-                if (seen.has(key)) return;
-                seen.add(key);
-                out.push(clean);
-            });
-        };
-        values.forEach(push);
-        return out.join(', ');
+        return safeString(qualityPrompt).trim();
     }
 
     async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
@@ -30395,18 +30299,6 @@ Rules:
                 || actionIdentityName
             );
             const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
-            const explicitIdentity = safeString(item.identityPrompt).trim();
-            const identityPrompt = compactKeroAssetPrompt(
-                explicitIdentity,
-                { maxFragments: 18, maxChars: 520, dropStyle: true }
-            );
-            const identityNegative = compactKeroAssetPrompt(
-                item.identityNegative,
-                { maxFragments: 18, maxChars: 520, dropStyle: true }
-            );
-            const itemStylePrompt = safeString(item.stylePrompt).trim();
-            const itemArtistTags = safeString(item.artistTags).trim();
-            const itemStyleTags = safeString(item.styleTags).trim();
             const itemQualityPrompt = safeString(item.wellspringQualityPrompt).trim();
             const storedQualityPrompt = safeString(stored?.wellspringQualityPrompt || stored?.qualityPrompt).trim();
             const itemLoras = svbNormalizeWellspringLoras(item.wellspringLoras || item.loras);
@@ -30414,13 +30306,6 @@ Rules:
             return {
                 ...item,
                 identityName,
-                identityPrompt,
-                identityNegative,
-                danbooruTags: compactKeroAssetPrompt(item.danbooruTags, { maxFragments: 18, maxChars: 520, dropStyle: true }),
-                stylePreset: item.stylePreset || '',
-                stylePrompt: itemStylePrompt,
-                artistTags: itemArtistTags,
-                styleTags: itemStyleTags,
                 wellspringQualityPrompt: itemQualityPrompt || storedQualityPrompt,
                 wellspringLoras: itemLoras.length ? itemLoras : storedLoras
             };
@@ -30469,88 +30354,12 @@ Rules:
         return normalized;
     }
 
-    function getKeroDefaultAssetNegativePrompt(profile = {}, preset = {}) {
-        return joinKeroAssetPromptFragments(
-            preset.negative,
-            profile.negative,
-            'lowres, worst_quality, low_quality, bad_anatomy, bad_hands, extra_digits, missing_fingers, text, logo, watermark, blurry'
-        );
-    }
-
-    function normalizeKeroAssetStyleKey(stylePreset = '') {
-        return safeString(stylePreset).trim();
-    }
-
-    function normalizeKeroAssetPromptToken(fragment = '') {
-        return safeString(fragment).trim().replace(/\s+/g, ' ');
-    }
-
-    function isKeroAssetPositiveLoreOnlyFragment(fragment = '') {
-        const text = normalizeKeroAssetPromptToken(fragment);
-        const lower = text.toLowerCase();
-        if (!lower) return true;
-        if (/^\d{1,3}\s*(?:years?\s*old|yo|y\/o)$/.test(lower)) return true;
-        if (/^\d{2,3}\s*cm$/.test(lower)) return true;
-        if (/^(?:korean|japanese|chinese|american|russian|french|german|british|asian|european)\s+(?:man|woman|boy|girl|male|female)$/.test(lower)) return true;
-        if (/^(?:fantasy|modern|urban|sci[-\s]?fi|science fiction|romance|visual novel|military|military romance|rpg|simulation)(?:\s+(?:setting|genre|world|theme))?$/.test(lower)) return true;
-        if (/^(?:2d\s+)?(?:anime|cartoon|illustration)(?:\s+(?:style|illustration|art))?$/.test(lower)) return true;
-        if (/^(?:cel[-\s]?shaded|sdxl(?:\s+character)?(?:\s+art)?|high quality(?:\s+character)?(?:\s+asset)?|polished(?:\s+sdxl)?(?:\s+character)?(?:\s+art| illustration)?)$/.test(lower)) return true;
-        if (/\b(?:photo|photorealistic|realistic|3d|cgi|render)\b/.test(lower)) return true;
-        if (/^(?:masterpiece|best quality|amazing quality|very aesthetic|highres|absurdres|incredibly absurdres|white[_\s]background|simple[_\s]background|clean background)$/.test(lower)) return true;
-        if (/^(?:provider|preset|stylepreset|source|ratio|steps?)\s*[:=]/.test(lower)) return true;
-        if (/^(?:nai|novelai|wellspring|comfyui|sdxl|adxl|anima)(?:[-_\s][a-z0-9.]+)*$/.test(lower)) return true;
-        if (/^(?:female\s+|male\s+)?(?:nursing officer|military nurse|supply nco|military police investigation officer|medic|soldier|officer|second lieutenant|first lieutenant|staff sergeant)(?:\s+rank|\s+role|\s+job)?$/.test(lower)) return true;
-        return false;
-    }
-
-    function cleanKeroAssetPositiveFragment(fragment = '') {
-        const text = normalizeKeroAssetPromptToken(fragment);
-        if (!text || isKeroAssetPositiveLoreOnlyFragment(text)) return '';
-        const lower = text.toLowerCase();
-        if (/\b(?:beauty|impression)\b/.test(lower)) return '';
-        if (/\brank insignia\b/.test(lower)) return 'rank_insignia';
-        if (/\bcombat uniform\b/.test(lower)) return /\bolive|olive green|olive drab\b/.test(lower) ? 'olive_drab combat_uniform' : 'combat_uniform';
-        if (/\b(?:black|dark)\s+hair\b/.test(lower) && /\btied\b|\bponytail\b|\bbun\b/.test(lower)) return 'tied black_hair';
-        if (/\bcomposed expression\b|\bobservant\b/.test(lower)) return 'composed expression';
-        return text
-            .replace(/\bupper body\b/ig, 'upper_body')
-            .replace(/\blower body\b/ig, 'lower_body')
-            .replace(/\bfull body\b/ig, 'full_body')
-            .replace(/\blooking at viewer\b/ig, 'looking_at_viewer')
-            .replace(/\bmale focus\b/ig, 'male_focus')
-            .replace(/\bfemale focus\b/ig, 'female_focus')
-            .replace(/\bhair tied back\b/ig, 'hair_tied_back')
-            .replace(/\bmilitary uniform\b/ig, 'military_uniform');
-    }
-
-    function cleanKeroAssetNegativeFragment(fragment = '') {
-        const text = normalizeKeroAssetPromptToken(fragment);
-        const lower = text.toLowerCase();
-        if (!lower) return '';
-        if (/^(?:photo|photorealistic|realistic|3d|cgi|render)$/.test(lower)) return '';
-        if (/^(?:wrong_gender|male_focus|female_focus|1girl|1boy|girl|boy|female|male)$/.test(lower)) return '';
-        if (/^(?:different character|wrong hair color|wrong eye color|inconsistent_face)$/.test(lower)) return 'identity_drift';
-        return text;
-    }
-
     function normalizeKeroAssetPositivePrompt(prompt = '', options = {}) {
-        const cleaned = splitKeroAssetPromptFragments(prompt)
-            .map(cleanKeroAssetPositiveFragment)
-            .filter(Boolean);
-        return compactKeroAssetPrompt(
-            cleaned.join(', '),
-            { maxFragments: Number(options.maxFragments) || 28, maxChars: Number(options.maxChars) || 700, dropStyle: true }
-        );
+        return safeString(prompt).trim();
     }
 
     function normalizeKeroAssetNegativePrompt(negative = '', profile = {}, preset = {}) {
-        const cleaned = splitKeroAssetPromptFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset))
-            .map(cleanKeroAssetNegativeFragment)
-            .filter(Boolean);
-        return compactKeroAssetPrompt(
-            joinKeroAssetPromptFragments(cleaned),
-            { maxFragments: 12, maxChars: 320, dropStyle: false }
-        );
+        return safeString(negative).trim();
     }
 
     function getKeroAssetOutputName(item, index = 0, total = 1) {
@@ -30701,9 +30510,9 @@ Rules:
                 svbRenderImagePromptTemplate(item.wellspringQualityPrompt, vars).trim()
             );
             const qualityPrompt = explicitQualityPrompt
-                || buildKeroAssetQualityPrompt(preset.wellspringQualityPrompt || profile.wellspringQualityPrompt || KERO_DEFAULT_ASSET_QUALITY_PROMPT);
+                || buildKeroAssetQualityPrompt(preset.wellspringQualityPrompt || profile.wellspringQualityPrompt);
             const negative = normalizeKeroAssetNegativePrompt(
-                svbRenderImagePromptTemplate(item.negative || getKeroDefaultAssetNegativePrompt(profile, preset), vars).trim(),
+                svbRenderImagePromptTemplate(item.negative, vars).trim(),
                 profile,
                 preset
             );
@@ -35489,12 +35298,11 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 케로는 에셋 프롬프트를 "번역"하지 말고 "컴파일"한다. 입력 자료는 사용자 요청, 캐릭터 desc/노트/로어북, 기존 에셋 메타, 에셋 스튜디오 프리셋, 사용자가 준 샘플 프롬프트다.
-- Danbooru taxonomy/related-tag DB, Wellspring 갤러리, Notion 태그 정리는 프롬프트에 전부 붙이는 목록이 아니라 선택 사전이다. 세계관, 시대, 장르는 Positive에 붙일 문구가 아니라 보이는 단서를 고르는 기준이다. 인물 설정과 요청한 샷에 맞는 소수의 태그만 골라 최종 프롬프트에 넣는다.
+- Danbooru taxonomy/related-tag DB, Wellspring 갤러리, Notion 태그 정리는 프롬프트에 전부 붙이는 목록이 아니라 선택 사전이다. 세계관, 시대, 장르는 Positive에 붙일 문구가 아니라 보이는 단서를 고르는 기준이다. 인물 설정과 요청한 샷에 맞는 실제 프롬프트 원자만 골라 최종 프롬프트에 넣는다.
 - 먼저 스타일 소스를 정한다. 사용자가 준 프롬프트팩/작가 태그/연도 태그/LoRA trigger가 있으면 그대로 재사용한다. 저장된 스타일팩이나 프리셋 prefix/suffix가 있으면 그 값을 기준으로 삼는다. 아무 소스도 없으면 작가명을 지어내지 말고, 장르에 맞는 medium/coloring/year/mood 계열 태그로 짧은 스타일팩을 만든다.
 - 다음으로 인물 정체성을 추출한다. 나이, 키, 국적, 계급, 직업, 매체 장르, 세계관 라벨은 최종 Positive에 그대로 베껴 쓰는 텍스트가 아니라 외형 판단의 근거다. Positive에는 얼굴 윤곽, 눈 모양과 색, 머리 형태와 색, 체형 실루엣, 복식 실루엣, 고유 표식, 태도처럼 이미지에 직접 보이는 단서만 쓴다.
 - 그 다음 샷 목적을 붙인다. 프로필, 스탠딩, 감정, 배경, UI, 아이템마다 필요한 구도/표정/행동만 추가한다. 같은 인물 묶음에서는 스타일팩과 정체성 단서를 고정하고 표정/포즈/장면만 바꾼다.
-- Positive는 짧은 슬롯 예산으로 쓴다. 기본 프로필/스탠딩 에셋 기준 style 3-6개, subject/focus 2-3개, identity 6-10개, outfit/equipment 3-6개, pose/framing 2-4개, scene 0-4개면 충분하다. 보통 28개 이하의 쉼표 단위와 700자 이하를 목표로 한다.
-- Positive는 최종 이미지 프롬프트 하나다. 별도의 identityPrompt/stylePrompt 계층에 기대지 말고 assets[].prompt 안에 필요한 스타일, 주체, 외형, 복식, 구도, 장면을 완성한다.
+- Positive는 최종 이미지 프롬프트 하나다. 별도의 identityPrompt/stylePrompt 계층에 기대지 말고 assets[].prompt 안에 필요한 스타일, 주체, 외형, 복식, 구도, 장면을 직접 완성한다. 런타임은 이 값을 고치거나 합치거나 정리하지 않고 그대로 전달한다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
 - Negative는 원하지 않는 주체 전환, 정체성 붕괴, 해부 오류, 불필요한 텍스트/워터마크 같은 실패 방향만 쓴다. 차단 회피용 금지어 더미나 긴 금지 목록을 만들지 않는다.
 - Negative도 짧게 쓴다. 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 정도면 충분하며 결함 단어 사전을 길게 나열하지 않는다.
