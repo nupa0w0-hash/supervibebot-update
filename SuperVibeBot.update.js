@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.115
-//@version 1.5.115
+//@display-name 🐸 SuperVibeBot v1.5.116
+//@version 1.5.116
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.115는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.116는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.116 Release Notes
+ * - v1.5.116: rewrites the Kero image asset prompt instructions around one stable style anchor per batch, final Positive prompts, and real Wellspring/Danbooru prompt atoms
+ * - v1.5.116: loads Wellspring tag/library/gallery prompt references with the user's ws-key when image asset work is requested, then passes those references to the LLM instead of locally rewriting prompts
+ * - v1.5.116: removes the old compact compiler wording from underfilled asset recovery so recovery prompts follow the same final-prompt writer rules as normal Kero asset creation
+ *
  * SuperVibeBot v1.5.115 Release Notes
  * - v1.5.115: removes local Kero image prompt judgment/filtering from the execution path; runtime now renders and sends model-authored Positive, Negative, and Quality fields without rewriting them
  * - v1.5.115: keeps the v1.5.114 split-layer removal, but stops the local runtime from deciding which prompt fragments are visually valid
@@ -1845,9 +1850,11 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality. The runtime passes these fields through; it does not repair, merge, sanitize, or reinterpret split prompt layers.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Danbooru taxonomy, related-tag data, Wellspring gallery prompts, and user samples are reference dictionaries. Select real prompt atoms that fit the bot world, character, and requested image; do not dump lists, prose traits, or local helper labels into Positive.
-- Positive must already be the final image prompt. Use concise comma-separated visual atoms: chosen artist/style/year tags when useful, subject/focus, recognizable face/hair/body/outfit/equipment marks, pose/framing, and scene cues that actually appear. If a lore trait is not visible, omit it instead of writing the trait as text.
-- Keep one coherent style direction per character or asset set unless the user asks otherwise. Character consistency comes from repeated visible anchors, LoRA/workflow/project fields when available, and the same style direction, not from local identityPrompt/stylePrompt/danbooruTags fields.
+- Before writing any assets[] item, choose one style anchor for the whole requested asset set. The style anchor is a comma-separated prompt prefix: artist/style/year/coloring/medium atoms from the user sample, Asset Studio metadata, or Wellspring reference block. If no real style source exists, use the syntax examples only as tag-shape guidance instead of forcing a fixed canned style. Copy the exact same style anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed styles.
+- If the user asks for artist tags or the Wellspring reference block provides artist/style atoms, include them in that style anchor. Do not leave the style anchor empty and do not switch art style between characters in one batch.
+- Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable style anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
+- Use real Danbooru/Wellspring prompt language and compact natural visual phrases. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. For specific local concepts that have no reliable tag, use common visual tags plus a short natural phrase.
+- Character consistency comes from repeating the same style anchor and visible identity anchors, plus LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on likely failures such as anatomy, text/watermark, identity drift, wrong props, or wrong setting.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
@@ -3205,6 +3212,8 @@ const WELLSPRING_IMAGE_JOBS_ENDPOINT = "/v1/images/jobs";
 const WELLSPRING_IMAGE_TRAINING_ENDPOINT = "/v1/images/training";
 const WELLSPRING_IMAGE_TRAINING_UPLOADS_ENDPOINT = "/v1/images/training/uploads";
 const WELLSPRING_IMAGE_LORAS_MINE_ENDPOINT = "/v1/images/loras/mine";
+const WELLSPRING_IMAGE_TAGS_ENDPOINT = "/v1/images/tags";
+const WELLSPRING_IMAGE_LIBRARY_COLLECTION_ENDPOINT = "/v1/images/library/collection";
 const WELLSPRING_IMAGE_API_PROFILE_ID = "wellspring-nai-compatible";
 const WELLSPRING_IMAGE_GENERATION_PRESET_ID = "wellspring-profile-basic";
 const WELLSPRING_DEFAULT_PRESET_MODEL_CACHE = new Map();
@@ -22163,6 +22172,216 @@ async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", t
     return data;
 }
 
+const KERO_IMAGE_PROMPT_STYLE_ANCHOR_EXAMPLES = Object.freeze([
+    "(hiyori\\(rindou66\\):1.15), doremi:0.55, kadeart, mayo \\(becky2006\\), asako \\(itiba\\), takssmask, ((flat color:1.25)), year 2024",
+    "[[artist:nakta]], [[artist:mikozin]], tianliang duohe fangdongye, year 2024, game cg, flat color",
+    "(ratatatat74:0.9), (doremi:0.8), (7peach:0.8), (YutokaMizu:1.1), year 2024, very aesthetic",
+    "visual novel cg, clean lineart, anime coloring, flat color, year 2024"
+]);
+
+function shouldAttachKeroImagePromptReference(userInput = '') {
+    const text = safeString(userInput);
+    return isKeroAssetFocusedRequest(text)
+        || /(image|asset|standing|profile|portrait|background|interface|ui|wellspring|danbooru|lora|prompt|이미지|에셋|스탠딩|프로필|배경|상태창|인터페이스|단부루|프롬프트|로라)/i.test(text);
+}
+
+function pushUniquePromptReference(list, value = '', limit = 160) {
+    const text = safeString(value).replace(/\s+/g, ' ').trim();
+    if (!text || text.length < 2 || /^https?:\/\//i.test(text)) return;
+    const clipped = text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+    const key = clipped.toLowerCase();
+    if (list.some(item => item.toLowerCase() === key)) return;
+    list.push(clipped);
+}
+
+function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload = null) {
+    const queries = [];
+    const text = safeString(userInput);
+    ['artist', 'year 2024', 'flat color', 'game cg', 'visual novel cg', 'upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    if (/(군|military|army|soldier|uniform|rok|rank|계급|제복|전투복)/i.test(text)) {
+        ['military uniform', 'army uniform', 'camouflage', 'olive drab', 'rank insignia'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    }
+    if (/(medical|medic|nurse|nursing|doctor|간호|의무|메딕|의료)/i.test(text)) {
+        ['medic', 'medical bag', 'nurse', 'armband'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    }
+    if (/(boy|man|male|남자|남성|소년)/i.test(text)) pushUniquePromptReference(queries, '1boy male focus', 80);
+    if (/(girl|woman|female|여자|여성|소녀)/i.test(text)) pushUniquePromptReference(queries, '1girl female focus', 80);
+    const contextText = safeString(contextPayload?.workTarget?.targetName || contextPayload?.characterFields?.name || contextPayload?.basic?.name);
+    if (contextText) pushUniquePromptReference(queries, contextText, 80);
+    return queries.slice(0, 12);
+}
+
+function collectWellspringPromptReferenceStrings(data, maxItems = 12) {
+    const out = [];
+    const visit = (value, depth = 0) => {
+        if (out.length >= maxItems || depth > 4 || value == null) return;
+        if (typeof value === 'string') {
+            pushUniquePromptReference(out, value, 220);
+            return;
+        }
+        if (Array.isArray(value)) {
+            value.slice(0, 40).forEach(item => visit(item, depth + 1));
+            return;
+        }
+        if (typeof value !== 'object') return;
+        ['prompt', 'value', 'tag', 'name', 'label', 'title', 'text', 'content', 'description'].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(value, key)) visit(value[key], depth + 1);
+        });
+        ['items', 'data', 'tags', 'results', 'prompts', 'collection'].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(value, key)) visit(value[key], depth + 1);
+        });
+    };
+    visit(data, 0);
+    return out.slice(0, maxItems);
+}
+
+function collectWellspringGalleryPromptLines(data, maxItems = 8) {
+    const jobs = svbExtractWellspringJobs(data);
+    const lines = [];
+    jobs.slice(0, 24).forEach((job) => {
+        const prompt = safeString(job.prompt || job.positive || job.input?.prompt || job.request?.prompt).trim();
+        if (!prompt) return;
+        const parts = [];
+        pushUniquePromptReference(parts, prompt, 280);
+        pushUniquePromptReference(parts, job.quality_prompt || job.qualityPrompt || job.input?.quality_prompt || job.request?.quality_prompt, 160);
+        pushUniquePromptReference(parts, job.negative_prompt || job.negativePrompt || job.input?.negative_prompt || job.request?.negative_prompt, 160);
+        if (parts.length) lines.push(`- gallery sample: ${parts.join(' | ')}`);
+    });
+    return lines.slice(0, maxItems);
+}
+
+function getKeroWellspringPromptReferenceProfile() {
+    const profiles = normalizeImageApiProfiles(imageApiProfiles);
+    const active = normalizeImageApiProfile(getActiveImageApiProfile());
+    const candidates = [
+        active,
+        ...profiles.filter(profile => profile.id !== active.id)
+    ];
+    return candidates.find(profile =>
+        safeString(profile.apiKey).trim()
+        && (isWellspringImageProvider(profile.provider) || safeString(profile.endpoint).includes('wellspring.encrypt.gay'))
+    ) || null;
+}
+
+function collectKeroAssetStudioPromptReferenceLines(char = null) {
+    const lines = [];
+    try {
+        if (!char || typeof svbReadAssetStudioMetaFromCharacter !== 'function') return lines;
+        const meta = svbReadAssetStudioMetaFromCharacter(char);
+        const styleEntries = Object.entries(meta?.styles || {}).slice(0, 8);
+        styleEntries.forEach(([name, style]) => {
+            const parts = [];
+            pushUniquePromptReference(parts, style?.artistTags, 260);
+            pushUniquePromptReference(parts, style?.styleTags, 260);
+            pushUniquePromptReference(parts, style?.stylePrompt, 260);
+            pushUniquePromptReference(parts, style?.qualityPrompt || style?.wellspringQualityPrompt, 180);
+            if (parts.length) lines.push(`- stored style ${name}: ${parts.join(', ')}`);
+        });
+        const identityEntries = Object.values(meta?.identities || {}).slice(0, 8);
+        identityEntries.forEach((entry) => {
+            const name = svbNormalizeAssetIdentityName(entry?.name);
+            const parts = [];
+            pushUniquePromptReference(parts, entry?.artistTags, 240);
+            pushUniquePromptReference(parts, entry?.styleTags, 240);
+            pushUniquePromptReference(parts, entry?.stylePrompt, 240);
+            pushUniquePromptReference(parts, entry?.prompt, 260);
+            if (name && parts.length) lines.push(`- stored identity ${name}: ${parts.join(', ')}`);
+        });
+    } catch (error) {
+        Logger.warn('Kero Asset Studio prompt reference read failed:', error?.message || error);
+    }
+    return lines.slice(0, 12);
+}
+
+async function buildKeroImagePromptReferenceBlock(options = {}) {
+    const userInput = safeString(options.userInput || options.visibleUserInput || '');
+    if (!shouldAttachKeroImagePromptReference(userInput)) return '';
+
+    const lines = [
+        '',
+        '## Wellspring/Danbooru Prompt Reference',
+        '- This block is reference material for the LLM. The runtime will not rewrite generated prompts.',
+        '- Pick one style anchor for the current asset set and copy it exactly at the start of every assets[].prompt in the same action.',
+        '- Use real tag syntax, weighted artist/style atoms, year/style/coloring tags, and compact visible character cues. Use short natural phrases only when no reliable tag exists.'
+    ];
+
+    const studioLines = collectKeroAssetStudioPromptReferenceLines(options.char || null);
+    if (studioLines.length) {
+        lines.push('### Asset Studio Stored References');
+        lines.push(...studioLines);
+    }
+
+    let liveReferenceCount = 0;
+    try {
+        await loadImageApiSettings();
+        const profile = getKeroWellspringPromptReferenceProfile();
+        if (profile) {
+            const base = getWellspringImageApiBase(profile.endpoint);
+            const headers = svbGetWellspringApiHeaders(profile);
+            const queries = collectKeroImagePromptReferenceQueries(userInput, options.contextPayload || null);
+            const tagResults = await Promise.allSettled(queries.map(async (query) => {
+                const params = new URLSearchParams({ q: query, limit: '10' });
+                const data = await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_TAGS_ENDPOINT}?${params.toString()}`), { method: 'GET', headers }, `${profile.name || 'Wellspring'} tag reference`, 12000);
+                return { query, values: collectWellspringPromptReferenceStrings(data, 10) };
+            }));
+            const tagLines = [];
+            tagResults.forEach((result) => {
+                if (result.status !== 'fulfilled' || !result.value.values.length) return;
+                liveReferenceCount += result.value.values.length;
+                tagLines.push(`- ${result.value.query}: ${result.value.values.join(', ')}`);
+            });
+            if (tagLines.length) {
+                lines.push('### Wellspring Tag Lookup');
+                lines.push(...tagLines.slice(0, 12));
+            }
+
+            const libraryResults = await Promise.allSettled(['style', 'prompt'].map(async (kind) => {
+                const params = new URLSearchParams({ kind, q: '' });
+                const data = await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_LIBRARY_COLLECTION_ENDPOINT}?${params.toString()}`), { method: 'GET', headers }, `${profile.name || 'Wellspring'} ${kind} library`, 12000);
+                return { kind, values: collectWellspringPromptReferenceStrings(data, 8) };
+            }));
+            const libraryLines = [];
+            libraryResults.forEach((result) => {
+                if (result.status !== 'fulfilled' || !result.value.values.length) return;
+                liveReferenceCount += result.value.values.length;
+                libraryLines.push(`- ${result.value.kind}: ${result.value.values.join(' | ')}`);
+            });
+            if (libraryLines.length) {
+                lines.push('### Wellspring Saved Prompt Library');
+                lines.push(...libraryLines.slice(0, 8));
+            }
+
+            const galleryParams = new URLSearchParams({ scope: 'all', limit: '12' });
+            const galleryData = await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}?${galleryParams.toString()}`), { method: 'GET', headers }, `${profile.name || 'Wellspring'} gallery prompt reference`, 12000);
+            const galleryLines = collectWellspringGalleryPromptLines(galleryData, 8);
+            if (galleryLines.length) {
+                liveReferenceCount += galleryLines.length;
+                lines.push('### Wellspring Gallery Prompt Samples');
+                lines.push(...galleryLines);
+            }
+        }
+    } catch (error) {
+        Logger.warn('Kero Wellspring prompt reference load failed:', error?.message || error);
+    }
+
+    lines.push('### Style Anchor Syntax Examples');
+    KERO_IMAGE_PROMPT_STYLE_ANCHOR_EXAMPLES.forEach((anchor, index) => {
+        lines.push(`- syntax example ${index + 1}: ${anchor}`);
+    });
+    lines.push('### Required Output Behavior');
+    lines.push('- Prefer user samples, stored Asset Studio styles, Wellspring library entries, and Wellspring gallery samples over syntax examples. Use syntax examples only to understand tag shape when no real style source is available.');
+    lines.push('- Choose one real style anchor and reuse it exactly for every asset in the batch.');
+    lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
+    lines.push('- Do not omit the style anchor on later assets. A batch with changing style anchors is a failed asset prompt batch.');
+
+    if (liveReferenceCount > 0) {
+        try {
+            addKeroWorkstreamEvent('Wellspring prompt reference', `${liveReferenceCount} prompt/tag reference atoms loaded`, 'context', options.progressOptions || {});
+        } catch (_) {}
+    }
+    return `${lines.join('\n')}\n`;
+}
+
 function svbDataUrlToImageResult(dataUrl, fallbackExt = "png") {
     const match = safeString(dataUrl).match(/^data:([^;,]+)?(?:;base64)?,([\s\S]+)$/);
     if (!match) throw new Error("data URL 형식이 올바르지 않습니다.");
@@ -30145,14 +30364,13 @@ Rules:
 - If missingCandidateNames is non-empty, generate only those names. If it is empty, infer missing names from plannedAssetItems and generate exactly the remainingCount.
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
-- Build each Positive through the compact image prompt compiler: world/genre/era constraints, reusable style pack, subject/focus tags, visible face and eye cues, hair cut/color/part, body silhouette, core outfit, pose/composition, and meaningful scene tags. World/genre/era constraints choose visible cues; do not paste setting labels or media genre labels into Positive.
-- Use Danbooru/taxonomy/related-tag references as a dictionary only. Pick the tags that match the current bot world and character. Do not dump long category lists into Positive.
-- Keep Positive under 28 comma fragments when possible: style 3-6, subject/focus 2-3, identity 6-10, outfit/equipment 3-6, pose/framing 2-4, scene 0-4.
-- For upper-body studio standing assets, keep Positive focused on identity, outfit, pose, and framing; put shared studio background and global quality direction in wellspringQualityPrompt.
-- Keep Negative short: anatomy, watermark/text, identity drift, wrong props, and wrong setting only. Do not write a long defect thesaurus.
+- Use the same image prompt writer rules as normal Kero asset creation.
+- Choose one style anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good style anchor, continue that anchor. Otherwise choose one coherent artist/style/year/coloring anchor from the user sample, Asset Studio metadata, or Wellspring reference block; use syntax examples only as tag-shape guidance when no real style source exists.
+- Positive is the final prompt body. Write compact prompt atoms: stable style anchor, subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
+- Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: anatomy, watermark/text, identity drift, wrong props, and wrong setting only.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
-- For neutral studio/profile assets, keep white/simple/neutral studio background in wellspringQualityPrompt and omit background tags from Positive.
 - Put anatomy/watermark/identity-drift terms in negative.`;
         const payload = {
             userRequest: request,
@@ -35031,6 +35249,12 @@ ${chatContinuity.block}
             signal: options.signal || null,
             ...(options.jobId ? { jobId: options.jobId } : {})
         });
+        const imagePromptReferenceBlock = await buildKeroImagePromptReferenceBlock({
+            userInput: visibleUserInput,
+            contextPayload: effectiveContextPayload,
+            char,
+            progressOptions: requestProgressOptions
+        });
 
         if (requestAllowsMutation && /모든?\s*(로어북|로어|lorebook)/i.test(userInput) && context.lorebooks.length > 0) {
             const selectedLorebookIndexes = getSelectedPartIndexes('lorebook', char);
@@ -35297,19 +35521,19 @@ ${metaBlock}
 - SuperVibeBot 업데이트 URL은 검증된 기존 raw URL을 유지한다. 임의 GitHub/CDN/대체 update-url로 바꾸지 않는다.
 
 ### 이미지 에셋 프롬프팅 전문 규칙
-- 케로는 에셋 프롬프트를 "번역"하지 말고 "컴파일"한다. 입력 자료는 사용자 요청, 캐릭터 desc/노트/로어북, 기존 에셋 메타, 에셋 스튜디오 프리셋, 사용자가 준 샘플 프롬프트다.
-- Danbooru taxonomy/related-tag DB, Wellspring 갤러리, Notion 태그 정리는 프롬프트에 전부 붙이는 목록이 아니라 선택 사전이다. 세계관, 시대, 장르는 Positive에 붙일 문구가 아니라 보이는 단서를 고르는 기준이다. 인물 설정과 요청한 샷에 맞는 실제 프롬프트 원자만 골라 최종 프롬프트에 넣는다.
-- 먼저 스타일 소스를 정한다. 사용자가 준 프롬프트팩/작가 태그/연도 태그/LoRA trigger가 있으면 그대로 재사용한다. 저장된 스타일팩이나 프리셋 prefix/suffix가 있으면 그 값을 기준으로 삼는다. 아무 소스도 없으면 작가명을 지어내지 말고, 장르에 맞는 medium/coloring/year/mood 계열 태그로 짧은 스타일팩을 만든다.
-- 다음으로 인물 정체성을 추출한다. 나이, 키, 국적, 계급, 직업, 매체 장르, 세계관 라벨은 최종 Positive에 그대로 베껴 쓰는 텍스트가 아니라 외형 판단의 근거다. Positive에는 얼굴 윤곽, 눈 모양과 색, 머리 형태와 색, 체형 실루엣, 복식 실루엣, 고유 표식, 태도처럼 이미지에 직접 보이는 단서만 쓴다.
-- 그 다음 샷 목적을 붙인다. 프로필, 스탠딩, 감정, 배경, UI, 아이템마다 필요한 구도/표정/행동만 추가한다. 같은 인물 묶음에서는 스타일팩과 정체성 단서를 고정하고 표정/포즈/장면만 바꾼다.
-- Positive는 최종 이미지 프롬프트 하나다. 별도의 identityPrompt/stylePrompt 계층에 기대지 말고 assets[].prompt 안에 필요한 스타일, 주체, 외형, 복식, 구도, 장면을 직접 완성한다. 런타임은 이 값을 고치거나 합치거나 정리하지 않고 그대로 전달한다.
+- 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 직접 작성한다. 런타임은 프롬프트를 고치거나 합치거나 정리하지 않고 그대로 전달한다.
+- 먼저 이번 asset batch 전체의 style anchor를 하나 정한다. style anchor는 작가 태그, year 태그, coloring/medium 태그, LoRA trigger, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 쉼표 단위 prefix다.
+- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 style anchor를 정확히 반복한다. 한 batch 안에서 그림체가 바뀌면 실패다.
+- 사용자가 작가 태그를 원했거나 reference block에 작가/스타일 태그가 있으면 style anchor에 포함한다. 근거 없는 새 작가명을 지어내지는 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
+- Positive는 style anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
+- 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
+- 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
-- Negative는 원하지 않는 주체 전환, 정체성 붕괴, 해부 오류, 불필요한 텍스트/워터마크 같은 실패 방향만 쓴다. 차단 회피용 금지어 더미나 긴 금지 목록을 만들지 않는다.
-- Negative도 짧게 쓴다. 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 정도면 충분하며 결함 단어 사전을 길게 나열하지 않는다.
+- Negative는 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 같은 실패 방향만 짧게 쓴다.
 - 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, year/style/coloring/medium 태그를 보존한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
 - Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
-- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 그리고 반복되는 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
+- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 style anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
 
@@ -35427,6 +35651,7 @@ ${stringifyKeroContextPayload(effectiveContextPayload)}
 주인님 요청: ${visibleUserInput}${visibleUserInput !== userInput ? `\n\n## 내부 후속 처리 메모\n${userInput}` : ''}`;
 
         systemPrompt += KERO_VISUAL_ASSET_WORKFLOW_GUIDE;
+        systemPrompt += imagePromptReferenceBlock;
 
         if (wantsUIDesign) {
             systemPrompt += UI_DESIGN_FORMAT;
