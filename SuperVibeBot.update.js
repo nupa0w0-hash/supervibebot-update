@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.135
-//@version 1.5.135
+//@display-name 🐸 SuperVibeBot v1.5.136
+//@version 1.5.136
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.135는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.136는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.136 Release Notes
+ * - v1.5.136: replaces scattered artist prompt repair paths with one final image-send normalizer
+ * - v1.5.136: converts only outer escaped artist-weight atoms such as \(tag:0.8\) into artist:(tag:0.8) without touching normal prompt tags
+ * - v1.5.136: records the normalized image prompt that is actually sent to the image provider
+ *
  * SuperVibeBot v1.5.135 Release Notes
  * - v1.5.135: restores artist: namespace for escaped artist-weight atoms inside Kero-generated Positive prompt bodies
  * - v1.5.135: removes visible version text from the Risu chat menu and settings menu entries
@@ -21124,10 +21129,69 @@ function svbJoinPromptFragments(...values) {
     return fragments.join(", ");
 }
 
+function svbSplitPromptAtomsLoose(prompt = "") {
+    const text = safeString(prompt);
+    const atoms = [];
+    let current = "";
+    let depth = 0;
+    for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        if (char === "(" || char === "[" || char === "{") depth += 1;
+        else if ((char === ")" || char === "]" || char === "}") && depth > 0) depth -= 1;
+        if (char === "," && depth === 0) {
+            const atom = current.trim();
+            if (atom) atoms.push(atom);
+            current = "";
+            continue;
+        }
+        current += char;
+    }
+    const tail = current.trim();
+    if (tail) atoms.push(tail);
+    return atoms;
+}
+
+function svbLooksLikeEscapedArtistWeightAtom(inner = "") {
+    const text = safeString(inner).trim();
+    if (!/:[+-]?\d+(?:\.\d+)?$/.test(text)) return false;
+    if (/^(?:artist\s*:|flat color|artist collaboration|solo artist|year\s+\d{4})\b/i.test(text)) return false;
+    if (/\b(?:background|quality|resolution|composition|lighting|lineart|linework)\b/i.test(text)) return false;
+    return true;
+}
+
+function svbNormalizeImageArtistPromptAtom(atom = "") {
+    const raw = safeString(atom).trim();
+    if (!raw) return "";
+    const escapedArtist = raw.match(/^artist\s*:\s*\\+\(([\s\S]*?)\\+\)$/i);
+    if (escapedArtist) return `artist:(${safeString(escapedArtist[1]).trim()})`;
+    const escapedWeighted = raw.match(/^\\+\(([\s\S]*?)\\+\)$/);
+    if (escapedWeighted) {
+        const inner = safeString(escapedWeighted[1]).trim();
+        if (svbLooksLikeEscapedArtistWeightAtom(inner)) return `artist:(${inner})`;
+    }
+    return raw;
+}
+
+function svbNormalizeImageArtistPromptSyntax(prompt = "") {
+    const atoms = svbSplitPromptAtomsLoose(prompt);
+    if (!atoms.length) return "";
+    const seen = new Set();
+    const normalized = [];
+    atoms.forEach((atom) => {
+        const clean = svbNormalizeImageArtistPromptAtom(atom);
+        if (!clean) return;
+        const key = clean.replace(/\s+/g, " ").trim().toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        normalized.push(clean);
+    });
+    return normalized.join(", ");
+}
+
 function svbApplyImagePresetPromptDefaults(preset = {}, prompt = "", negative = "") {
     const normalized = normalizeImageGenerationPreset(preset);
     return {
-        prompt: svbJoinPromptFragments(normalized.promptPrefix, normalized.characterPrompt, prompt, normalized.promptSuffix),
+        prompt: svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(normalized.promptPrefix, normalized.characterPrompt, prompt, normalized.promptSuffix)),
         negative: svbJoinPromptFragments(normalized.negativePrefix, normalized.characterNegative, negative, normalized.negativeSuffix)
     };
 }
@@ -23475,7 +23539,7 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
     if (normalized.provider === "comfyui" && !safeString(normalized.workflow).trim()) {
         throw new Error("ComfyUI는 Workflow API JSON이 필요합니다. 이미지 API 설정의 고급 연결 옵션에서 저장해주세요.");
     }
-    const prompt = safeString(options.prompt).trim();
+    const prompt = svbNormalizeImageArtistPromptSyntax(options.prompt);
     if (!prompt) throw new Error("이미지 프롬프트를 입력해주세요.");
     const applyProfileDefaults = options.applyProfileGenerationDefaults !== false;
     const request = {
@@ -23515,6 +23579,7 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     const composed = applyPresetPromptDefaults
         ? svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative)
         : { prompt: basePrompt, negative: baseNegative };
+    const finalPrompt = svbNormalizeImageArtistPromptSyntax(composed.prompt);
     const referenceImages = [...ensureArray(options.referenceImages)];
     const referenceImagePath = safeString(options.referenceImagePath || normalizedPreset.referenceImagePath).trim();
     if (!referenceImages.length && referenceImagePath) {
@@ -23526,7 +23591,7 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     }
     const result = await svbGenerateImageWithProfile(runtimeProfile, {
         ...options,
-        prompt: composed.prompt,
+        prompt: finalPrompt,
         negative: composed.negative,
         characterPrompt: applyPresetPromptDefaults ? normalizedPreset.characterPrompt : "",
         characterNegative: applyPresetPromptDefaults ? normalizedPreset.characterNegative : "",
@@ -23550,7 +23615,7 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     });
     return {
         ...result,
-        prompt: composed.prompt,
+        prompt: finalPrompt,
         negative: composed.negative
     };
 }
@@ -30808,22 +30873,11 @@ Rules:
     }
 
     function looksLikeKeroArtistWeightInner(inner = '') {
-        const text = safeString(inner).trim();
-        if (!/:[+-]?\d+(?:\.\d+)?$/.test(text)) return false;
-        if (/^(?:artist\s*:|flat color|artist collaboration|solo artist|year\s+\d{4})\b/i.test(text)) return false;
-        if (/\b(?:background|quality|resolution|composition|lighting|color|lineart|linework)\b/i.test(text)) return false;
-        return true;
+        return svbLooksLikeEscapedArtistWeightAtom(inner);
     }
 
     function restoreKeroFixedArtistPromptSyntax(prompt = '') {
-        const text = safeString(prompt).trim();
-        if (!text) return '';
-        return text
-            .replace(/artist\s*:\s*\\\(([^\\()]*?:[+-]?\d+(?:\.\d+)?)\\\)/gi, (_match, inner) => `artist:(${safeString(inner).trim()})`)
-            .replace(/\\\(([^\\()]*?:[+-]?\d+(?:\.\d+)?)\\\)/g, (match, inner) => {
-                const clean = safeString(inner).trim();
-                return looksLikeKeroArtistWeightInner(clean) ? `artist:(${clean})` : match;
-            });
+        return svbNormalizeImageArtistPromptSyntax(prompt);
     }
 
     function normalizeKeroArtistPromptKey(atom = '') {
@@ -30834,30 +30888,18 @@ Rules:
     }
 
     function normalizeKeroFixedArtistPrompt(...values) {
-        const seen = new Set();
-        const output = [];
-        values.forEach((value) => {
-            splitKeroPromptAtoms(restoreKeroFixedArtistPromptSyntax(value)).forEach((atom) => {
-                const clean = safeString(atom).trim();
-                if (!clean) return;
-                const key = normalizeKeroArtistPromptKey(clean);
-                if (!key || seen.has(key)) return;
-                seen.add(key);
-                output.push(clean);
-            });
-        });
-        return output.join(', ');
+        return svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(...values));
     }
 
     function stripKeroDuplicateFixedArtistPromptFromBody(bodyPrompt = '', fixedArtistPrompt = '') {
         const fixedKeys = new Set(splitKeroPromptAtoms(normalizeKeroFixedArtistPrompt(fixedArtistPrompt)).map(normalizeKeroArtistPromptKey).filter(Boolean));
-        if (!fixedKeys.size) return safeString(bodyPrompt).trim();
+        const normalizedBody = svbNormalizeImageArtistPromptSyntax(bodyPrompt);
+        if (!fixedKeys.size) return normalizedBody;
         const output = [];
-        splitKeroPromptAtoms(bodyPrompt).forEach((atom) => {
+        splitKeroPromptAtoms(normalizedBody).forEach((atom) => {
             const clean = safeString(atom).trim();
             if (!clean) return;
-            const restored = restoreKeroFixedArtistPromptSyntax(clean);
-            const key = normalizeKeroArtistPromptKey(restored);
+            const key = normalizeKeroArtistPromptKey(clean);
             if (fixedKeys.has(key)) return;
             output.push(clean);
         });
@@ -52201,10 +52243,14 @@ function svbNormalizeAssetStyleEntry(value = {}, fallbackName = 'default') {
         ? value
         : { stylePrompt: value };
     const name = safeString(source.name || source.styleName || source.label || fallbackName).trim() || fallbackName;
+    const prompt = svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(
+        source.artistTags || source.artistPrompt || source.artist,
+        source.stylePrompt || source.prompt || source.positive || source.baseStylePrompt || source.artistStyle
+    ));
     const entry = {
         name,
-        artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
-        stylePrompt: safeString(source.stylePrompt || source.prompt || source.positive || source.baseStylePrompt || source.artistStyle).trim(),
+        artistTags: '',
+        stylePrompt: prompt,
         qualityPrompt: safeString(source.qualityPrompt || source.wellspringQualityPrompt || source.quality_prompt).trim(),
         negativePrompt: safeString(source.negativePrompt || source.negative || source.uc).trim(),
         updatedAt: safeString(source.updatedAt || source.date).trim()
@@ -52255,7 +52301,7 @@ function svbGetAssetStudioDefaultStyle(meta = {}) {
 function svbBuildAssetStylePrompt(style = null) {
     const normalized = svbNormalizeAssetStyleEntry(style || {}, 'default');
     if (!normalized) return '';
-    return svbJoinPromptFragments(normalized.artistTags, normalized.stylePrompt);
+    return svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(normalized.artistTags, normalized.stylePrompt));
 }
 
 function svbSetAssetStudioDefaultStyle(meta = {}, style = {}) {
@@ -52974,7 +53020,7 @@ async function openAssetStudio() {
         return {
             name,
             artistTags: '',
-            stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
+            stylePrompt: svbNormalizeImageArtistPromptSyntax(document.getElementById('svb-as-style-prompt')?.value || ''),
             qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
             negativePrompt: document.getElementById('svb-as-style-negative')?.value || ''
         };
@@ -53289,7 +53335,7 @@ async function openAssetStudio() {
             });
         }
         const weights = [1.12, 1, 0.9, 0.82, 0.74, 0.68];
-        const artistPrompt = svbJoinPromptFragments(artists.map((tag, index) => svbWeightedDanbooruArtist(tag, weights[index] || 0.68)));
+        const artistPrompt = svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(artists.map((tag, index) => svbWeightedDanbooruArtist(tag, weights[index] || 0.68))));
         return {
             artists,
             artistPrompt,
@@ -53329,7 +53375,7 @@ async function openAssetStudio() {
                 return {};
             });
             const resolved = svbResolveDanbooruArtistSelection(selection);
-            const fixedStylePrompt = resolved.artistPrompt;
+            const fixedStylePrompt = svbNormalizeImageArtistPromptSyntax(resolved.artistPrompt);
             if (!fixedStylePrompt) {
                 throw new Error('Danbooru artist DB에서 적용할 작가 프롬프트를 만들지 못했습니다.');
             }
