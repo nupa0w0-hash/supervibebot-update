@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.116
-//@version 1.5.116
+//@display-name 🐸 SuperVibeBot v1.5.117
+//@version 1.5.117
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.116는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.117는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,12 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.117 Release Notes
+ * - v1.5.117: simplifies Asset Studio library controls by removing the separate direct-registration panel, moving selection/delete controls together, and adding a folder-grouped view
+ * - v1.5.117: adds an Asset Library style button for a user-saved fixed art-style prefix that is stored in Asset Studio metadata and applied as the generation promptPrefix
+ * - v1.5.117: lets the style panel ask the configured LLM for an artist/style blend recommendation from the selected character context without local prompt judgment
+ * - v1.5.117: removes canned Kero style-anchor examples and prioritizes user-saved/Wellspring style sources
+ *
  * SuperVibeBot v1.5.116 Release Notes
  * - v1.5.116: rewrites the Kero image asset prompt instructions around one stable style anchor per batch, final Positive prompts, and real Wellspring/Danbooru prompt atoms
  * - v1.5.116: loads Wellspring tag/library/gallery prompt references with the user's ws-key when image asset work is requested, then passes those references to the LLM instead of locally rewriting prompts
@@ -1850,7 +1856,7 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality. The runtime passes these fields through; it does not repair, merge, sanitize, or reinterpret split prompt layers.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Before writing any assets[] item, choose one style anchor for the whole requested asset set. The style anchor is a comma-separated prompt prefix: artist/style/year/coloring/medium atoms from the user sample, Asset Studio metadata, or Wellspring reference block. If no real style source exists, use the syntax examples only as tag-shape guidance instead of forcing a fixed canned style. Copy the exact same style anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed styles.
+- Before writing any assets[] item, choose one style anchor for the whole requested asset set. The style anchor is a comma-separated prompt prefix from the user's fixed Asset Studio style, user sample, saved Asset Studio metadata, or Wellspring reference block. If no real style source exists, keep the style anchor minimal instead of inventing generic style filler. Copy the exact same style anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed styles.
 - If the user asks for artist tags or the Wellspring reference block provides artist/style atoms, include them in that style anchor. Do not leave the style anchor empty and do not switch art style between characters in one batch.
 - Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable style anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use real Danbooru/Wellspring prompt language and compact natural visual phrases. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. For specific local concepts that have no reliable tag, use common visual tags plus a short natural phrase.
@@ -22172,13 +22178,6 @@ async function svbWellspringFetchJson(url, options = {}, label = "Wellspring", t
     return data;
 }
 
-const KERO_IMAGE_PROMPT_STYLE_ANCHOR_EXAMPLES = Object.freeze([
-    "(hiyori\\(rindou66\\):1.15), doremi:0.55, kadeart, mayo \\(becky2006\\), asako \\(itiba\\), takssmask, ((flat color:1.25)), year 2024",
-    "[[artist:nakta]], [[artist:mikozin]], tianliang duohe fangdongye, year 2024, game cg, flat color",
-    "(ratatatat74:0.9), (doremi:0.8), (7peach:0.8), (YutokaMizu:1.1), year 2024, very aesthetic",
-    "visual novel cg, clean lineart, anime coloring, flat color, year 2024"
-]);
-
 function shouldAttachKeroImagePromptReference(userInput = '') {
     const text = safeString(userInput);
     return isKeroAssetFocusedRequest(text)
@@ -22197,7 +22196,7 @@ function pushUniquePromptReference(list, value = '', limit = 160) {
 function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload = null) {
     const queries = [];
     const text = safeString(userInput);
-    ['artist', 'year 2024', 'flat color', 'game cg', 'visual novel cg', 'upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
+    ['artist', 'upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
     if (/(군|military|army|soldier|uniform|rok|rank|계급|제복|전투복)/i.test(text)) {
         ['military uniform', 'army uniform', 'camouflage', 'olive drab', 'rank insignia'].forEach(query => pushUniquePromptReference(queries, query, 80));
     }
@@ -22274,8 +22273,13 @@ function collectKeroAssetStudioPromptReferenceLines(char = null) {
             pushUniquePromptReference(parts, style?.artistTags, 260);
             pushUniquePromptReference(parts, style?.styleTags, 260);
             pushUniquePromptReference(parts, style?.stylePrompt, 260);
-            pushUniquePromptReference(parts, style?.qualityPrompt || style?.wellspringQualityPrompt, 180);
             if (parts.length) lines.push(`- stored style ${name}: ${parts.join(', ')}`);
+            const qualityParts = [];
+            pushUniquePromptReference(qualityParts, style?.qualityPrompt || style?.wellspringQualityPrompt, 180);
+            if (qualityParts.length) lines.push(`- stored style ${name} quality: ${qualityParts.join(', ')}`);
+            const negativeParts = [];
+            pushUniquePromptReference(negativeParts, style?.negativePrompt, 180);
+            if (negativeParts.length) lines.push(`- stored style ${name} negative: ${negativeParts.join(', ')}`);
         });
         const identityEntries = Object.values(meta?.identities || {}).slice(0, 8);
         identityEntries.forEach((entry) => {
@@ -22302,7 +22306,7 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
         '## Wellspring/Danbooru Prompt Reference',
         '- This block is reference material for the LLM. The runtime will not rewrite generated prompts.',
         '- Pick one style anchor for the current asset set and copy it exactly at the start of every assets[].prompt in the same action.',
-        '- Use real tag syntax, weighted artist/style atoms, year/style/coloring tags, and compact visible character cues. Use short natural phrases only when no reliable tag exists.'
+        '- Use real tag syntax and weighted artist/style atoms from the provided references. Keep visible character cues compact. Use short natural phrases only when no reliable tag exists.'
     ];
 
     const studioLines = collectKeroAssetStudioPromptReferenceLines(options.char || null);
@@ -22364,12 +22368,9 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
         Logger.warn('Kero Wellspring prompt reference load failed:', error?.message || error);
     }
 
-    lines.push('### Style Anchor Syntax Examples');
-    KERO_IMAGE_PROMPT_STYLE_ANCHOR_EXAMPLES.forEach((anchor, index) => {
-        lines.push(`- syntax example ${index + 1}: ${anchor}`);
-    });
     lines.push('### Required Output Behavior');
-    lines.push('- Prefer user samples, stored Asset Studio styles, Wellspring library entries, and Wellspring gallery samples over syntax examples. Use syntax examples only to understand tag shape when no real style source is available.');
+    lines.push('- If Asset Studio Stored References contains "stored style default:", treat only that line value as the user-fixed style prefix and put it first in every assets[].prompt. Use stored style quality/negative lines for wellspringQualityPrompt or Negative, not as Positive prefix.');
+    lines.push('- Prefer user samples, stored Asset Studio styles, Wellspring library entries, and Wellspring gallery samples. Do not invent generic style filler when no real style source exists.');
     lines.push('- Choose one real style anchor and reuse it exactly for every asset in the batch.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
     lines.push('- Do not omit the style anchor on later assets. A batch with changing style anchors is a failed asset prompt batch.');
@@ -30365,7 +30366,7 @@ Rules:
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
 - Use the same image prompt writer rules as normal Kero asset creation.
-- Choose one style anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good style anchor, continue that anchor. Otherwise choose one coherent artist/style/year/coloring anchor from the user sample, Asset Studio metadata, or Wellspring reference block; use syntax examples only as tag-shape guidance when no real style source exists.
+- Choose one style anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good style anchor, continue that anchor. Otherwise choose one coherent artist/style anchor from the user sample, Asset Studio metadata, or Wellspring reference block; do not invent generic style filler when no real style source exists.
 - Positive is the final prompt body. Write compact prompt atoms: stable style anchor, subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
 - Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: anatomy, watermark/text, identity drift, wrong props, and wrong setting only.
@@ -35522,17 +35523,17 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 직접 작성한다. 런타임은 프롬프트를 고치거나 합치거나 정리하지 않고 그대로 전달한다.
-- 먼저 이번 asset batch 전체의 style anchor를 하나 정한다. style anchor는 작가 태그, year 태그, coloring/medium 태그, LoRA trigger, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 쉼표 단위 prefix다.
+- 먼저 이번 asset batch 전체의 style anchor를 하나 정한다. style anchor는 사용자가 Asset Studio에서 고정한 그림체, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 쉼표 단위 prefix다.
 - 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 style anchor를 정확히 반복한다. 한 batch 안에서 그림체가 바뀌면 실패다.
-- 사용자가 작가 태그를 원했거나 reference block에 작가/스타일 태그가 있으면 style anchor에 포함한다. 근거 없는 새 작가명을 지어내지는 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
+- 사용자가 작가 태그를 원했거나 reference block에 작가/스타일 태그가 있으면 style anchor에 포함한다. 근거 없는 새 작가명이나 generic style filler를 지어내지 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
 - Positive는 style anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
 - Negative는 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 같은 실패 방향만 짧게 쓴다.
-- 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, year/style/coloring/medium 태그를 보존한다.
+- 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, 사용자가 저장/제공한 작가·그림체 태그를 보존한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. Asset Studio에 기본 그림체가 저장되어 있으면 그 값을 assets[].prompt 맨 앞에 직접 포함하고, promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
 - Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 style anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
@@ -51728,6 +51729,63 @@ function svbNormalizeAssetIdentityMap(value = {}) {
     return identities;
 }
 
+function svbNormalizeAssetStyleEntry(value = {}, fallbackName = 'default') {
+    const source = (value && typeof value === 'object' && !Array.isArray(value))
+        ? value
+        : { stylePrompt: value };
+    const name = safeString(source.name || source.styleName || source.label || fallbackName).trim() || fallbackName;
+    const entry = {
+        name,
+        artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
+        stylePrompt: safeString(source.stylePrompt || source.prompt || source.positive || source.baseStylePrompt || source.artistStyle).trim(),
+        qualityPrompt: safeString(source.qualityPrompt || source.wellspringQualityPrompt || source.quality_prompt).trim(),
+        negativePrompt: safeString(source.negativePrompt || source.negative || source.uc).trim(),
+        updatedAt: safeString(source.updatedAt || source.date).trim()
+    };
+    if (!entry.artistTags && !entry.stylePrompt && !entry.qualityPrompt && !entry.negativePrompt) return null;
+    return {
+        ...entry,
+        updatedAt: entry.updatedAt || new Date().toISOString()
+    };
+}
+
+function svbNormalizeAssetStyleMap(value = {}) {
+    const styles = {};
+    const addEntry = (entry, fallbackName = 'default') => {
+        const normalized = svbNormalizeAssetStyleEntry(entry, fallbackName);
+        if (!normalized) return;
+        styles[normalized.name || fallbackName] = normalized;
+    };
+    if (Array.isArray(value)) {
+        value.forEach((entry, index) => addEntry(entry, index === 0 ? 'default' : `style_${index + 1}`));
+    } else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([name, entry]) => addEntry(entry, name));
+    } else if (safeString(value).trim()) {
+        addEntry({ stylePrompt: value }, 'default');
+    }
+    return styles;
+}
+
+function svbGetAssetStudioDefaultStyle(meta = {}) {
+    const styles = svbNormalizeAssetStyleMap(meta?.styles || meta?.stylePresets || meta?.artStyles);
+    return styles.default || styles['기본'] || Object.values(styles)[0] || null;
+}
+
+function svbBuildAssetStylePrompt(style = null) {
+    const normalized = svbNormalizeAssetStyleEntry(style || {}, 'default');
+    if (!normalized) return '';
+    return svbJoinPromptFragments(normalized.artistTags, normalized.stylePrompt);
+}
+
+function svbSetAssetStudioDefaultStyle(meta = {}, style = {}) {
+    const next = svbNormalizeAssetStudioMeta(meta);
+    if (!next.styles) next.styles = {};
+    const normalized = svbNormalizeAssetStyleEntry({ ...style, name: 'default' }, 'default');
+    if (normalized) next.styles.default = normalized;
+    else delete next.styles.default;
+    return next;
+}
+
 function svbNormalizeAssetPromptRecord(value = {}) {
     const source = (value && typeof value === 'object' && !Array.isArray(value))
         ? value
@@ -51962,6 +52020,7 @@ function svbNormalizeAssetStudioMeta(raw = {}) {
             ),
             emotion: svbNormalizeAssetPromptMap(prompts.emotion || prompts.emotionImages || prompts.emotions)
         },
+        styles: svbNormalizeAssetStyleMap(raw?.styles || raw?.stylePresets || raw?.artStyles),
         identities: svbNormalizeAssetIdentityMap(raw?.identities || raw?.identityPrompts || raw?.characterPrompts)
     };
 }
@@ -52267,6 +52326,178 @@ async function openAssetStudio() {
         return ok;
     }
 
+    function getDefaultAssetStyle() {
+        return svbGetAssetStudioDefaultStyle(assetStudioMeta);
+    }
+
+    async function applyDefaultStyleToCurrentPreset(style = getDefaultAssetStyle()) {
+        const stylePrompt = svbBuildAssetStylePrompt(style);
+        const preset = normalizeImageGenerationPreset(readGenerationPresetFromUI(getSelectedImagePreset()));
+        preset.promptPrefix = stylePrompt;
+        if (style?.qualityPrompt) preset.wellspringQualityPrompt = style.qualityPrompt;
+        if (style?.negativePrompt) preset.negativePrefix = style.negativePrompt;
+        const saved = upsertImageGenerationPreset(preset);
+        activeImageGenerationPresetId = saved.id;
+        await saveImageGenerationPresets();
+        const prefixInput = document.getElementById('svb-as-prompt-prefix');
+        const qualityInput = document.getElementById('svb-as-wellspring-quality-prompt');
+        const negativePrefixInput = document.getElementById('svb-as-negative-prefix');
+        if (prefixInput) prefixInput.value = saved.promptPrefix || '';
+        if (qualityInput && style?.qualityPrompt) qualityInput.value = style.qualityPrompt;
+        if (negativePrefixInput && style?.negativePrompt) negativePrefixInput.value = style.negativePrompt;
+        renderGenerationControls();
+        renderGenerationConnectionSummary();
+        return saved;
+    }
+
+    function closeAssetStylePanel() {
+        document.getElementById('svb-as-style-panel')?.remove();
+    }
+
+    function openAssetStylePanel() {
+        closeAssetStylePanel();
+        const style = getDefaultAssetStyle() || {};
+        const modal = document.createElement('div');
+        modal.id = 'svb-as-style-panel';
+        modal.className = 'svb-as-style-modal';
+        modal.innerHTML = `
+            <div class="svb-as-style-dialog" role="dialog" aria-modal="true" aria-label="그림체">
+                <div class="svb-as-style-head">
+                    <strong>그림체</strong>
+                    <button class="svb-as-btn svb-as-close" data-action="close-style-panel" type="button" title="닫기">×</button>
+                </div>
+                <div class="svb-as-style-body">
+                    <label class="svb-as-mini-field">작가 태그
+                        <textarea class="svb-as-input" id="svb-as-style-artists" placeholder="예: artist_a:0.8, (artist_b:1.1)">${escapeHtml(style.artistTags || '')}</textarea>
+                    </label>
+                    <label class="svb-as-mini-field">그림체 프롬프트
+                        <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="사용자가 고정할 그림체/채색/선화 프롬프트">${escapeHtml(style.stylePrompt || '')}</textarea>
+                    </label>
+                    <label class="svb-as-mini-field">퀄리티
+                        <textarea class="svb-as-input" id="svb-as-style-quality" placeholder="white background, simple background, masterpiece...">${escapeHtml(style.qualityPrompt || '')}</textarea>
+                    </label>
+                    <label class="svb-as-mini-field">네거티브 기본값
+                        <textarea class="svb-as-input" id="svb-as-style-negative" placeholder="스타일을 깨는 요소만 짧게">${escapeHtml(style.negativePrompt || '')}</textarea>
+                    </label>
+                </div>
+                <div class="svb-as-style-actions">
+                    <button class="svb-as-btn" data-action="recommend-style" type="button">AI 추천</button>
+                    <button class="svb-as-btn danger" data-action="clear-style" type="button">비우기</button>
+                    <button class="svb-as-btn primary" data-action="save-style" type="button">저장</button>
+                </div>
+            </div>
+        `;
+        studioWindow.appendChild(modal);
+    }
+
+    function readAssetStylePanelValues() {
+        return {
+            name: 'default',
+            artistTags: document.getElementById('svb-as-style-artists')?.value || '',
+            stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
+            qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
+            negativePrompt: document.getElementById('svb-as-style-negative')?.value || ''
+        };
+    }
+
+    async function saveDefaultStyleFromPanel() {
+        const style = readAssetStylePanelValues();
+        assetStudioMeta = svbSetAssetStudioDefaultStyle(assetStudioMeta, style);
+        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
+        await saveCurrentAssets('그림체를 저장하고 현재 이미지 프리셋 맨 앞 prefix에 적용했습니다.');
+        closeAssetStylePanel();
+        renderAll();
+    }
+
+    function clearAssetStylePanelFields() {
+        ['svb-as-style-artists', 'svb-as-style-prompt', 'svb-as-style-quality', 'svb-as-style-negative'].forEach((id) => {
+            const node = document.getElementById(id);
+            if (node) node.value = '';
+        });
+    }
+
+    async function callAssetStudioMainModel(systemPrompt, userText) {
+        const options = {
+            maxOutputTokens: 4096,
+            activityDetail: 'Asset Studio style recommendation'
+        };
+        if (currentApiType === 'github-copilot') return await callGitHubCopilot_API(systemPrompt, userText, options);
+        if (currentApiType === 'vertex-ai-direct') return await callVertexAI_Directly(systemPrompt, userText, options);
+        if (currentApiType === 'ollama-direct') return await callOllamaAPI(systemPrompt, userText, ollamaSettings, options);
+        if (currentApiType === 'api-hub') return await callApiHubAPI(systemPrompt, userText, apiHubSettings, options);
+        const apiKey = typeof risuai?.getArgument === 'function' ? (await risuai.getArgument('api_key') || '') : '';
+        if (!apiKey) throw new Error('Google AI Studio API Key가 없습니다. API Hub/NanoGPT 등을 쓰는 경우 설정에서 메인 API 타입을 확인하세요.');
+        return await callGeminiAPI(apiKey, currentModel, systemPrompt, userText, options);
+    }
+
+    function buildAssetStyleRecommendationContext() {
+        const fields = buildFullCharacterContext(char) || {};
+        const lorebooks = ensureArray(fields.lorebooks).slice(0, 40).map((entry) => ({
+            comment: safeString(entry.comment).slice(0, 120),
+            key: safeString(entry.key).slice(0, 160),
+            content: safeString(entry.content).slice(0, 3000)
+        }));
+        return {
+            characterName: getCharacterDisplayName(char),
+            descriptions: fields.descriptions || {},
+            firstMessage: fields.firstMessage || '',
+            globalNote: fields.globalNote || '',
+            lorebooks,
+            currentStyle: getDefaultAssetStyle() || null,
+            task: 'Recommend one coherent Danbooru/Wellspring-compatible artist/style blend for this selected character. Do not generate images. Return JSON only.'
+        };
+    }
+
+    async function recommendAssetStyleWithModel(button = null) {
+        const previous = button?.textContent;
+        if (button) {
+            button.disabled = true;
+            button.textContent = '추천 중...';
+        }
+        try {
+            setStatus('LLM으로 캐릭터 설정 기반 그림체 조합을 추천받는 중...', 'info');
+            const systemPrompt = [
+                'You are an image prompt style curator for Wellspring/Danbooru-style generation.',
+                'Use the provided character context to recommend a single coherent art-style prefix.',
+                'Do not use local rules, do not mention code, do not create images.',
+                'Return only JSON with keys: artistTags, stylePrompt, qualityPrompt, negativePrompt, rationale.',
+                'artistTags should contain weighted artist/style atoms when appropriate.',
+                'stylePrompt should be a concise prompt prefix that can be placed before every Positive prompt for this character.',
+                'Do not add generic style filler unless the supplied context explicitly asks for that exact style.'
+            ].join('\n');
+            const response = await callAssetStudioMainModel(systemPrompt, JSON.stringify(buildAssetStyleRecommendationContext(), null, 2));
+            const parsed = await parseJsonFromAI(response, {
+                schemaHint: '{"artistTags":"artist/style weighted tags","stylePrompt":"fixed style prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
+                allowModelRepair: false
+            });
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('LLM 추천 응답이 JSON 객체가 아닙니다.');
+            }
+            const artistTags = safeString(parsed.artistTags || parsed.artist_tags || parsed.artists).trim();
+            const stylePrompt = safeString(parsed.stylePrompt || parsed.style_prompt || parsed.prompt).trim();
+            const qualityPrompt = safeString(parsed.qualityPrompt || parsed.quality_prompt || parsed.quality).trim();
+            const negativePrompt = safeString(parsed.negativePrompt || parsed.negative_prompt || parsed.negative).trim();
+            const artistInput = document.getElementById('svb-as-style-artists');
+            const styleInput = document.getElementById('svb-as-style-prompt');
+            const qualityInput = document.getElementById('svb-as-style-quality');
+            const negativeInput = document.getElementById('svb-as-style-negative');
+            if (artistInput) artistInput.value = artistTags;
+            if (styleInput) styleInput.value = stylePrompt;
+            if (qualityInput) qualityInput.value = qualityPrompt;
+            if (negativeInput) negativeInput.value = negativePrompt;
+            setStatus('AI 추천을 입력칸에 채웠습니다. 적용하려면 저장을 누르세요.', 'success');
+        } catch (error) {
+            Logger.error('Asset Studio style recommendation failed:', error);
+            setStatus(`그림체 AI 추천 실패: ${error?.message || error}`, 'error');
+            alert(`그림체 AI 추천 실패: ${error?.message || error}`);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = previous || 'AI 추천';
+            }
+        }
+    }
+
     function splitAssetDisplayName(name) {
         const clean = safeString(name).trim();
         const ext = svbGetFileExt(clean);
@@ -52488,7 +52719,7 @@ async function openAssetStudio() {
 
     function setAssetViewMode(kind, mode) {
         const cleanKind = normalizeAssetKind(kind, 'all');
-        assetViewModes[cleanKind] = mode === 'list' ? 'list' : 'gallery';
+        assetViewModes[cleanKind] = ['gallery', 'list', 'folder'].includes(mode) ? mode : 'gallery';
         renderAssetLibrary();
     }
 
@@ -52588,26 +52819,6 @@ async function openAssetStudio() {
             alert('먼저 에셋을 선택해주세요.');
         }
         return refs;
-    }
-
-    function visibleAssetIndexes(kind) {
-        const cleanKind = normalizeAssetKind(kind, kind);
-        const selector = cleanKind === 'all'
-            ? '.svb-as-row[data-kind][data-idx]'
-            : `.svb-as-row[data-kind="${cleanKind}"][data-idx]`;
-        return Array.from(studioWindow.querySelectorAll(selector))
-            .map(row => Number(row.dataset.idx))
-            .filter(idx => Number.isInteger(idx));
-    }
-
-    function visibleAssetRefs(kind = 'all') {
-        const cleanKind = normalizeAssetKind(kind, kind);
-        const selector = cleanKind === 'all'
-            ? '.svb-as-row[data-kind][data-idx]'
-            : `.svb-as-row[data-kind="${cleanKind}"][data-idx]`;
-        return Array.from(studioWindow.querySelectorAll(selector))
-            .map(row => ({ kind: row.dataset.kind === 'emotion' ? 'emotion' : 'additional', idx: Number(row.dataset.idx) }))
-            .filter(ref => Number.isInteger(ref.idx));
     }
 
     function refreshStateFromCharacter() {
@@ -53885,7 +54096,8 @@ async function openAssetStudio() {
         updateAssetViewModeButtons('all');
         const selectedCount = document.getElementById('svb-as-asset-selected-count');
         if (selectedCount) selectedCount.textContent = `${getSelectedCountForKind('all')}개 선택`;
-        list.className = `svb-as-list svb-as-asset-grid svb-as-unified-list ${assetViewModes.all === 'list' ? 'list' : 'gallery'}`;
+        const viewMode = assetViewModes.all || 'gallery';
+        list.className = `svb-as-list svb-as-asset-grid svb-as-unified-list ${viewMode}`;
         const filtered = allRefs.filter(({ kind, asset }) => {
             const folder = getAssetFolder(kind, asset.name);
             if (folderFilter === '__none__' && folder) return false;
@@ -53893,13 +54105,39 @@ async function openAssetStudio() {
             return !query || [asset.name, asset.path, asset.ext, folder].join(' ').toLowerCase().includes(query);
         });
         if (!filtered.length) {
-            list.innerHTML = '<div class="svb-as-empty">표시할 에셋이 없습니다. 파일을 업로드하거나 직접 등록하세요.</div>';
+            list.innerHTML = '<div class="svb-as-empty">표시할 에셋이 없습니다. 파일을 업로드하세요.</div>';
             return;
         }
-        list.innerHTML = filtered.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
-            usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
-            folder: getAssetFolder(kind, asset.name)
-        })).join('');
+        if (viewMode === 'folder') {
+            const groups = new Map();
+            filtered.forEach((ref) => {
+                const folder = getAssetFolder(ref.kind, ref.asset.name) || '미분류';
+                if (!groups.has(folder)) groups.set(folder, []);
+                groups.get(folder).push(ref);
+            });
+            const folders = [...groups.keys()].sort((a, b) => {
+                if (a === '미분류') return 1;
+                if (b === '미분류') return -1;
+                return a.localeCompare(b);
+            });
+            list.innerHTML = folders.map(folder => {
+                const refs = groups.get(folder) || [];
+                return `<section class="svb-as-folder-group">
+                    <div class="svb-as-folder-head"><strong>${escapeHtml(folder)}</strong><span>${refs.length}</span></div>
+                    <div class="svb-as-folder-grid">
+                        ${refs.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
+                            usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
+                            folder: getAssetFolder(kind, asset.name)
+                        })).join('')}
+                    </div>
+                </section>`;
+            }).join('');
+        } else {
+            list.innerHTML = filtered.map(({ kind, asset, idx }) => renderAssetCardHtml(kind, asset, idx, {
+                usageCount: kind === 'emotion' ? (emotionUsage[asset.name] || 0) : (additionalUsage[asset.name] || 0),
+                folder: getAssetFolder(kind, asset.name)
+            })).join('');
+        }
         scheduleThumbHydration(list);
     }
 
@@ -53925,40 +54163,6 @@ async function openAssetStudio() {
         } catch (error) {
             setStatus(`미리보기 실패: ${error?.message || error}`, 'error');
         }
-    }
-
-    async function addEmotionFromInputs() {
-        const name = safeString(document.getElementById('svb-as-emotion-name')?.value).trim();
-        const path = safeString(document.getElementById('svb-as-emotion-path')?.value).trim();
-        if (!name || !path) {
-            alert('에셋 이름과 경로를 모두 입력해주세요.');
-            return;
-        }
-        const existing = emotionAssets.findIndex(item => item.name.toLowerCase() === name.toLowerCase());
-        if (existing >= 0 && !confirm('같은 에셋 이름이 있습니다. 덮어쓸까요?')) return;
-        if (existing >= 0) emotionAssets[existing] = { name, path };
-        else emotionAssets.push({ name, path });
-        setCharacterField(char, 'emotionImages', svbEmotionTuples(emotionAssets));
-        await saveCurrentAssets('에셋을 저장했습니다.');
-        renderAll();
-    }
-
-    async function addAdditionalFromInputs() {
-        const name = svbNormalizeAssetName(document.getElementById('svb-as-add-name')?.value, 'asset');
-        const path = safeString(document.getElementById('svb-as-add-path')?.value).trim();
-        const ext = safeString(document.getElementById('svb-as-add-ext')?.value).trim().replace(/^\./, '').toLowerCase() || svbGetFileExt(name) || svbGetFileExt(path) || 'png';
-        if (!name || !path) {
-            alert('에셋 이름과 경로를 모두 입력해주세요.');
-            return;
-        }
-        if (!SVB_ASSET_EXTRA_EXTS.has(ext) && !confirm(`알려진 확장자가 아닙니다: ${ext}\n그래도 등록할까요?`)) return;
-        const existing = additionalAssets.findIndex(item => item.name.toLowerCase() === name.toLowerCase());
-        if (existing >= 0 && !confirm('같은 에셋 이름이 있습니다. 덮어쓸까요?')) return;
-        if (existing >= 0) additionalAssets[existing] = { name, path, ext };
-        else additionalAssets.push({ name, path, ext });
-        setCharacterField(char, 'additionalAssets', svbAdditionalAssetTuples(additionalAssets));
-        await saveCurrentAssets('에셋을 저장했습니다.');
-        renderAll();
     }
 
     async function uploadFiles(files) {
@@ -55103,15 +55307,12 @@ async function openAssetStudio() {
         renderAll();
     }
 
-    function selectVisibleAssets(kind) {
+    function selectAllAssets(kind) {
         const cleanKind = normalizeAssetKind(kind, kind);
-        if (cleanKind === 'all') {
-            visibleAssetRefs('all').forEach(ref => selectedAssetIds.add(assetSelectionId(ref.kind, ref.idx)));
-        } else {
-            visibleAssetIndexes(cleanKind).forEach(idx => selectedAssetIds.add(assetSelectionId(cleanKind, idx)));
-        }
+        const refs = cleanKind === 'all' ? getAllAssetRefs() : getAssetRefsForKind(cleanKind, false);
+        refs.forEach(ref => selectedAssetIds.add(assetSelectionId(ref.kind, ref.idx)));
         renderAll();
-        setStatus('표시 중인 에셋을 선택했습니다.', 'info');
+        setStatus('전체 에셋을 선택했습니다.', 'info');
     }
 
     function clearSelectedAssets(kind = '') {
@@ -55492,6 +55693,7 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-list{display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-asset-grid.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:10px;align-items:start}
             #svb-asset-studio-window .svb-as-asset-grid.list{display:flex;flex-direction:column;gap:8px}
+            #svb-asset-studio-window .svb-as-asset-grid.folder{display:flex;flex-direction:column;gap:10px}
             #svb-asset-studio-window .svb-as-row{border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:9px;display:flex;flex-direction:column;gap:8px}
             #svb-asset-studio-window .svb-as-asset-card{position:relative;min-width:0;background:#fff}
             #svb-asset-studio-window .svb-as-card-media{position:relative;display:block}
@@ -55513,6 +55715,11 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-info{grid-column:3}
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:4;display:flex}
             #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-prompt-details,#svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-edit{grid-column:1 / -1}
+            #svb-asset-studio-window .svb-as-folder-group{border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:8px;display:flex;flex-direction:column;gap:8px}
+            #svb-asset-studio-window .svb-as-folder-head{height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px}
+            #svb-asset-studio-window .svb-as-folder-head strong{font-size:13px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            #svb-asset-studio-window .svb-as-folder-head span{min-width:24px;height:22px;border-radius:999px;background:#e2e8f0;color:#475569;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:850}
+            #svb-asset-studio-window .svb-as-folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
             #svb-asset-studio-window .svb-as-row-main{display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:8px;align-items:center}
             #svb-asset-studio-window .svb-as-select{width:16px;height:16px;margin:0;accent-color:#0f766e}
             #svb-asset-studio-window .svb-as-row-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.45fr);gap:7px;align-items:center}
@@ -55546,6 +55753,13 @@ async function openAssetStudio() {
             #svb-asset-studio-window .svb-as-inline-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
             #svb-asset-studio-window .svb-as-view-btn.active{border-color:#0f766e;background:#ecfdf5;color:#047857}
             #svb-asset-studio-window .svb-as-selected-count{font-size:11px;color:#64748b;font-weight:750}
+            #svb-asset-studio-window .svb-as-style-modal{position:absolute;inset:0;z-index:6;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box}
+            #svb-asset-studio-window .svb-as-style-dialog{width:min(720px,96vw);max-height:min(760px,92vh);background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 24px 70px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden}
+            #svb-asset-studio-window .svb-as-style-head{height:48px;padding:0 12px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;gap:8px}
+            #svb-asset-studio-window .svb-as-style-head strong{font-size:14px;color:#111827}
+            #svb-asset-studio-window .svb-as-style-body{padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;overflow:auto}
+            #svb-asset-studio-window .svb-as-style-body textarea{min-height:110px}
+            #svb-asset-studio-window .svb-as-style-actions{padding:10px 12px;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;background:#f8fafc}
             #svb-asset-studio-window .svb-as-folder-shelf{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:none}
             #svb-asset-studio-window .svb-as-folder-shelf::-webkit-scrollbar{display:none}
             #svb-asset-studio-window .svb-as-folder-chip{flex:0 0 auto;max-width:168px;height:28px;border:1px solid #dbe3ef;border-radius:999px;background:#fff;color:#334155;padding:0 8px;display:flex;align-items:center;justify-content:space-between;gap:7px;cursor:pointer;text-align:left}
@@ -55616,17 +55830,20 @@ async function openAssetStudio() {
                 #svb-asset-studio-window .svb-as-part-check{justify-self:start}
                 #svb-asset-studio-window .svb-as-output-list{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+                #svb-asset-studio-window .svb-as-folder-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
                 #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-asset-card{grid-template-columns:22px 60px minmax(0,1fr)}
                 #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-card-actions{grid-column:1 / -1}
                 #svb-asset-studio-window .svb-as-asset-grid.list .svb-as-thumb{width:60px;height:60px}
                 #svb-asset-studio-window .svb-as-row-main{grid-template-columns:22px 54px minmax(0,1fr)}
                 #svb-asset-studio-window .svb-as-row-fields{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-badge{justify-self:start;grid-column:3}
+                #svb-asset-studio-window .svb-as-style-body{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-lightbox img{max-height:72vh}
             }
             @media (max-width:420px){
                 #svb-asset-studio-window .svb-as-panel{padding:10px}
                 #svb-asset-studio-window .svb-as-asset-grid.gallery{grid-template-columns:1fr}
+                #svb-asset-studio-window .svb-as-folder-grid{grid-template-columns:1fr}
                 #svb-asset-studio-window .svb-as-card-actions{grid-template-columns:1fr 1fr 1fr}
             }
         </style>
@@ -55680,12 +55897,15 @@ async function openAssetStudio() {
                                     <div class="svb-as-toolbar-right">
                                         <button class="svb-as-btn svb-as-view-btn active" data-action="set-asset-view" data-kind="all" data-view="gallery" type="button">갤러리</button>
                                         <button class="svb-as-btn svb-as-view-btn" data-action="set-asset-view" data-kind="all" data-view="list" type="button">목록</button>
+                                        <button class="svb-as-btn svb-as-view-btn" data-action="set-asset-view" data-kind="all" data-view="folder" type="button">폴더</button>
                                     </div>
                                 </div>
                                 <div class="svb-as-actions">
                                     <button class="svb-as-btn primary" id="svb-as-upload-btn" type="button">파일 업로드</button>
-                                    <button class="svb-as-btn" data-action="select-visible" data-kind="all" type="button">표시 선택</button>
+                                    <button class="svb-as-btn primary" data-action="open-style-panel" type="button">그림체</button>
+                                    <button class="svb-as-btn" data-action="select-all" data-kind="all" type="button">전체 선택</button>
                                     <button class="svb-as-btn" data-action="clear-selection" data-kind="all" type="button">선택 해제</button>
+                                    <button class="svb-as-btn danger" data-action="delete-selected" data-kind="all" type="button">선택 삭제</button>
                                     <input id="svb-as-file-input" type="file" accept="image/*" multiple style="display:none">
                                 </div>
                             </div>
@@ -55699,18 +55919,8 @@ async function openAssetStudio() {
                                     <button class="svb-as-btn" data-action="pattern-rename" data-kind="all" type="button">패턴 변경</button>
                                     <button class="svb-as-btn" data-action="move-folder" data-kind="all" type="button">폴더 이동</button>
                                     <button class="svb-as-btn" data-action="batch-replace" data-kind="all" type="button">일괄 교체</button>
-                                    <button class="svb-as-btn danger" data-action="delete-selected" data-kind="all" type="button">선택 삭제</button>
                                 </div>
                             </div>
-                            <details class="svb-as-form">
-                                <summary class="svb-as-form-title">직접 등록</summary>
-                                <div class="svb-as-grid three">
-                                    <input class="svb-as-input" id="svb-as-add-name" placeholder="에셋 이름">
-                                    <input class="svb-as-input" id="svb-as-add-path" placeholder="assets/... 또는 data:">
-                                    <input class="svb-as-input" id="svb-as-add-ext" placeholder="png">
-                                </div>
-                                <button class="svb-as-btn primary" id="svb-as-add-manual" type="button">에셋 등록</button>
-                            </details>
                             <div class="svb-as-list svb-as-unified-list" id="svb-as-asset-list"></div>
                         </div>
                         <div class="svb-as-panel" id="svb-as-generate-panel" style="display:none">
@@ -55873,6 +56083,11 @@ async function openAssetStudio() {
     document.addEventListener('keydown', handleEsc);
     try {
         renderAll();
+        const defaultStyle = getDefaultAssetStyle();
+        if (svbBuildAssetStylePrompt(defaultStyle) && !safeString(getSelectedImagePreset()?.promptPrefix).trim()) {
+            await applyDefaultStyleToCurrentPreset(defaultStyle);
+            renderAll();
+        }
         studioWindow.querySelector('.svb-as-container')?.focus?.();
     } catch (error) {
         Logger.error('Asset Studio initial render failed:', error);
@@ -55882,7 +56097,6 @@ async function openAssetStudio() {
 
     addLocal(document.getElementById('svb-as-asset-search'), 'input', renderAssetLibrary);
     addLocal(document.getElementById('svb-as-asset-folder-filter'), 'change', renderAssetLibrary);
-    addLocal(document.getElementById('svb-as-add-manual'), 'click', addAdditionalFromInputs);
     addLocal(document.getElementById('svb-as-upload-btn'), 'click', () => document.getElementById('svb-as-file-input')?.click());
     addLocal(document.getElementById('svb-as-file-input'), 'change', async event => {
         await uploadFiles(event.target.files);
@@ -56108,6 +56322,10 @@ async function openAssetStudio() {
             closeAssetLightbox();
             return;
         }
+        if (event.target?.id === 'svb-as-style-panel') {
+            closeAssetStylePanel();
+            return;
+        }
         const btn = event.target?.closest?.('[data-action]');
         if (!btn) return;
         const action = btn.dataset.action;
@@ -56117,6 +56335,26 @@ async function openAssetStudio() {
         try {
             if (action === 'close-lightbox') {
                 closeAssetLightbox();
+                return;
+            }
+            if (action === 'open-style-panel') {
+                openAssetStylePanel();
+                return;
+            }
+            if (action === 'close-style-panel') {
+                closeAssetStylePanel();
+                return;
+            }
+            if (action === 'save-style') {
+                await saveDefaultStyleFromPanel();
+                return;
+            }
+            if (action === 'clear-style') {
+                clearAssetStylePanelFields();
+                return;
+            }
+            if (action === 'recommend-style') {
+                await recommendAssetStyleWithModel(btn);
                 return;
             }
             if (action === 'zoom-generated') {
@@ -56193,8 +56431,8 @@ async function openAssetStudio() {
                 return;
             }
             const bulkKind = normalizeAssetKind(btn.dataset.kind || 'additional', 'additional');
-            if (action === 'select-visible') {
-                selectVisibleAssets(bulkKind);
+            if (action === 'select-all') {
+                selectAllAssets(bulkKind);
                 return;
             }
             if (action === 'clear-selection') {
