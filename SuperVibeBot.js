@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.129
-//@version 1.5.129
+//@display-name 🐸 SuperVibeBot v1.5.130
+//@version 1.5.130
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.129는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.130는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.130 Release Notes
+ * - v1.5.130: treats bare identity marks such as "mole" or "scar" as incomplete image prompt atoms unless they include a visible location
+ * - v1.5.130: teaches Kero image prompts to write stable mark locations such as "small mole under left eye" instead of movable generic marks
+ * - v1.5.130: preserves visual age, height, and build cues by converting exact numbers into drawable ranges instead of dropping them
+ *
  * SuperVibeBot v1.5.129 Release Notes
  * - v1.5.129: canonicalizes Kero image subject tags so final Positive keeps one subject count tag instead of "1boy, male_focus, boy" stacks
  * - v1.5.129: removes ambiguous image prompt prose such as nationality labels, role labels, vague expression labels, and "regulation length" wording before image API calls
@@ -1922,6 +1927,8 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use exactly one primary subject tag when the subject count is clear: 1boy for a single male subject, 1girl for a single female subject, or 1other only when the character is explicitly nonbinary/other. Do not also write boy, girl, man, woman, male, female, male_focus, female_focus, Korean man, or Korean woman.
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
+- Preserve visual age range, height, and body shape when they affect the character image. Convert exact numbers into drawable cues: "24 years old" -> "young adult", "31 years old" -> "adult", "180cm" -> "tall stature"; keep concrete build cues such as lean build, slender, broad-shouldered, stocky build, muscular build, petite build, or average build.
+- Distinct identity marks must include a stable visible location. Write "small mole under left eye", "scar across right eyebrow", or "birthmark on left cheek"; do not write bare "mole", "scar", "tattoo", "birthmark", or "freckles". If the source only says the mark exists without a location, choose one consistent visible location for that character in the generated prompt or omit the mark.
 - Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
@@ -30604,10 +30611,56 @@ Rules:
         return !!getKeroSubjectCountTagFromAtom(atom);
     }
 
+    function isKeroIdentityMarkAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        return /\b(?:mole|beauty mark|scar|tattoo|birthmark|freckles?)\b/.test(text);
+    }
+
+    function hasKeroVisibleMarkLocation(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (!text) return false;
+        if (/\b(?:left|right|inner|outer)\b/.test(text)) return true;
+        if (/\b(?:center|central|middle)\b/.test(text) && /\b(?:forehead|chin|nose|bridge of nose|lip|mouth|neck|collarbone)\b/.test(text)) return true;
+        if (/\b(?:upper|lower)\s+(?:lip|mouth|eyelid)\b/.test(text)) return true;
+        if (/\b(?:bridge of nose|nose bridge|between eyebrows|forehead|chin|jawline|collarbone|wrist)\b/.test(text)) return true;
+        return false;
+    }
+
+    function isKeroUnlocatedIdentityMarkAtom(atom = '') {
+        return isKeroIdentityMarkAtom(atom) && !hasKeroVisibleMarkLocation(atom);
+    }
+
+    function normalizeKeroVisualAgeAtom(text = '') {
+        const match = safeString(text).trim().match(/^(\d{1,3})\s*years?\s*old$/i);
+        if (!match) return '';
+        const age = Number(match[1]);
+        if (!Number.isFinite(age) || age <= 0) return '';
+        if (age < 13) return 'child';
+        if (age < 18) return 'teenage';
+        if (age < 26) return 'young adult';
+        if (age < 40) return 'adult';
+        if (age < 60) return 'mature adult';
+        return 'elderly';
+    }
+
+    function normalizeKeroVisualHeightAtom(text = '') {
+        const match = safeString(text).trim().match(/^(\d{2,3})\s*cm$/i);
+        if (!match) return '';
+        const height = Number(match[1]);
+        if (!Number.isFinite(height) || height <= 0) return '';
+        if (height < 160) return 'short stature';
+        if (height >= 180) return 'tall stature';
+        return 'average height';
+    }
+
     function normalizeKeroConcreteVisualAtom(atom = '') {
         const raw = safeString(atom).trim();
         const text = normalizeKeroGeneratedPromptAtom(raw);
         if (!text) return '';
+        const ageCue = normalizeKeroVisualAgeAtom(text);
+        if (ageCue) return ageCue;
+        const heightCue = normalizeKeroVisualHeightAtom(text);
+        if (heightCue) return heightCue;
         if (/\bregulation\b/.test(text) && /(?:\bhair\b|\blength\b)/.test(text)) return 'short_hair';
         if (/^(?:upper body|upper-body)$/.test(text)) return 'upper_body';
         return raw;
@@ -30618,10 +30671,11 @@ Rules:
         if (!text) return true;
         if (isKeroSubjectQualifierAtom(text)) return true;
         if (/^(?:korean|japanese|chinese|american|russian|rok)\s+(?:man|woman|boy|girl|male|female)$/.test(text)) return true;
-        if (/^(?:tall|precise appearance|clean appearance|economical movements|level gaze|vivid expression|quick eyebrows)$/.test(text)) return true;
+        if (/^(?:precise appearance|clean appearance|economical movements|level gaze|vivid expression|quick eyebrows)$/.test(text)) return true;
         if (/^(?:nursing officer|supply nco|military police investigation officer|staff sergeant|second lieutenant|first lieutenant|corporal)$/.test(text)) return true;
         if (/^(?:observant and composed expression|composed still posture|steady expression|clean and stripped down impression)$/.test(text)) return true;
         if (/\bregulation\b/.test(text) && /(?:\bhair\b|\blength\b)/.test(text)) return true;
+        if (isKeroUnlocatedIdentityMarkAtom(text)) return true;
         return false;
     }
 
@@ -30655,8 +30709,6 @@ Rules:
         const text = normalizeKeroGeneratedPromptAtom(atom);
         if (!text) return false;
         if (/^(?:masterpiece|best quality|amazing quality|very aesthetic|highres|absurdres|incredibly absurdres|newest)$/.test(text)) return true;
-        if (/^\d{1,3}\s*years?\s*old$/.test(text)) return true;
-        if (/^\d{2,3}\s*cm$/.test(text)) return true;
         return false;
     }
 
