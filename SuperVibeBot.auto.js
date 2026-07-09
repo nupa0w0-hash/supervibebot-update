@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.131
-//@version 1.5.131
+//@display-name 🐸 SuperVibeBot v1.5.132
+//@version 1.5.132
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.131는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.132는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.132 Release Notes
+ * - v1.5.132: preserves user-saved artist prompt syntax such as artist:(name:0.8), negative weights, and artist collaboration tags without splitting or escaping it
+ * - v1.5.132: changes Kero height/body cues from prose labels such as tall stature or average height into image-model prompt tags such as short, tall, very tall, slender, broad shoulders, small body, large body, and huge body
+ * - v1.5.132: writes Asset Studio AI-recommended artists as artist:(tag:weight) prompt atoms without backslash-escaping the artist tag
+ *
  * SuperVibeBot v1.5.131 Release Notes
  * - v1.5.131: replaces abstract age cues such as "young adult" and "adult" with image-model-friendly nouns such as man, woman, old man, and old woman
  * - v1.5.131: keeps subject count tags separate from age/body depiction terms so "1boy, man" can express one adult male subject without male_focus/boy stacks
@@ -1932,7 +1937,7 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use exactly one primary subject count tag when the subject count is clear: 1boy for one male subject, 1girl for one female subject, or 1other only when the character is explicitly nonbinary/other. Do not write male_focus, female_focus, Korean man, Korean woman, male, or female. Age depiction nouns may be used once when they come from source age/body context: boy, girl, man, woman, old man, or old woman.
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
-- Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, or young woman unless the user explicitly asks for that wording. Convert exact height into drawable stature cues such as short stature, average height, or tall stature; keep concrete build cues such as lean build, slender, broad-shouldered, stocky build, muscular build, petite build, or average build.
+- Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, or young woman unless the user explicitly asks for that wording. Convert height and body shape into direct image prompt tags: short, tall, very tall, slender, broad shoulders, muscular, petite, stocky, small body, large body, huge body. Do not write tall stature, short stature, average height, lean build, or broad-shouldered in final Positive prompts.
 - Distinct identity marks must include a stable visible location. Write "small mole under left eye", "scar across right eyebrow", or "birthmark on left cheek"; do not write bare "mole", "scar", "tattoo", "birthmark", or "freckles". If the source only says the mark exists without a location, choose one consistent visible location for that character in the generated prompt or omit the mark.
 - Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
@@ -30668,9 +30673,28 @@ Rules:
         if (!match) return '';
         const height = Number(match[1]);
         if (!Number.isFinite(height) || height <= 0) return '';
-        if (height < 160) return 'short stature';
-        if (height >= 180) return 'tall stature';
-        return 'average height';
+        if (height < 160) return 'short';
+        if (height >= 190) return 'very tall';
+        if (height >= 180) return 'tall';
+        return '';
+    }
+
+    function normalizeKeroBodyShapeAtom(text = '') {
+        const clean = normalizeKeroGeneratedPromptAtom(text);
+        if (!clean) return '';
+        if (/^(?:short stature|short body)$/.test(clean)) return 'short';
+        if (/^(?:tall stature|tall body)$/.test(clean)) return 'tall';
+        if (/^(?:very tall stature|huge height)$/.test(clean)) return 'very tall';
+        if (/^(?:average height|medium height)$/.test(clean)) return '';
+        if (/^(?:lean build|slim build|slender build|thin build)$/.test(clean)) return 'slender';
+        if (/^(?:broad-shouldered|broad shouldered|wide shoulders)$/.test(clean)) return 'broad shoulders';
+        if (/^(?:muscular build|athletic build|strong build|fit body)$/.test(clean)) return 'muscular';
+        if (/^(?:petite build|small build|small frame)$/.test(clean)) return 'petite';
+        if (/^(?:stocky build|thick build)$/.test(clean)) return 'stocky';
+        if (/^(?:big build|large build|big body)$/.test(clean)) return 'large body';
+        if (/^(?:huge build|huge frame|massive build|massive body)$/.test(clean)) return 'huge body';
+        if (/^(?:average build|medium build|normal build)$/.test(clean)) return '';
+        return '';
     }
 
     function normalizeKeroConcreteVisualAtom(atom = '', options = {}) {
@@ -30681,6 +30705,8 @@ Rules:
         if (ageCue) return ageCue;
         const heightCue = normalizeKeroVisualHeightAtom(text);
         if (heightCue) return heightCue;
+        const bodyCue = normalizeKeroBodyShapeAtom(text);
+        if (bodyCue) return bodyCue;
         if (/\bregulation\b/.test(text) && /(?:\bhair\b|\blength\b)/.test(text)) return 'short_hair';
         if (/^(?:upper body|upper-body)$/.test(text)) return 'upper_body';
         return raw;
@@ -30693,6 +30719,7 @@ Rules:
         if (/^(?:korean|japanese|chinese|american|russian|rok)\s+(?:man|woman|boy|girl|male|female)$/.test(text)) return true;
         if (/\byoung\b/.test(text)) return true;
         if (/^(?:adult|mature adult|adult male|adult female)$/.test(text)) return true;
+        if (/^(?:average height|medium height|average build|medium build|normal build)$/.test(text)) return true;
         if (/^(?:precise appearance|clean appearance|economical movements|level gaze|vivid expression|quick eyebrows)$/.test(text)) return true;
         if (/^(?:nursing officer|supply nco|military police investigation officer|staff sergeant|second lieutenant|first lieutenant|corporal)$/.test(text)) return true;
         if (/^(?:observant and composed expression|composed still posture|steady expression|clean and stripped down impression)$/.test(text)) return true;
@@ -30712,6 +30739,8 @@ Rules:
         const hasOldWoman = texts.includes('old woman');
         const hasMan = texts.includes('man');
         const hasWoman = texts.includes('woman');
+        const hasVeryTall = texts.includes('very tall');
+        const hasHugeBody = texts.includes('huge body');
         return list.filter((atom) => {
             const text = normalizeKeroGeneratedPromptAtom(atom);
             if (hasSpecificUniform && text === 'military uniform') return false;
@@ -30719,6 +30748,8 @@ Rules:
             if (hasMan && /^(?:guy)$/.test(text)) return false;
             if (hasOldWoman && /^(?:woman|girl)$/.test(text)) return false;
             if (hasWoman && /^(?:girl)$/.test(text)) return false;
+            if (hasVeryTall && text === 'tall') return false;
+            if (hasHugeBody && text === 'large body') return false;
             return true;
         });
     }
@@ -30788,10 +30819,7 @@ Rules:
         const body = safeString(prompt).trim();
         if (!fixed) return body;
         if (!body) return fixed;
-        return joinKeroPromptAtoms([
-            ...splitKeroPromptAtoms(fixed),
-            ...splitKeroPromptAtoms(body)
-        ]);
+        return svbJoinPromptFragments(fixed, body);
     }
 
     function buildKeroAssetPositivePrompt(prompt = '', options = {}) {
@@ -53097,15 +53125,16 @@ async function openAssetStudio() {
     }
 
     function svbPromptAtomFromDanbooruArtist(tag = '') {
-        return safeString(tag).trim().replace(/_/g, ' ').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+        return safeString(tag).trim();
     }
 
     function svbWeightedDanbooruArtist(tag = '', weight = 1) {
         const atom = svbPromptAtomFromDanbooruArtist(tag);
         if (!atom) return '';
+        if (/^artist\s*:/i.test(atom)) return atom;
         const fixedWeight = Number(weight);
-        if (!Number.isFinite(fixedWeight) || Math.abs(fixedWeight - 1) < 0.01) return atom;
-        return `(${atom}:${fixedWeight.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')})`;
+        if (!Number.isFinite(fixedWeight) || Math.abs(fixedWeight - 1) < 0.01) return `artist:${atom}`;
+        return `artist:(${atom}:${fixedWeight.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')})`;
     }
 
     function svbBuildDanbooruArtistCandidatePayload(context = {}) {
