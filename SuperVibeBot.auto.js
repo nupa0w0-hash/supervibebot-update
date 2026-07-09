@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.113
-//@version 1.5.113
+//@display-name 🐸 SuperVibeBot v1.5.114
+//@version 1.5.114
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.113는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.114는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.114 Release Notes
+ * - v1.5.114: removes the remaining split prompt merge path from Kero image asset generation so assets[].prompt is the only Positive body sent to the image API
+ * - v1.5.114: stops Kero asset generation from reusing stored identity/style prompt layers and from saving new identity style prompt layers after generation
+ * - v1.5.114: compiles Kero Positive/Negative fragments before the API call, dropping lore-only route/style/default-quality fragments from Positive and keeping Negative short
+ *
  * SuperVibeBot v1.5.113 Release Notes
  * - v1.5.113: makes Kero image prompts compact by design: world/character context first, Danbooru/Wellspring references as a dictionary, not a tag dump
  * - v1.5.113: adds a slot budget for Positive prompts so style, identity, outfit, and pose stay short and repeatable across a character set
@@ -3274,12 +3279,12 @@ const WELLSPRING_IMAGE_API_PROFILE = Object.freeze({
 });
 const DEFAULT_IMAGE_GENERATION_PRESET_ID = "nai-character-basic";
 const DEFAULT_IMAGE_PRESET_PARTS = Object.freeze([
-    { id: "standing-neutral", label: "기본 스탠딩", assetType: "emotion", emotionTarget: "기본", prompt: "{{character}}, neutral expression, upper body, standing pose, clean background", count: 1 },
-    { id: "standing-happy", label: "기쁨", assetType: "emotion", emotionTarget: "기쁨", prompt: "{{character}}, happy smile, bright eyes, upper body, standing pose, clean background", count: 1 },
-    { id: "standing-sad", label: "슬픔", assetType: "emotion", emotionTarget: "슬픔", prompt: "{{character}}, sad expression, lowered gaze, upper body, standing pose, clean background", count: 1 },
-    { id: "standing-angry", label: "화남", assetType: "emotion", emotionTarget: "화남", prompt: "{{character}}, angry expression, tense shoulders, upper body, standing pose, clean background", count: 1 },
-    { id: "standing-shy", label: "부끄러움", assetType: "emotion", emotionTarget: "부끄러움", prompt: "{{character}}, shy blush, soft expression, upper body, standing pose, clean background", count: 1 },
-    { id: "standing-surprised", label: "놀람", assetType: "emotion", emotionTarget: "놀람", prompt: "{{character}}, surprised expression, wide eyes, upper body, standing pose, clean background", count: 1 }
+    { id: "standing-neutral", label: "기본 스탠딩", assetType: "emotion", emotionTarget: "기본", prompt: "{{character}}, neutral expression, upper body, standing pose", count: 1 },
+    { id: "standing-happy", label: "기쁨", assetType: "emotion", emotionTarget: "기쁨", prompt: "{{character}}, happy smile, bright eyes, upper body, standing pose", count: 1 },
+    { id: "standing-sad", label: "슬픔", assetType: "emotion", emotionTarget: "슬픔", prompt: "{{character}}, sad expression, lowered gaze, upper body, standing pose", count: 1 },
+    { id: "standing-angry", label: "화남", assetType: "emotion", emotionTarget: "화남", prompt: "{{character}}, angry expression, tense shoulders, upper body, standing pose", count: 1 },
+    { id: "standing-shy", label: "부끄러움", assetType: "emotion", emotionTarget: "부끄러움", prompt: "{{character}}, shy blush, soft expression, upper body, standing pose", count: 1 },
+    { id: "standing-surprised", label: "놀람", assetType: "emotion", emotionTarget: "놀람", prompt: "{{character}}, surprised expression, wide eyes, upper body, standing pose", count: 1 }
 ]);
 const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
     {
@@ -3287,8 +3292,8 @@ const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
         name: "NAI 캐릭터 기본",
         provider: "nai-compatible",
         model: "",
-        prompt: "high quality character asset, {{character}}, {{emotion}}, upper body, clean background",
-        negative: "text, logo, watermark, low quality, bad anatomy, extra fingers",
+        prompt: "{{character}}, {{emotion}}",
+        negative: "text, logo, watermark",
         ratioId: "13:19",
         steps: 26,
         workflow: "",
@@ -3303,8 +3308,8 @@ const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
         name: "Wellspring 프로필 기본",
         provider: "wellspring-nai",
         model: "",
-        prompt: "high quality SDXL character asset, {{character}}, {{emotion}}, upper body, clean background",
-        negative: "text, logo, watermark, low quality, bad anatomy, extra fingers",
+        prompt: "{{character}}, {{emotion}}",
+        negative: "text, logo, watermark",
         ratioId: "13:19",
         steps: 26,
         workflow: "",
@@ -13148,7 +13153,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.113',
+            '//@version 1.5.114',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -23200,11 +23205,12 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
     }
     const prompt = safeString(options.prompt).trim();
     if (!prompt) throw new Error("이미지 프롬프트를 입력해주세요.");
+    const applyProfileDefaults = options.applyProfileGenerationDefaults !== false;
     const request = {
         prompt,
         negative: safeString(options.negative || "text, logo, watermark, low quality").trim(),
-        ratioId: options.ratioId || normalized.ratioId,
-        steps: options.steps || normalized.steps,
+        ratioId: options.ratioId || (applyProfileDefaults ? normalized.ratioId : ""),
+        steps: options.steps || (applyProfileDefaults ? normalized.steps : ""),
         characterPrompt: safeString(options.characterPrompt).trim(),
         characterNegative: safeString(options.characterNegative).trim(),
         referenceImages: ensureArray(options.referenceImages),
@@ -23232,7 +23238,11 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     const runtimeProfile = buildImageProfileForGenerationPreset(profile, normalizedPreset);
     const basePrompt = safeString(options.prompt).trim() || normalizedPreset.prompt;
     const baseNegative = safeString(options.negative).trim() || normalizedPreset.negative;
-    const composed = svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative);
+    const applyPresetPromptDefaults = options.applyPresetPromptDefaults !== false;
+    const applyRouteDefaults = options.applyRouteDefaults !== false;
+    const composed = applyPresetPromptDefaults
+        ? svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative)
+        : { prompt: basePrompt, negative: baseNegative };
     const referenceImages = [...ensureArray(options.referenceImages)];
     const referenceImagePath = safeString(options.referenceImagePath || normalizedPreset.referenceImagePath).trim();
     if (!referenceImages.length && referenceImagePath) {
@@ -23246,8 +23256,9 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
         ...options,
         prompt: composed.prompt,
         negative: composed.negative,
-        characterPrompt: normalizedPreset.characterPrompt,
-        characterNegative: normalizedPreset.characterNegative,
+        characterPrompt: applyPresetPromptDefaults ? normalizedPreset.characterPrompt : "",
+        characterNegative: applyPresetPromptDefaults ? normalizedPreset.characterNegative : "",
+        applyProfileGenerationDefaults: applyRouteDefaults,
         referenceImages,
         wellspringMode: options.wellspringMode || normalizedPreset.wellspringMode,
         wellspringPresetId: options.wellspringPresetId || normalizedPreset.wellspringPresetId,
@@ -23262,8 +23273,8 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
         wellspringScheduler: options.wellspringScheduler || normalizedPreset.wellspringScheduler,
         wellspringLoras: ensureArray(options.wellspringLoras).length ? options.wellspringLoras : normalizedPreset.wellspringLoras,
         wellspringPayloadJson: options.wellspringPayloadJson || normalizedPreset.wellspringPayloadJson,
-        ratioId: options.ratioId || runtimeProfile.ratioId,
-        steps: options.steps || runtimeProfile.steps
+        ratioId: options.ratioId || (applyRouteDefaults ? runtimeProfile.ratioId : ""),
+        steps: options.steps || (applyRouteDefaults ? runtimeProfile.steps : "")
     });
     return {
         ...result,
@@ -30337,16 +30348,8 @@ Rules:
         return out.join(', ');
     }
 
-    function buildKeroAssetPositivePrompt(stylePrompt = '', artistTags = '', styleTags = '', prompt = '', options = {}) {
-        return normalizeKeroAssetPositivePrompt(
-            joinKeroAssetPromptFragments(
-                stylePrompt,
-                artistTags,
-                styleTags,
-                prompt
-            ),
-            options
-        );
+    function buildKeroAssetPositivePrompt(prompt = '', options = {}) {
+        return normalizeKeroAssetPositivePrompt(prompt, options);
     }
 
     function buildKeroAssetQualityPrompt(qualityPrompt = '') {
@@ -30382,10 +30385,9 @@ Rules:
     }
 
     async function hydrateKeroAssetIdentityPrompts(char, action = {}, items = []) {
-        let meta = svbReadAssetStudioMetaFromCharacter(char);
+        const meta = svbReadAssetStudioMetaFromCharacter(char);
         const actionIdentityName = resolveKeroAssetActionIdentityName(action, items);
         const knownIdentityNames = collectKeroAssetKnownIdentityNames(char);
-        let dirty = false;
         const hydrated = items.map((item) => {
             const identityName = svbNormalizeAssetIdentityName(
                 item.identityName
@@ -30394,29 +30396,21 @@ Rules:
             );
             const stored = identityName ? svbFindAssetIdentityEntry(meta, identityName) : null;
             const explicitIdentity = safeString(item.identityPrompt).trim();
-            const storedIdentity = safeString(stored?.prompt).trim();
             const identityPrompt = compactKeroAssetPrompt(
-                joinKeroAssetPromptFragments(explicitIdentity, storedIdentity),
+                explicitIdentity,
                 { maxFragments: 18, maxChars: 520, dropStyle: true }
             );
             const identityNegative = compactKeroAssetPrompt(
-                joinKeroAssetPromptFragments(item.identityNegative, stored?.negative),
+                item.identityNegative,
                 { maxFragments: 18, maxChars: 520, dropStyle: true }
             );
             const itemStylePrompt = safeString(item.stylePrompt).trim();
             const itemArtistTags = safeString(item.artistTags).trim();
             const itemStyleTags = safeString(item.styleTags).trim();
             const itemQualityPrompt = safeString(item.wellspringQualityPrompt).trim();
-            const storedStylePrompt = safeString(stored?.stylePrompt).trim();
-            const storedArtistTags = safeString(stored?.artistTags).trim();
-            const storedStyleTags = safeString(stored?.styleTags).trim();
             const storedQualityPrompt = safeString(stored?.wellspringQualityPrompt || stored?.qualityPrompt).trim();
             const itemLoras = svbNormalizeWellspringLoras(item.wellspringLoras || item.loras);
             const storedLoras = svbNormalizeWellspringLoras(stored?.wellspringLoras || stored?.loras);
-            if (identityName && explicitIdentity && explicitIdentity !== storedIdentity) {
-                meta = svbSetAssetIdentityPrompt(meta, identityName, identityPrompt, identityNegative);
-                dirty = true;
-            }
             return {
                 ...item,
                 identityName,
@@ -30424,18 +30418,13 @@ Rules:
                 identityNegative,
                 danbooruTags: compactKeroAssetPrompt(item.danbooruTags, { maxFragments: 18, maxChars: 520, dropStyle: true }),
                 stylePreset: item.stylePreset || '',
-                stylePrompt: itemStylePrompt || storedStylePrompt,
-                artistTags: itemArtistTags || storedArtistTags,
-                styleTags: itemStyleTags || storedStyleTags,
+                stylePrompt: itemStylePrompt,
+                artistTags: itemArtistTags,
+                styleTags: itemStyleTags,
                 wellspringQualityPrompt: itemQualityPrompt || storedQualityPrompt,
                 wellspringLoras: itemLoras.length ? itemLoras : storedLoras
             };
         });
-        if (dirty) {
-            svbWriteAssetStudioMetaToCharacter(char, meta);
-            const ok = await svbSaveAssetStudioCharacter(char, 'asset-identity-prompt');
-            if (!ok) throw new Error('Failed to save generated asset identity prompt.');
-        }
         return hydrated;
     }
 
@@ -30492,17 +30481,75 @@ Rules:
         return safeString(stylePreset).trim();
     }
 
+    function normalizeKeroAssetPromptToken(fragment = '') {
+        return safeString(fragment).trim().replace(/\s+/g, ' ');
+    }
+
+    function isKeroAssetPositiveLoreOnlyFragment(fragment = '') {
+        const text = normalizeKeroAssetPromptToken(fragment);
+        const lower = text.toLowerCase();
+        if (!lower) return true;
+        if (/^\d{1,3}\s*(?:years?\s*old|yo|y\/o)$/.test(lower)) return true;
+        if (/^\d{2,3}\s*cm$/.test(lower)) return true;
+        if (/^(?:korean|japanese|chinese|american|russian|french|german|british|asian|european)\s+(?:man|woman|boy|girl|male|female)$/.test(lower)) return true;
+        if (/^(?:fantasy|modern|urban|sci[-\s]?fi|science fiction|romance|visual novel|military|military romance|rpg|simulation)(?:\s+(?:setting|genre|world|theme))?$/.test(lower)) return true;
+        if (/^(?:2d\s+)?(?:anime|cartoon|illustration)(?:\s+(?:style|illustration|art))?$/.test(lower)) return true;
+        if (/^(?:cel[-\s]?shaded|sdxl(?:\s+character)?(?:\s+art)?|high quality(?:\s+character)?(?:\s+asset)?|polished(?:\s+sdxl)?(?:\s+character)?(?:\s+art| illustration)?)$/.test(lower)) return true;
+        if (/\b(?:photo|photorealistic|realistic|3d|cgi|render)\b/.test(lower)) return true;
+        if (/^(?:masterpiece|best quality|amazing quality|very aesthetic|highres|absurdres|incredibly absurdres|white[_\s]background|simple[_\s]background|clean background)$/.test(lower)) return true;
+        if (/^(?:provider|preset|stylepreset|source|ratio|steps?)\s*[:=]/.test(lower)) return true;
+        if (/^(?:nai|novelai|wellspring|comfyui|sdxl|adxl|anima)(?:[-_\s][a-z0-9.]+)*$/.test(lower)) return true;
+        if (/^(?:female\s+|male\s+)?(?:nursing officer|military nurse|supply nco|military police investigation officer|medic|soldier|officer|second lieutenant|first lieutenant|staff sergeant)(?:\s+rank|\s+role|\s+job)?$/.test(lower)) return true;
+        return false;
+    }
+
+    function cleanKeroAssetPositiveFragment(fragment = '') {
+        const text = normalizeKeroAssetPromptToken(fragment);
+        if (!text || isKeroAssetPositiveLoreOnlyFragment(text)) return '';
+        const lower = text.toLowerCase();
+        if (/\b(?:beauty|impression)\b/.test(lower)) return '';
+        if (/\brank insignia\b/.test(lower)) return 'rank_insignia';
+        if (/\bcombat uniform\b/.test(lower)) return /\bolive|olive green|olive drab\b/.test(lower) ? 'olive_drab combat_uniform' : 'combat_uniform';
+        if (/\b(?:black|dark)\s+hair\b/.test(lower) && /\btied\b|\bponytail\b|\bbun\b/.test(lower)) return 'tied black_hair';
+        if (/\bcomposed expression\b|\bobservant\b/.test(lower)) return 'composed expression';
+        return text
+            .replace(/\bupper body\b/ig, 'upper_body')
+            .replace(/\blower body\b/ig, 'lower_body')
+            .replace(/\bfull body\b/ig, 'full_body')
+            .replace(/\blooking at viewer\b/ig, 'looking_at_viewer')
+            .replace(/\bmale focus\b/ig, 'male_focus')
+            .replace(/\bfemale focus\b/ig, 'female_focus')
+            .replace(/\bhair tied back\b/ig, 'hair_tied_back')
+            .replace(/\bmilitary uniform\b/ig, 'military_uniform');
+    }
+
+    function cleanKeroAssetNegativeFragment(fragment = '') {
+        const text = normalizeKeroAssetPromptToken(fragment);
+        const lower = text.toLowerCase();
+        if (!lower) return '';
+        if (/^(?:photo|photorealistic|realistic|3d|cgi|render)$/.test(lower)) return '';
+        if (/^(?:wrong_gender|male_focus|female_focus|1girl|1boy|girl|boy|female|male)$/.test(lower)) return '';
+        if (/^(?:different character|wrong hair color|wrong eye color|inconsistent_face)$/.test(lower)) return 'identity_drift';
+        return text;
+    }
+
     function normalizeKeroAssetPositivePrompt(prompt = '', options = {}) {
+        const cleaned = splitKeroAssetPromptFragments(prompt)
+            .map(cleanKeroAssetPositiveFragment)
+            .filter(Boolean);
         return compactKeroAssetPrompt(
-            prompt,
-            { maxFragments: Number(options.maxFragments) || 32, maxChars: Number(options.maxChars) || 760, dropStyle: true }
+            cleaned.join(', '),
+            { maxFragments: Number(options.maxFragments) || 28, maxChars: Number(options.maxChars) || 700, dropStyle: true }
         );
     }
 
     function normalizeKeroAssetNegativePrompt(negative = '', profile = {}, preset = {}) {
+        const cleaned = splitKeroAssetPromptFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset))
+            .map(cleanKeroAssetNegativeFragment)
+            .filter(Boolean);
         return compactKeroAssetPrompt(
-            joinKeroAssetPromptFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset)),
-            { maxFragments: 18, maxChars: 520, dropStyle: false }
+            joinKeroAssetPromptFragments(cleaned),
+            { maxFragments: 12, maxChars: 320, dropStyle: false }
         );
     }
 
@@ -30626,7 +30673,6 @@ Rules:
         let failed = 0;
         const createdAssets = [];
         const failedAssets = [];
-        let identityStyleDirty = false;
         let autoReferencePath = '';
         let autoReferenceName = '';
         const shouldAutoReferenceBatch = requested > 1 && !items.some(item => safeString(item.referenceImagePath).trim());
@@ -30648,13 +30694,9 @@ Rules:
             };
             const profile = pickKeroAssetImageProfile(item.profileId);
             const preset = pickKeroAssetImagePreset(item.presetId, profile);
+            const isWellspringRoute = isWellspringImageProvider(profile.provider) || safeString(profile.endpoint).includes('wellspring.encrypt.gay');
             const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
-            const prompt = buildKeroAssetPositivePrompt(
-                svbRenderImagePromptTemplate(item.stylePrompt, vars).trim(),
-                svbRenderImagePromptTemplate(item.artistTags, vars).trim(),
-                svbRenderImagePromptTemplate(item.styleTags, vars).trim(),
-                renderedItemPrompt
-            );
+            const prompt = buildKeroAssetPositivePrompt(renderedItemPrompt);
             const explicitQualityPrompt = buildKeroAssetQualityPrompt(
                 svbRenderImagePromptTemplate(item.wellspringQualityPrompt, vars).trim()
             );
@@ -30665,8 +30707,8 @@ Rules:
                 profile,
                 preset
             );
-            const ratioId = item.ratioId || preset.ratioId || profile.ratioId;
-            const steps = item.steps || preset.steps || profile.steps || 26;
+            const ratioId = item.ratioId || (isWellspringRoute ? '' : (preset.ratioId || profile.ratioId));
+            const steps = item.steps || (isWellspringRoute ? 0 : (preset.steps || profile.steps || 26));
             const allowAutoReferenceForProfile = shouldAutoReferenceBatch && !isWellspringImageProvider(profile.provider);
             const referenceImagePath = safeString(item.referenceImagePath || (allowAutoReferenceForProfile ? autoReferencePath : '')).trim();
             const referenceImageName = safeString(item.referenceImageName || (referenceImagePath === autoReferencePath ? autoReferenceName : '')).trim();
@@ -30694,6 +30736,8 @@ Rules:
                     wellspringScheduler: item.wellspringScheduler,
                     wellspringLoras: item.wellspringLoras,
                     wellspringPayloadJson: item.wellspringPayloadJson,
+                    applyPresetPromptDefaults: false,
+                    applyRouteDefaults: !isWellspringRoute || Boolean(item.ratioId || item.steps),
                     signal: actionSignal
                 });
                 throwIfSvbAborted(actionSignal, '이미지 에셋 응답이 늦게 도착해 저장 전에 중단되었습니다.');
@@ -30706,13 +30750,7 @@ Rules:
                         sourceContext: 'kero_asset_create',
                         provider: profile.name || profile.provider,
                         presetId: preset.id || preset.name,
-                        stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
-                        stylePrompt: item.stylePrompt,
-                        artistTags: item.artistTags,
-                        styleTags: item.styleTags,
                         identityName: item.identityName,
-                        identityPrompt: item.identityPrompt,
-                        danbooruTags: item.danbooruTags,
                         qualityPrompt,
                         wellspringQualityPrompt: qualityPrompt,
                         ratioId,
@@ -30723,22 +30761,6 @@ Rules:
                 });
                 const savedList = item.target === 'emotion' ? saveResult.emotionAssets : saveResult.additionalAssets;
                 const savedAsset = ensureArray(savedList).find(asset => safeString(asset.name).trim().toLowerCase() === safeString(name).trim().toLowerCase()) || null;
-                if (item.identityName && qualityPrompt) {
-                    const beforeMeta = svbReadAssetStudioMetaFromCharacter(char);
-                    const beforeEntry = svbFindAssetIdentityEntry(beforeMeta, item.identityName);
-                    const afterMeta = svbSetAssetIdentityStylePrompt(beforeMeta, item.identityName, {
-                        stylePrompt: item.stylePrompt,
-                        artistTags: item.artistTags,
-                        styleTags: item.styleTags,
-                        qualityPrompt,
-                        wellspringQualityPrompt: qualityPrompt
-                    });
-                    const afterEntry = svbFindAssetIdentityEntry(afterMeta, item.identityName);
-                    if (JSON.stringify(beforeEntry || {}) !== JSON.stringify(afterEntry || {})) {
-                        svbWriteAssetStudioMetaToCharacter(char, afterMeta);
-                        identityStyleDirty = true;
-                    }
-                }
                 if (allowAutoReferenceForProfile && !autoReferencePath && savedAsset?.path) {
                     autoReferencePath = savedAsset.path;
                     autoReferenceName = savedAsset.name || name;
@@ -30752,12 +30774,6 @@ Rules:
                     identityName: item.identityName || '',
                     prompt: imageResult.prompt || prompt,
                     negative: imageResult.negative || negative,
-                    stylePreset: normalizeKeroAssetStyleKey(item.stylePreset),
-                    stylePrompt: item.stylePrompt || '',
-                    artistTags: item.artistTags || '',
-                    styleTags: item.styleTags || '',
-                    identityPrompt: item.identityPrompt || '',
-                    danbooruTags: item.danbooruTags || '',
                     qualityPrompt,
                     wellspringQualityPrompt: qualityPrompt,
                     ratioId,
@@ -30780,11 +30796,6 @@ Rules:
             const detail = `이미지 에셋 ${created}/${requested}장 저장 후 중단: ${firstError}`;
             await addBotMessage(detail);
             return { success: created > 0, requested, created, failed, detail, createdAssets, failedAssets };
-        }
-
-        if (identityStyleDirty) {
-            const ok = await svbSaveAssetStudioCharacter(char, 'asset-identity-style');
-            if (!ok) throw new Error('Failed to save Asset Studio identity style metadata.');
         }
 
         const trainingOptions = resolveKeroAssetLoraTrainingOptions(action, items, createdAssets, char);
@@ -35489,7 +35500,7 @@ ${metaBlock}
 - Negative도 짧게 쓴다. 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 정도면 충분하며 결함 단어 사전을 길게 나열하지 않는다.
 - 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, year/style/coloring/medium 태그를 보존한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- 에셋 스튜디오 프리셋의 promptPrefix/promptSuffix/negativePrefix/negativeSuffix와 referenceImagePath는 최종 호출 직전에 시스템이 합성한다. 케로는 같은 내용을 불필요하게 반복하지 말고, 캐릭터/장면별로 달라지는 부분을 정확히 쓴다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
 - Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 그리고 반복되는 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
