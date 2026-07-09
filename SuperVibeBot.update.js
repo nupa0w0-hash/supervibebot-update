@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.130
-//@version 1.5.130
+//@display-name 🐸 SuperVibeBot v1.5.131
+//@version 1.5.131
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.130는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.131는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.131 Release Notes
+ * - v1.5.131: replaces abstract age cues such as "young adult" and "adult" with image-model-friendly nouns such as man, woman, old man, and old woman
+ * - v1.5.131: keeps subject count tags separate from age/body depiction terms so "1boy, man" can express one adult male subject without male_focus/boy stacks
+ * - v1.5.131: compacts overlapping age nouns so man/guy or old man/man do not stack in final Positive prompts
+ *
  * SuperVibeBot v1.5.130 Release Notes
  * - v1.5.130: treats bare identity marks such as "mole" or "scar" as incomplete image prompt atoms unless they include a visible location
  * - v1.5.130: teaches Kero image prompts to write stable mark locations such as "small mole under left eye" instead of movable generic marks
@@ -1925,9 +1930,9 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Do not invent non-artist tags, generic filler, natural-language artist credits, or fixed medium/style labels unless the user explicitly supplied that exact phrase.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
 - Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
-- Use exactly one primary subject tag when the subject count is clear: 1boy for a single male subject, 1girl for a single female subject, or 1other only when the character is explicitly nonbinary/other. Do not also write boy, girl, man, woman, male, female, male_focus, female_focus, Korean man, or Korean woman.
+- Use exactly one primary subject count tag when the subject count is clear: 1boy for one male subject, 1girl for one female subject, or 1other only when the character is explicitly nonbinary/other. Do not write male_focus, female_focus, Korean man, Korean woman, male, or female. Age depiction nouns may be used once when they come from source age/body context: boy, girl, man, woman, old man, or old woman.
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
-- Preserve visual age range, height, and body shape when they affect the character image. Convert exact numbers into drawable cues: "24 years old" -> "young adult", "31 years old" -> "adult", "180cm" -> "tall stature"; keep concrete build cues such as lean build, slender, broad-shouldered, stocky build, muscular build, petite build, or average build.
+- Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, or young woman unless the user explicitly asks for that wording. Convert exact height into drawable stature cues such as short stature, average height, or tall stature; keep concrete build cues such as lean build, slender, broad-shouldered, stocky build, muscular build, petite build, or average build.
 - Distinct identity marks must include a stable visible location. Write "small mole under left eye", "scar across right eyebrow", or "birthmark on left cheek"; do not write bare "mole", "scar", "tattoo", "birthmark", or "freckles". If the source only says the mark exists without a location, choose one consistent visible location for that character in the generated prompt or omit the mark.
 - Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
@@ -30594,8 +30599,8 @@ Rules:
         if (/^(?:one boy|single boy|single male subject)$/.test(text)) return '1boy';
         if (/^(?:one girl|single girl|single female subject)$/.test(text)) return '1girl';
         if (/^(?:one other|single nonbinary subject|single non binary subject)$/.test(text)) return '1other';
-        if (/^(?:male focus|boy|man|male|guy|korean man|korean boy|young man|adult man)$/.test(text)) return '1boy';
-        if (/^(?:female focus|girl|woman|female|gal|korean woman|korean girl|young woman|adult woman)$/.test(text)) return '1girl';
+        if (/^(?:male focus|boy|man|old man|male|guy|korean man|korean boy|young man|adult man)$/.test(text)) return '1boy';
+        if (/^(?:female focus|girl|woman|old woman|female|gal|korean woman|korean girl|young woman|adult woman)$/.test(text)) return '1girl';
         return '';
     }
 
@@ -30609,6 +30614,19 @@ Rules:
 
     function isKeroSubjectQualifierAtom(atom = '') {
         return !!getKeroSubjectCountTagFromAtom(atom);
+    }
+
+    function isKeroAgeDepictionNounAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        return /^(?:boy|girl|man|woman|guy|old man|old woman|child)$/.test(text);
+    }
+
+    function shouldKeepKeroSubjectNounAsAgeCue(atom = '', hasExplicitSubjectTag = false) {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (!isKeroAgeDepictionNounAtom(text)) return false;
+        if (text === 'child') return true;
+        if (hasExplicitSubjectTag && /^(?:boy|girl)$/.test(text)) return false;
+        return true;
     }
 
     function isKeroIdentityMarkAtom(atom = '') {
@@ -30630,17 +30648,19 @@ Rules:
         return isKeroIdentityMarkAtom(atom) && !hasKeroVisibleMarkLocation(atom);
     }
 
-    function normalizeKeroVisualAgeAtom(text = '') {
+    function normalizeKeroVisualAgeAtom(text = '', subjectTag = '') {
         const match = safeString(text).trim().match(/^(\d{1,3})\s*years?\s*old$/i);
         if (!match) return '';
         const age = Number(match[1]);
         if (!Number.isFinite(age) || age <= 0) return '';
+        const subject = safeString(subjectTag).trim().toLowerCase();
+        const male = subject === '1boy';
+        const female = subject === '1girl';
+        if (!male && !female) return '';
         if (age < 13) return 'child';
-        if (age < 18) return 'teenage';
-        if (age < 26) return 'young adult';
-        if (age < 40) return 'adult';
-        if (age < 60) return 'mature adult';
-        return 'elderly';
+        if (age < 18) return male ? 'boy' : 'girl';
+        if (age < 60) return male ? 'man' : 'woman';
+        return male ? 'old man' : 'old woman';
     }
 
     function normalizeKeroVisualHeightAtom(text = '') {
@@ -30653,11 +30673,11 @@ Rules:
         return 'average height';
     }
 
-    function normalizeKeroConcreteVisualAtom(atom = '') {
+    function normalizeKeroConcreteVisualAtom(atom = '', options = {}) {
         const raw = safeString(atom).trim();
         const text = normalizeKeroGeneratedPromptAtom(raw);
         if (!text) return '';
-        const ageCue = normalizeKeroVisualAgeAtom(text);
+        const ageCue = normalizeKeroVisualAgeAtom(text, options.subjectTag);
         if (ageCue) return ageCue;
         const heightCue = normalizeKeroVisualHeightAtom(text);
         if (heightCue) return heightCue;
@@ -30666,11 +30686,13 @@ Rules:
         return raw;
     }
 
-    function isKeroAmbiguousPositiveAtom(atom = '') {
+    function isKeroAmbiguousPositiveAtom(atom = '', options = {}) {
         const text = normalizeKeroGeneratedPromptAtom(atom);
         if (!text) return true;
-        if (isKeroSubjectQualifierAtom(text)) return true;
+        if (isKeroSubjectQualifierAtom(text) && !(options.allowAgeDepictionNoun && isKeroAgeDepictionNounAtom(text))) return true;
         if (/^(?:korean|japanese|chinese|american|russian|rok)\s+(?:man|woman|boy|girl|male|female)$/.test(text)) return true;
+        if (/\byoung\b/.test(text)) return true;
+        if (/^(?:adult|mature adult|adult male|adult female)$/.test(text)) return true;
         if (/^(?:precise appearance|clean appearance|economical movements|level gaze|vivid expression|quick eyebrows)$/.test(text)) return true;
         if (/^(?:nursing officer|supply nco|military police investigation officer|staff sergeant|second lieutenant|first lieutenant|corporal)$/.test(text)) return true;
         if (/^(?:observant and composed expression|composed still posture|steady expression|clean and stripped down impression)$/.test(text)) return true;
@@ -30685,9 +30707,18 @@ Rules:
             const text = normalizeKeroGeneratedPromptAtom(atom);
             return text !== 'military uniform' && /\b(?:combat|dress|service|police|army|navy|air force)\s+uniform\b/.test(text);
         });
+        const texts = list.map(normalizeKeroGeneratedPromptAtom);
+        const hasOldMan = texts.includes('old man');
+        const hasOldWoman = texts.includes('old woman');
+        const hasMan = texts.includes('man');
+        const hasWoman = texts.includes('woman');
         return list.filter((atom) => {
             const text = normalizeKeroGeneratedPromptAtom(atom);
             if (hasSpecificUniform && text === 'military uniform') return false;
+            if (hasOldMan && /^(?:man|guy|boy)$/.test(text)) return false;
+            if (hasMan && /^(?:guy)$/.test(text)) return false;
+            if (hasOldWoman && /^(?:woman|girl)$/.test(text)) return false;
+            if (hasWoman && /^(?:girl)$/.test(text)) return false;
             return true;
         });
     }
@@ -30841,17 +30872,24 @@ Rules:
         const atoms = splitKeroPromptAtoms(prompt);
         if (!atoms.length) return '';
         const explicitSubjectTag = atoms.map(getKeroExplicitSubjectCountTagFromAtom).find(Boolean) || '';
+        const inferredSubjectTag = explicitSubjectTag || atoms.map(getKeroSubjectCountTagFromAtom).find(Boolean) || '';
         let fallbackSubjectTag = '';
         const visualAtoms = [];
         atoms.forEach((atom) => {
-            const concrete = normalizeKeroConcreteVisualAtom(atom);
-            const subject = getKeroSubjectCountTagFromAtom(concrete || atom);
+            const subject = getKeroSubjectCountTagFromAtom(atom);
             if (subject) {
                 if (!fallbackSubjectTag) fallbackSubjectTag = subject;
+                if (shouldKeepKeroSubjectNounAsAgeCue(atom, !!explicitSubjectTag)) {
+                    keroAssetPushUnique(visualAtoms, safeString(atom).trim());
+                }
                 return;
             }
+            const subjectTag = explicitSubjectTag || inferredSubjectTag || fallbackSubjectTag;
+            const sourceText = normalizeKeroGeneratedPromptAtom(atom);
+            const ageCue = normalizeKeroVisualAgeAtom(sourceText, subjectTag);
+            const concrete = normalizeKeroConcreteVisualAtom(atom, { subjectTag });
             if (!concrete) return;
-            if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete)) return;
+            if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete, { allowAgeDepictionNoun: !!ageCue })) return;
             keroAssetPushUnique(visualAtoms, concrete);
         });
         return joinKeroPromptAtoms([
