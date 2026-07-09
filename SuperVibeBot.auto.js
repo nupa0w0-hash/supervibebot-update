@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.125
-//@version 1.5.125
+//@display-name 🐸 SuperVibeBot v1.5.126
+//@version 1.5.126
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.125는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.126는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.126 Release Notes
+ * - v1.5.126: keeps Kero quality terms in wellspringQualityPrompt instead of Positive
+ * - v1.5.126: adds the default Kero asset Quality fallback "masterpiece, best_quality, highres" when no user/preset quality is set
+ * - v1.5.126: preserves user-saved Asset Studio quality prompts ahead of the fallback
+ *
  * SuperVibeBot v1.5.125 Release Notes
  * - v1.5.125: enforces Kero image prompt cleanup at the final asset action boundary instead of relying only on LLM instructions
  * - v1.5.125: strips Kero-generated fixed medium/style labels before image API calls
@@ -30500,6 +30505,8 @@ Rules:
         return texts.filter(Boolean).join('\n').slice(0, 32000);
     }
 
+    const KERO_ASSET_DEFAULT_QUALITY_PROMPT = 'masterpiece, best_quality, highres';
+
     function normalizeKeroGeneratedPromptAtom(atom = '') {
         return safeString(atom)
             .trim()
@@ -30580,6 +30587,18 @@ Rules:
             assetStudioArtistPrompt = '';
         }
         return svbJoinPromptFragments(assetStudioArtistPrompt, preset?.promptPrefix);
+    }
+
+    function getKeroUserFixedQualityPrompt(char = null, preset = {}, profile = {}) {
+        let assetStudioQualityPrompt = '';
+        try {
+            const meta = svbReadAssetStudioMetaFromCharacter(char || {});
+            const style = svbGetAssetStudioDefaultStyle(meta);
+            assetStudioQualityPrompt = safeString(style?.qualityPrompt || style?.wellspringQualityPrompt).trim();
+        } catch (_) {
+            assetStudioQualityPrompt = '';
+        }
+        return svbJoinPromptFragments(assetStudioQualityPrompt, preset?.wellspringQualityPrompt, profile?.wellspringQualityPrompt);
     }
 
     function prependKeroUserFixedArtistPrompt(prompt = '', artistPrompt = '') {
@@ -30826,8 +30845,10 @@ Rules:
             const explicitQualityPrompt = buildKeroAssetQualityPrompt(
                 svbRenderImagePromptTemplate(item.wellspringQualityPrompt, vars).trim()
             );
+            const fixedQualityPrompt = buildKeroAssetQualityPrompt(getKeroUserFixedQualityPrompt(char, preset, profile));
             const qualityPrompt = explicitQualityPrompt
-                || buildKeroAssetQualityPrompt(preset.wellspringQualityPrompt || profile.wellspringQualityPrompt);
+                || fixedQualityPrompt
+                || KERO_ASSET_DEFAULT_QUALITY_PROMPT;
             const negative = normalizeKeroAssetNegativePrompt(
                 svbRenderImagePromptTemplate(item.negative, vars).trim(),
                 profile,
