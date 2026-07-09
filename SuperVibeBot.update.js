@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.112
-//@version 1.5.112
+//@display-name 🐸 SuperVibeBot v1.5.113
+//@version 1.5.113
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.112는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.113는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.113 Release Notes
+ * - v1.5.113: makes Kero image prompts compact by design: world/character context first, Danbooru/Wellspring references as a dictionary, not a tag dump
+ * - v1.5.113: adds a slot budget for Positive prompts so style, identity, outfit, and pose stay short and repeatable across a character set
+ * - v1.5.113: tightens existing prompt compaction limits without adding new blacklist/filter layers
+ *
  * SuperVibeBot v1.5.112 Release Notes
  * - v1.5.112: rebuilds Kero image prompting around a Danbooru/Wellspring prompt compiler: source context -> visual identity -> style pack -> Positive/Negative/Quality
  * - v1.5.112: removes over-specific sample prompts from Kero guidance so the model stops copying stale age/height/nationality/style filler
@@ -1828,10 +1833,15 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
 - Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality.
-- Compile Positive from source context in this order: reusable style pack, subject/focus, visible identity anchors, outfit/equipment that actually appears on the character, pose/framing, then scene only when the scene matters. Treat age, height, nationality, rank, and job as lore for interpreting visible cues, not as prompt text to copy.
-- Do not write bare age, height, nationality, rank, or job-label prose in Positive. Convert them into visible features only: face maturity, body silhouette, uniform details, insignia, posture, equipment that truly exists in context, and role-specific clothing cues.
+- Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
+- Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
+- Danbooru taxonomy, related-tag data, Wellspring gallery prompts, and user samples are reference dictionaries. Do not dump every matching tag into Positive. Select only the few tags that fit the bot world, the character, and the requested image.
+- Compile Positive from source context in this order: world/genre/era constraints, reusable style pack, subject/focus, visible identity anchors, outfit/equipment that actually appears on the character, pose/framing, then scene only when the scene matters. World/genre/era is a gate for choosing visible cues, not text to paste. Treat age, height, nationality, rank, and job as lore for interpreting visible cues, not as prompt text to copy.
+- Keep Positive compact by slot budget: style pack 3-6 fragments, subject/focus 2-3, identity anchors 6-10, outfit/equipment 3-6, pose/framing 2-4, scene 0-4. A normal profile/standing asset should usually stay under 28 comma fragments and under 700 characters.
+- Do not write bare age, height, nationality, media genre, setting label, rank, or job-label prose in Positive. Convert them into visible features only: face maturity, body silhouette, uniform details, insignia, posture, equipment that truly exists in context, and role-specific clothing cues.
 - A style pack is a compact set of real prompt tags such as artist tags, year tags, coloring/style tags, and medium tags chosen from user samples, Wellspring gallery patterns, or the bot's genre. Keep one style pack per character or asset set so variations still look like the same project.
 - Put global quality and neutral studio background direction in wellspringQualityPrompt. For neutral studio/profile assets, omit background tags from Positive entirely; put white/simple/neutral studio background only in wellspringQualityPrompt. Use Positive background tags only for meaningful scene content.
+- Keep Negative short. Use 8-18 failure-direction fragments such as anatomy, watermark/text, identity drift, wrong props, and wrong setting. Do not write a long thesaurus of every possible defect.
 - For the same character across multiple images, repeat the same visible identity anchors: face shape, eye shape and color, hair cut/color/part, body silhouette, core outfit, and unique marks or accessories that exist in context. Vary only expression, pose, framing, or scene.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
@@ -13138,7 +13148,7 @@ function addSvbRuntimePluginMetadataSelfTest(checks) {
         const superVibeMetadata = buildPluginMetadataSummary([
             '//@name SuperVibeBot',
             '//@display-name 🐸 SuperVibeBot diagnostic',
-            '//@version 1.5.112',
+            '//@version 1.5.113',
             '//@api 3.0',
             `//@update-url ${SUPER_VIBE_BOT_UPDATE_URL}`
         ].join('\n'));
@@ -30135,10 +30145,13 @@ Rules:
 - If missingCandidateNames is non-empty, generate only those names. If it is empty, infer missing names from plannedAssetItems and generate exactly the remainingCount.
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
-- Build each Positive through the image prompt compiler: reusable style pack, subject/focus tags, visible face and eye cues, hair cut/color/part, body silhouette, core outfit, pose/composition, and meaningful scene tags.
+- Build each Positive through the compact image prompt compiler: world/genre/era constraints, reusable style pack, subject/focus tags, visible face and eye cues, hair cut/color/part, body silhouette, core outfit, pose/composition, and meaningful scene tags. World/genre/era constraints choose visible cues; do not paste setting labels or media genre labels into Positive.
+- Use Danbooru/taxonomy/related-tag references as a dictionary only. Pick the tags that match the current bot world and character. Do not dump long category lists into Positive.
+- Keep Positive under 28 comma fragments when possible: style 3-6, subject/focus 2-3, identity 6-10, outfit/equipment 3-6, pose/framing 2-4, scene 0-4.
 - For upper-body studio standing assets, keep Positive focused on identity, outfit, pose, and framing; put shared studio background and global quality direction in wellspringQualityPrompt.
+- Keep Negative short: anatomy, watermark/text, identity drift, wrong props, and wrong setting only. Do not write a long defect thesaurus.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
-- Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
+- Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
 - For neutral studio/profile assets, keep white/simple/neutral studio background in wellspringQualityPrompt and omit background tags from Positive.
 - Put anatomy/watermark/identity-drift terms in negative.`;
         const payload = {
@@ -30310,8 +30323,8 @@ Rules:
     function compactKeroAssetPrompt(text = '', options = {}) {
         const seen = new Set();
         const out = [];
-        const maxFragments = Math.max(1, Number(options.maxFragments) || 36);
-        const maxChars = Math.max(120, Number(options.maxChars) || 900);
+        const maxFragments = Math.max(1, Number(options.maxFragments) || 32);
+        const maxChars = Math.max(120, Number(options.maxChars) || 760);
         splitKeroAssetPromptFragments(text).forEach((fragment) => {
             if (out.length >= maxFragments) return;
             const key = fragment.toLowerCase().replace(/[\s_-]+/g, '_');
@@ -30339,7 +30352,7 @@ Rules:
     function buildKeroAssetQualityPrompt(qualityPrompt = '') {
         return compactKeroAssetPrompt(
             joinKeroAssetPromptFragments(qualityPrompt),
-            { maxFragments: 18, maxChars: 480, dropStyle: false }
+            { maxFragments: 12, maxChars: 280, dropStyle: false }
         );
     }
 
@@ -30384,11 +30397,11 @@ Rules:
             const storedIdentity = safeString(stored?.prompt).trim();
             const identityPrompt = compactKeroAssetPrompt(
                 joinKeroAssetPromptFragments(explicitIdentity, storedIdentity),
-                { maxFragments: 24, maxChars: 700, dropStyle: true }
+                { maxFragments: 18, maxChars: 520, dropStyle: true }
             );
             const identityNegative = compactKeroAssetPrompt(
                 joinKeroAssetPromptFragments(item.identityNegative, stored?.negative),
-                { maxFragments: 24, maxChars: 700, dropStyle: true }
+                { maxFragments: 18, maxChars: 520, dropStyle: true }
             );
             const itemStylePrompt = safeString(item.stylePrompt).trim();
             const itemArtistTags = safeString(item.artistTags).trim();
@@ -30409,7 +30422,7 @@ Rules:
                 identityName,
                 identityPrompt,
                 identityNegative,
-                danbooruTags: compactKeroAssetPrompt(item.danbooruTags, { maxFragments: 24, maxChars: 700, dropStyle: true }),
+                danbooruTags: compactKeroAssetPrompt(item.danbooruTags, { maxFragments: 18, maxChars: 520, dropStyle: true }),
                 stylePreset: item.stylePreset || '',
                 stylePrompt: itemStylePrompt || storedStylePrompt,
                 artistTags: itemArtistTags || storedArtistTags,
@@ -30482,12 +30495,15 @@ Rules:
     function normalizeKeroAssetPositivePrompt(prompt = '', options = {}) {
         return compactKeroAssetPrompt(
             prompt,
-            { maxFragments: Number(options.maxFragments) || 48, maxChars: Number(options.maxChars) || 1200, dropStyle: true }
+            { maxFragments: Number(options.maxFragments) || 32, maxChars: Number(options.maxChars) || 760, dropStyle: true }
         );
     }
 
     function normalizeKeroAssetNegativePrompt(negative = '', profile = {}, preset = {}) {
-        return joinKeroAssetPromptFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset));
+        return compactKeroAssetPrompt(
+            joinKeroAssetPromptFragments(negative || getKeroDefaultAssetNegativePrompt(profile, preset)),
+            { maxFragments: 18, maxChars: 520, dropStyle: false }
+        );
     }
 
     function getKeroAssetOutputName(item, index = 0, total = 1) {
@@ -35462,12 +35478,15 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 케로는 에셋 프롬프트를 "번역"하지 말고 "컴파일"한다. 입력 자료는 사용자 요청, 캐릭터 desc/노트/로어북, 기존 에셋 메타, 에셋 스튜디오 프리셋, 사용자가 준 샘플 프롬프트다.
+- Danbooru taxonomy/related-tag DB, Wellspring 갤러리, Notion 태그 정리는 프롬프트에 전부 붙이는 목록이 아니라 선택 사전이다. 세계관, 시대, 장르는 Positive에 붙일 문구가 아니라 보이는 단서를 고르는 기준이다. 인물 설정과 요청한 샷에 맞는 소수의 태그만 골라 최종 프롬프트에 넣는다.
 - 먼저 스타일 소스를 정한다. 사용자가 준 프롬프트팩/작가 태그/연도 태그/LoRA trigger가 있으면 그대로 재사용한다. 저장된 스타일팩이나 프리셋 prefix/suffix가 있으면 그 값을 기준으로 삼는다. 아무 소스도 없으면 작가명을 지어내지 말고, 장르에 맞는 medium/coloring/year/mood 계열 태그로 짧은 스타일팩을 만든다.
-- 다음으로 인물 정체성을 추출한다. 나이, 키, 국적, 계급, 직업은 최종 Positive에 그대로 베껴 쓰는 텍스트가 아니라 외형 판단의 근거다. Positive에는 얼굴 윤곽, 눈 모양과 색, 머리 형태와 색, 체형 실루엣, 복식 실루엣, 고유 표식, 태도처럼 이미지에 직접 보이는 단서만 쓴다.
+- 다음으로 인물 정체성을 추출한다. 나이, 키, 국적, 계급, 직업, 매체 장르, 세계관 라벨은 최종 Positive에 그대로 베껴 쓰는 텍스트가 아니라 외형 판단의 근거다. Positive에는 얼굴 윤곽, 눈 모양과 색, 머리 형태와 색, 체형 실루엣, 복식 실루엣, 고유 표식, 태도처럼 이미지에 직접 보이는 단서만 쓴다.
 - 그 다음 샷 목적을 붙인다. 프로필, 스탠딩, 감정, 배경, UI, 아이템마다 필요한 구도/표정/행동만 추가한다. 같은 인물 묶음에서는 스타일팩과 정체성 단서를 고정하고 표정/포즈/장면만 바꾼다.
+- Positive는 짧은 슬롯 예산으로 쓴다. 기본 프로필/스탠딩 에셋 기준 style 3-6개, subject/focus 2-3개, identity 6-10개, outfit/equipment 3-6개, pose/framing 2-4개, scene 0-4개면 충분하다. 보통 28개 이하의 쉼표 단위와 700자 이하를 목표로 한다.
 - Positive는 최종 이미지 프롬프트 하나다. 별도의 identityPrompt/stylePrompt 계층에 기대지 말고 assets[].prompt 안에 필요한 스타일, 주체, 외형, 복식, 구도, 장면을 완성한다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
 - Negative는 원하지 않는 주체 전환, 정체성 붕괴, 해부 오류, 불필요한 텍스트/워터마크 같은 실패 방향만 쓴다. 차단 회피용 금지어 더미나 긴 금지 목록을 만들지 않는다.
+- Negative도 짧게 쓴다. 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 정도면 충분하며 결함 단어 사전을 길게 나열하지 않는다.
 - 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, year/style/coloring/medium 태그를 보존한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
 - 에셋 스튜디오 프리셋의 promptPrefix/promptSuffix/negativePrefix/negativeSuffix와 referenceImagePath는 최종 호출 직전에 시스템이 합성한다. 케로는 같은 내용을 불필요하게 반복하지 말고, 캐릭터/장면별로 달라지는 부분을 정확히 쓴다.
