@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.123
-//@version 1.5.123
+//@display-name 🐸 SuperVibeBot v1.5.124
+//@version 1.5.124
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.123는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.124는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.124 Release Notes
+ * - v1.5.124: removes fixed medium/style labels from Kero image prompt guidance and defaults
+ * - v1.5.124: stops Wellspring gallery/library prompt samples from being fed into Kero image asset prompts
+ * - v1.5.124: makes Kero build image prompts from bot world, era, scene, and character visual cues unless the user saved an artist prefix
+ *
  * SuperVibeBot v1.5.123 Release Notes
  * - v1.5.123: replaces Asset Studio AI recommendation with artist-only Danbooru DB selection
  * - v1.5.123: expands validated embedded artist candidates from 48 to 512 tags derived from danbooru-taxonomy.release.sqlite
@@ -202,7 +207,7 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.117: removes canned Kero style-anchor examples and prioritizes user-saved/Wellspring style sources
  *
  * SuperVibeBot v1.5.116 Release Notes
- * - v1.5.116: rewrites the Kero image asset prompt instructions around one stable style anchor per batch, final Positive prompts, and real Wellspring/Danbooru prompt atoms
+ * - v1.5.116: rewrites the Kero image asset prompt instructions around final Positive prompts and concrete visible cues
  * - v1.5.116: loads Wellspring tag/library/gallery prompt references with the user's ws-key when image asset work is requested, then passes those references to the LLM instead of locally rewriting prompts
  * - v1.5.116: removes the old compact compiler wording from underfilled asset recovery so recovery prompts follow the same final-prompt writer rules as normal Kero asset creation
  *
@@ -270,7 +275,7 @@ async function safeCopyText(text, options = {}) {
  * SuperVibeBot v1.5.103 Release Notes
  * - v1.5.103: merges Asset Studio additional assets and emotion images into one folder-first asset library with type filters, folder chips, unified selection, and gallery/list views
  * - v1.5.103: auto-assigns generated assets to identity/background folders and lets mixed selected assets move, rename, replace, delete, and seed Wellspring LoRA training together
- * - v1.5.103: defaults Wellspring generation toward SDXL character art, removes anime as the fallback style, and auto-attaches completed Wellspring LoRAs back to matching Asset Studio identities
+ * - v1.5.103: defaults Wellspring generation toward the active image profile and auto-attaches completed Wellspring LoRAs back to matching Asset Studio identities
  *
  * SuperVibeBot v1.5.102 Release Notes
  * - v1.5.102: rebuilds Asset Studio asset browsing around mobile-friendly gallery/list cards for additional assets and emotion images
@@ -283,7 +288,7 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.101: preserves explicit artist/style tags over inferred style presets and matches asset names against lorebook identity names before deriving character prompts
  *
  * SuperVibeBot v1.5.100 Release Notes
- * - v1.5.100: simplifies Kero image asset prompt assembly so final prompts keep only short 2D anime style anchors, concrete identity tags, composition, expression, and background
+ * - v1.5.100: simplifies Kero image asset prompt assembly around concrete identity tags, composition, expression, and background
  * - v1.5.100: removes weak local synthesis tags such as distinctive_face, consistent_character_design, visual_novel_sprite, adult_male, young_woman, and duplicate generic gun tags from final prompts
  * - v1.5.100: shrinks the local Danbooru helper table to concrete detection rules only, leaving style and identity decisions to the LLM/user prompt instead of overbuilt runtime synthesis
  *
@@ -294,7 +299,7 @@ async function safeCopyText(text, options = {}) {
  * SuperVibeBot v1.5.98 Release Notes
  * - v1.5.98: replaces the shallow Kero asset prompt helper with a Danbooru-style tag library for subject, age, hair, eyes, body, outfit, prop, genre, composition, expression, background, quality, and negative tags
  * - v1.5.98: keeps military/genre references such as soldier, officer, and Girls' Frontline out of gender detection so character sex is inferred from actual character text instead of role words
- * - v1.5.98: upgrades Kero asset prompting rules so one bot shares a style anchor while each identity keeps distinct hair, eyes, body, outfit silhouette, symbolic props, and age/sex subject tags
+ * - v1.5.98: upgrades Kero asset prompting rules so each identity keeps distinct hair, eyes, body, outfit silhouette, symbolic props, and age/sex subject tags
  *
  * SuperVibeBot v1.5.97 Release Notes
  * - v1.5.97: restores the Kero image asset create/manage execution bridge that was missing from the v1.5.96 runtime cleanup
@@ -314,7 +319,7 @@ async function safeCopyText(text, options = {}) {
  *
  * SuperVibeBot v1.5.94 Release Notes
  * - v1.5.94: removes the overbuilt Danbooru MCP HTTP/server dependency from Kero asset generation
- * - v1.5.94: keeps Danbooru tag material as prompt-writing guidance only; Kero writes stable 2D anime/Danbooru-style tags directly
+ * - v1.5.94: keeps Danbooru tag material as prompt-writing guidance only
  * - v1.5.94: adds runtime diagnostics for the Wellspring LoRA identity pipeline used to keep character assets consistent
  *
  * SuperVibeBot v1.5.92 Release Notes
@@ -467,11 +472,11 @@ async function safeCopyText(text, options = {}) {
  * - v1.5.42: teaches Kero asset_manage actions for Asset Studio cleanup, foldering, pattern rename, and deletion
  * - v1.5.41: adds Kero asset style presets and custom stylePrompt support for reusable 2D image prompt packs
  * - v1.5.41: lets Kero choose a built-in stylePreset per asset request while keeping the 2D/safe prompt sanitizer
- * - v1.5.40: forces Kero image asset prompts into 2D anime illustration style and strips realism/photo/3D trigger terms before API calls
+ * - v1.5.40: previously changed Kero image asset prompt handling
  * - v1.5.40: makes Image API calls prefer nativeFetch over deprecated risuFetch when nativeFetch is available
  * - v1.5.39: fixes image API JSON body handling for risuFetch so Wellspring receives an object instead of a quoted JSON string
  * - v1.5.38: makes Kero asset generation prompt-first instead of Asset Studio preset-part driven
- * - v1.5.38: adds local image prompting guidance for ComfyUI, SDXL/ADXL, and Animagine-style anime XL models
+ * - v1.5.38: adds local image prompting guidance for external image backends
  * - v1.5.38: stops Kero asset execution from falling back to image preset positive prompts when an asset prompt is missing
  * - v1.5.37: lets Kero create image assets through the configured Image API profile and register them to emotionImages/additionalAssets
  * - v1.5.37: teaches Kero the asset create @action schema so profile/standing asset requests do not end as "cannot do it" answers
@@ -1886,12 +1891,12 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality. The runtime passes these fields through; it does not repair, merge, sanitize, or reinterpret split prompt layers.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Before writing any assets[] item, choose one artist anchor for the whole requested asset set. The artist anchor is a comma-separated prefix of 2 to 6 validated artist tags from the user's fixed Asset Studio artist prompt, user sample, saved Asset Studio metadata, or Wellspring reference block. Copy the exact same artist anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed artists.
-- If the user asks for artist tags or the Wellspring reference block provides artist atoms, include them in that artist anchor. Do not invent non-artist tags, generic filler, or natural-language artist credits.
+- Before writing any assets[] item, use an artist anchor only when the user fixed one in Asset Studio, supplied a sample, or provided explicit artist tags. Copy the exact same artist anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed artists.
+- Do not invent non-artist tags, generic filler, natural-language artist credits, or fixed medium/style labels unless the user explicitly supplied that exact phrase.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
-- Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable artist anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
-- Use real Danbooru/Wellspring prompt language and compact natural visual phrases. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. For specific local concepts that have no reliable tag, use common visual tags plus a short natural phrase.
-- Character consistency comes from repeating the same artist anchor and visible identity anchors, plus LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
+- Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: subject/focus, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
+- Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags.
+- Character consistency comes from visible identity anchors, repeated user-fixed artist anchor when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
@@ -3366,14 +3371,14 @@ const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
         responseParser: "auto",
         jsonPath: "",
         parts: DEFAULT_IMAGE_PRESET_PARTS,
-        notes: "Wellspring /images의 SDXL 기본 흐름을 쓰되, 그림체는 프롬프트 prefix/suffix나 Wellspring 프리셋에서 정합니다."
+        notes: "Wellspring /images의 활성 설정을 쓰고, 작가 프롬프트는 사용자 prefix나 Wellspring 프리셋에서 정합니다."
     },
     {
         id: "comfyui-workflow-basic",
         name: "ComfyUI Workflow 기본",
         provider: "comfyui",
         model: "",
-        prompt: "{{character}}, {{emotion}}, standing pose, clean illustration",
+        prompt: "{{character}}, {{emotion}}, standing pose",
         negative: "text, logo, watermark, low quality, bad anatomy",
         ratioId: "13:19",
         steps: 26,
@@ -22226,10 +22231,7 @@ function pushUniquePromptReference(list, value = '', limit = 160) {
 function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload = null) {
     const queries = [];
     const text = safeString(userInput);
-    ['artist', 'upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
-    if (/(style|artist|prompt|그림체|화풍|작가|프롬프트)/i.test(text)) {
-        ['style', 'prompt'].forEach(query => pushUniquePromptReference(queries, query, 80));
-    }
+    ['upper body', 'standing'].forEach(query => pushUniquePromptReference(queries, query, 80));
     if (/(군|military|army|soldier|uniform|rok|rank|계급|제복|전투복)/i.test(text)) {
         ['military uniform', 'army uniform', 'camouflage', 'olive drab', 'rank insignia'].forEach(query => pushUniquePromptReference(queries, query, 80));
     }
@@ -22240,7 +22242,7 @@ function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload =
     if (/(girl|woman|female|여자|여성|소녀)/i.test(text)) pushUniquePromptReference(queries, '1girl female focus', 80);
     const contextText = safeString(contextPayload?.workTarget?.targetName || contextPayload?.characterFields?.name || contextPayload?.basic?.name);
     if (contextText) pushUniquePromptReference(queries, contextText, 80);
-    return queries.slice(0, 12);
+    return queries.slice(0, 8);
 }
 
 function collectWellspringPromptReferenceStrings(data, maxItems = 12) {
@@ -22268,17 +22270,7 @@ function collectWellspringPromptReferenceStrings(data, maxItems = 12) {
 }
 
 function collectWellspringGalleryPromptLines(data, maxItems = 8) {
-    const jobs = svbExtractWellspringJobs(data);
-    const lines = [];
-    jobs.slice(0, 24).forEach((job) => {
-        const prompt = safeString(job.prompt || job.positive || job.input?.prompt || job.request?.prompt).trim();
-        if (!prompt) return;
-        const parts = [];
-        pushUniquePromptReference(parts, prompt, 280);
-        pushUniquePromptReference(parts, job.quality_prompt || job.qualityPrompt || job.input?.quality_prompt || job.request?.quality_prompt, 160);
-        if (parts.length) lines.push(`- gallery sample: ${parts.join(' | ')}`);
-    });
-    return lines.slice(0, maxItems);
+    return [];
 }
 
 function getKeroWellspringPromptReferenceProfile() {
@@ -22331,9 +22323,9 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
     const lines = [
         '',
         '## Wellspring/Danbooru Prompt Reference',
-        '- This block is reference material for the LLM. The runtime will not rewrite generated prompts.',
-        '- Pick one artist anchor for the current asset set and copy it exactly at the start of every assets[].prompt in the same action.',
-        '- Use real tag syntax and weighted artist atoms from the provided references. Keep visible character cues compact. Use short natural phrases only when no reliable tag exists.'
+        '- This block is reference material for concrete visible terms only. The runtime will not rewrite generated prompts.',
+        '- Do not copy gallery/sample style phrases. Do not add fixed medium/style labels unless the user explicitly supplied them.',
+        '- Build each image from the selected bot world, era, genre, scene, and character settings. Use short visible cues for face, hair, body silhouette, outfit, equipment, pose, framing, and background.'
     ];
 
     const studioLines = collectKeroAssetStudioPromptReferenceLines(options.char || null);
@@ -22366,30 +22358,6 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
                 lines.push(...tagLines.slice(0, 12));
             }
 
-            const libraryResults = await Promise.allSettled(['style', 'prompt'].map(async (kind) => {
-                const params = new URLSearchParams({ kind, q: '' });
-                const data = await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_LIBRARY_COLLECTION_ENDPOINT}?${params.toString()}`), { method: 'GET', headers }, `${profile.name || 'Wellspring'} ${kind} library`, 12000);
-                return { kind, values: collectWellspringPromptReferenceStrings(data, 8) };
-            }));
-            const libraryLines = [];
-            libraryResults.forEach((result) => {
-                if (result.status !== 'fulfilled' || !result.value.values.length) return;
-                liveReferenceCount += result.value.values.length;
-                libraryLines.push(`- ${result.value.kind}: ${result.value.values.join(' | ')}`);
-            });
-            if (libraryLines.length) {
-                lines.push('### Wellspring Saved Prompt Library');
-                lines.push(...libraryLines.slice(0, 8));
-            }
-
-            const galleryParams = new URLSearchParams({ scope: 'all', limit: '12' });
-            const galleryData = await svbWellspringFetchJson(joinImageApiUrl(base, `${WELLSPRING_IMAGE_JOBS_ENDPOINT}?${galleryParams.toString()}`), { method: 'GET', headers }, `${profile.name || 'Wellspring'} gallery prompt reference`, 12000);
-            const galleryLines = collectWellspringGalleryPromptLines(galleryData, 8);
-            if (galleryLines.length) {
-                liveReferenceCount += galleryLines.length;
-                lines.push('### Wellspring Gallery Prompt Samples');
-                lines.push(...galleryLines);
-            }
         }
     } catch (error) {
         Logger.warn('Kero Wellspring prompt reference load failed:', error?.message || error);
@@ -22398,10 +22366,9 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
     lines.push('### Required Output Behavior');
     lines.push('- If Asset Studio Stored References contains "stored artist prompt default:", treat only that line value as the user-fixed artist prefix and put it first in every assets[].prompt.');
     lines.push('- Stored identity/artist references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
-    lines.push('- Prefer user samples, stored Asset Studio artist prompts, Wellspring library entries, and Wellspring gallery samples. Do not invent generic style filler when no real artist source exists.');
-    lines.push('- Choose one real artist anchor and reuse it exactly for every asset in the batch.');
+    lines.push('- Prefer the selected bot world/character text. Use stored Asset Studio artist prompts only as a prefix when the user saved one.');
+    lines.push('- Do not infer a style from Wellspring gallery/library examples. They are not a source for Kero image prompts.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
-    lines.push('- Do not omit the artist anchor on later assets. A batch with changing artist anchors is a failed asset prompt batch.');
 
     if (liveReferenceCount > 0) {
         try {
@@ -30394,8 +30361,9 @@ Rules:
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
 - Use the same image prompt writer rules as normal Kero asset creation.
-- Choose one artist anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good artist anchor, continue that anchor. Otherwise choose one coherent artist anchor from the user sample, Asset Studio metadata, or Wellspring reference block; do not invent generic style filler when no real artist source exists.
-- Positive is the final prompt body. Write compact prompt atoms: stable artist anchor, subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Use an artist anchor only when the user fixed one in Asset Studio, supplied a sample, or provided explicit artist tags. If previous plannedAssetItems already used that user-backed anchor, continue it. Do not invent generic style filler when no real artist source exists.
+- Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Do not add canned medium/style phrases unless the user explicitly supplied that exact phrase.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
 - Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
@@ -35551,18 +35519,18 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 직접 작성한다. 런타임은 프롬프트를 고치거나 합치거나 정리하지 않고 그대로 전달한다.
-- 먼저 이번 asset batch 전체의 artist anchor를 하나 정한다. artist anchor는 사용자가 Asset Studio에서 고정한 작가 프롬프트, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 2~6명 작가 태그 prefix다.
-- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 artist anchor를 정확히 반복한다. 한 batch 안에서 작가 조합이 바뀌면 실패다.
-- 사용자가 작가 태그를 원했거나 reference block에 작가 태그가 있으면 artist anchor에 포함한다. 근거 없는 새 작가명이나 generic style filler를 지어내지 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
+- artist anchor는 사용자가 Asset Studio에서 고정한 작가 프롬프트, 직접 준 샘플, 명시한 작가 태그가 있을 때만 쓴다. 근거 없는 새 작가명이나 generic style filler를 지어내지 않는다.
+- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 사용자가 고정한 artist anchor가 있을 때만 모든 assets[].prompt의 맨 앞에 정확히 반복한다. 저장된 작가 프롬프트가 없으면 artist anchor를 억지로 만들지 않는다.
+- 고정 매체/화풍 라벨은 사용자가 그 문구를 직접 준 경우가 아니면 쓰지 않는다.
 - Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
-- Positive는 artist anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
+- Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
 - Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
-- 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, 사용자가 저장/제공한 작가·그림체 태그를 보존한다.
+- 프롬프트 문법은 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프를 보존한다. 하지만 그림체 라벨을 새로 만들지 말고, 사용자가 저장/제공한 작가 태그와 실제 세계관/인물 단서만 사용한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 그 값을 assets[].prompt 맨 앞에 직접 포함하고, promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 그 값을 assets[].prompt 맨 앞에 직접 포함하고, 없으면 세계관/인물 설정 기반 시각 단서만 작성한다. promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
 - Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 artist anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
@@ -51577,7 +51545,7 @@ const SVB_ASSET_QUICK_IMAGE_PRESETS = Object.freeze({
         label: "감정 8종",
         name: "감정 기본 8종",
         provider: "wellspring-nai",
-        prompt: "best quality, character sprite, {{character}}, {{emotion}}, standing pose, clean composition",
+        prompt: "{{character}}, {{emotion}}, standing pose",
         negative: "text, logo, watermark, low quality, bad anatomy, extra fingers, cropped face",
         emotions: ["기본", "미소", "웃음", "슬픔", "분노", "놀람", "당황", "수줍음"]
     },
@@ -56240,7 +56208,7 @@ async function openAssetStudio() {
                                         <textarea class="svb-as-input" id="svb-as-character-negative" placeholder="수동 캐릭터 네거티브: bad anatomy, bad hands, text, logo, watermark"></textarea>
                                     </div>
                                     <div class="svb-as-grid">
-                                        <textarea class="svb-as-input" id="svb-as-prompt-prefix" placeholder="Positive 앞에 항상 붙일 그림체/품질 태그"></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-prompt-prefix" placeholder="Positive 앞에 붙일 사용자 지정 작가/고정 태그"></textarea>
                                         <textarea class="svb-as-input" id="svb-as-prompt-suffix" placeholder="Positive 뒤에 항상 붙일 마무리 태그"></textarea>
                                     </div>
                                     <div class="svb-as-grid">
@@ -56306,7 +56274,7 @@ async function openAssetStudio() {
                                         <textarea class="svb-as-input" id="svb-as-wellspring-loras" placeholder='LoRA JSON 또는 id:strength 목록. 예: [{"id":"...","strength":0.8}]'></textarea>
                                         <textarea class="svb-as-input" id="svb-as-wellspring-payload-json" placeholder='추가 payload JSON. 예: {"variant_ids":["neutral"],"loras":[{"id":"...","strength":0.8}]}'></textarea>
                                     </details>
-                                    <div class="svb-as-help">최종 순서: 그림체 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring은 preset/model 또는 workflow/project/variant 값을 우선 사용하고, 참조 이미지는 해당 엔드포인트가 지원할 때만 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
+                                    <div class="svb-as-help">최종 순서: 사용자 고정 prefix → 캐릭터 고정 프롬프트 → 파트/케로 프롬프트 → suffix. Wellspring은 preset/model 또는 workflow/project/variant 값을 우선 사용하고, 참조 이미지는 해당 엔드포인트가 지원할 때만 전달됩니다. ComfyUI/커스텀 템플릿에서는 {{character_prompt}}, {{identity_prompt}}, {{reference_image_base64}}, {{reference_image_data_url}} 변수를 별도 노드에 넣을 수 있습니다.</div>
                                 </details>
                                 <section class="svb-as-generate-main">
                                     <div class="svb-as-form-title">단일 이미지 생성</div>
