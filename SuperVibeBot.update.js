@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.128
-//@version 1.5.128
+//@display-name 🐸 SuperVibeBot v1.5.129
+//@version 1.5.129
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.128는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.129는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.129 Release Notes
+ * - v1.5.129: canonicalizes Kero image subject tags so final Positive keeps one subject count tag instead of "1boy, male_focus, boy" stacks
+ * - v1.5.129: removes ambiguous image prompt prose such as nationality labels, role labels, vague expression labels, and "regulation length" wording before image API calls
+ * - v1.5.129: rewrites Kero image instructions around concrete visual tokens instead of viewer-focus/gender-focus phrases
+ *
  * SuperVibeBot v1.5.128 Release Notes
  * - v1.5.128: moves neutral background tags such as "white background" and "simple background" into Positive before Kero image API calls
  * - v1.5.128: keeps Kero's in-chat work bubble visible through action execution instead of removing it right after the model response
@@ -1914,8 +1919,9 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Before writing any assets[] item, use artist tags only when the user supplied explicit artist tags or the action needs to reference a user sample. The saved Asset Studio artist prefix is added by the runtime; do not restate it unless it is already part of the user's direct request.
 - Do not invent non-artist tags, generic filler, natural-language artist credits, or fixed medium/style labels unless the user explicitly supplied that exact phrase.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
-- Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: subject/focus, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
-- Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags.
+- Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: one subject count tag, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
+- Use exactly one primary subject tag when the subject count is clear: 1boy for a single male subject, 1girl for a single female subject, or 1other only when the character is explicitly nonbinary/other. Do not also write boy, girl, man, woman, male, female, male_focus, female_focus, Korean man, or Korean woman.
+- Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
 - Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
@@ -22258,8 +22264,8 @@ function collectKeroImagePromptReferenceQueries(userInput = '', contextPayload =
     if (/(medical|medic|nurse|nursing|doctor|간호|의무|메딕|의료)/i.test(text)) {
         ['medic', 'medical bag', 'nurse', 'armband'].forEach(query => pushUniquePromptReference(queries, query, 80));
     }
-    if (/(boy|man|male|남자|남성|소년)/i.test(text)) pushUniquePromptReference(queries, '1boy male focus', 80);
-    if (/(girl|woman|female|여자|여성|소녀)/i.test(text)) pushUniquePromptReference(queries, '1girl female focus', 80);
+    if (/(boy|man|male|남자|남성|소년)/i.test(text)) pushUniquePromptReference(queries, '1boy', 80);
+    if (/(girl|woman|female|여자|여성|소녀)/i.test(text)) pushUniquePromptReference(queries, '1girl', 80);
     const contextText = safeString(contextPayload?.workTarget?.targetName || contextPayload?.characterFields?.name || contextPayload?.basic?.name);
     if (contextText) pushUniquePromptReference(queries, contextText, 80);
     return queries.slice(0, 8);
@@ -30382,9 +30388,10 @@ Rules:
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
 - Use the same image prompt writer rules as normal Kero asset creation.
 - Use an artist anchor only when the user fixed one in Asset Studio, supplied a sample, or provided explicit artist tags. If previous plannedAssetItems already used that user-backed anchor, continue it. Do not invent generic style filler when no real artist source exists.
-- Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: one subject count tag, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Use exactly one subject count tag: 1boy, 1girl, or 1other. Do not add male_focus, female_focus, boy, girl, man, woman, Korean man, or Korean woman as extra subject prose.
 - Do not add canned medium/style phrases unless the user explicitly supplied that exact phrase.
-- Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
+- Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists. Convert vague source prose into concrete visible cues, e.g. "regulation hair length" -> short_hair; do not copy the vague phrase itself.
 - Put only global quality direction in wellspringQualityPrompt. Put visible studio/background direction such as white background or simple background in assets[].prompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
@@ -30572,6 +30579,65 @@ Rules:
         return output.join(', ');
     }
 
+    function getKeroSubjectCountTagFromAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (!text) return '';
+        const explicit = getKeroExplicitSubjectCountTagFromAtom(text);
+        if (explicit) return explicit;
+        if (/^(?:one boy|single boy|single male subject)$/.test(text)) return '1boy';
+        if (/^(?:one girl|single girl|single female subject)$/.test(text)) return '1girl';
+        if (/^(?:one other|single nonbinary subject|single non binary subject)$/.test(text)) return '1other';
+        if (/^(?:male focus|boy|man|male|guy|korean man|korean boy|young man|adult man)$/.test(text)) return '1boy';
+        if (/^(?:female focus|girl|woman|female|gal|korean woman|korean girl|young woman|adult woman)$/.test(text)) return '1girl';
+        return '';
+    }
+
+    function getKeroExplicitSubjectCountTagFromAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (/^1boy$/.test(text)) return '1boy';
+        if (/^1girl$/.test(text)) return '1girl';
+        if (/^1other$/.test(text)) return '1other';
+        return '';
+    }
+
+    function isKeroSubjectQualifierAtom(atom = '') {
+        return !!getKeroSubjectCountTagFromAtom(atom);
+    }
+
+    function normalizeKeroConcreteVisualAtom(atom = '') {
+        const raw = safeString(atom).trim();
+        const text = normalizeKeroGeneratedPromptAtom(raw);
+        if (!text) return '';
+        if (/\bregulation\b/.test(text) && /(?:\bhair\b|\blength\b)/.test(text)) return 'short_hair';
+        if (/^(?:upper body|upper-body)$/.test(text)) return 'upper_body';
+        return raw;
+    }
+
+    function isKeroAmbiguousPositiveAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (!text) return true;
+        if (isKeroSubjectQualifierAtom(text)) return true;
+        if (/^(?:korean|japanese|chinese|american|russian|rok)\s+(?:man|woman|boy|girl|male|female)$/.test(text)) return true;
+        if (/^(?:tall|precise appearance|clean appearance|economical movements|level gaze|vivid expression|quick eyebrows)$/.test(text)) return true;
+        if (/^(?:nursing officer|supply nco|military police investigation officer|staff sergeant|second lieutenant|first lieutenant|corporal)$/.test(text)) return true;
+        if (/^(?:observant and composed expression|composed still posture|steady expression|clean and stripped down impression)$/.test(text)) return true;
+        if (/\bregulation\b/.test(text) && /(?:\bhair\b|\blength\b)/.test(text)) return true;
+        return false;
+    }
+
+    function compactKeroVisualPromptAtoms(atoms = []) {
+        const list = ensureArray(atoms).map(atom => safeString(atom).trim()).filter(Boolean);
+        const hasSpecificUniform = list.some((atom) => {
+            const text = normalizeKeroGeneratedPromptAtom(atom);
+            return text !== 'military uniform' && /\b(?:combat|dress|service|police|army|navy|air force)\s+uniform\b/.test(text);
+        });
+        return list.filter((atom) => {
+            const text = normalizeKeroGeneratedPromptAtom(atom);
+            if (hasSpecificUniform && text === 'military uniform') return false;
+            return true;
+        });
+    }
+
     function isKeroGeneratedStyleOrMediumAtom(atom = '') {
         const text = normalizeKeroGeneratedPromptAtom(atom);
         if (!text) return false;
@@ -30720,9 +30786,26 @@ Rules:
     }
 
     function normalizeKeroAssetPositivePrompt(prompt = '', options = {}) {
-        return normalizeKeroAssetPromptByPolicy(prompt, (atom) =>
-            isKeroGeneratedStyleOrMediumAtom(atom) || isKeroGeneratedPositiveFillerAtom(atom)
-        );
+        const atoms = splitKeroPromptAtoms(prompt);
+        if (!atoms.length) return '';
+        const explicitSubjectTag = atoms.map(getKeroExplicitSubjectCountTagFromAtom).find(Boolean) || '';
+        let fallbackSubjectTag = '';
+        const visualAtoms = [];
+        atoms.forEach((atom) => {
+            const concrete = normalizeKeroConcreteVisualAtom(atom);
+            const subject = getKeroSubjectCountTagFromAtom(concrete || atom);
+            if (subject) {
+                if (!fallbackSubjectTag) fallbackSubjectTag = subject;
+                return;
+            }
+            if (!concrete) return;
+            if (isKeroGeneratedStyleOrMediumAtom(concrete) || isKeroGeneratedPositiveFillerAtom(concrete) || isKeroAmbiguousPositiveAtom(concrete)) return;
+            keroAssetPushUnique(visualAtoms, concrete);
+        });
+        return joinKeroPromptAtoms([
+            explicitSubjectTag || fallbackSubjectTag,
+            ...compactKeroVisualPromptAtoms(visualAtoms)
+        ]);
     }
 
     function normalizeKeroAssetNegativePrompt(negative = '', profile = {}, preset = {}) {
@@ -35712,8 +35795,10 @@ ${metaBlock}
 - 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 사용자가 고정한 artist anchor가 있을 때만 모든 assets[].prompt의 맨 앞에 정확히 반복한다. 저장된 작가 프롬프트가 없으면 artist anchor를 억지로 만들지 않는다.
 - 고정 매체/화풍 라벨은 사용자가 그 문구를 직접 준 경우가 아니면 쓰지 않는다.
 - Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
-- Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
+- Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 피사체 수 태그 1개, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
+- 피사체가 남성 1명이면 1boy 하나만, 여성 1명이면 1girl 하나만 쓴다. boy/girl/man/woman/male/female/male_focus/female_focus/Korean man/Korean woman을 함께 덧붙이지 않는다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
+- "규정된 머리길이", regulation length, vivid expression, quick eyebrows, nursing officer, precise appearance처럼 이미지 모델이 직접 그리기 어려운 추상/역할/해석 문구는 쓰지 않는다. 필요한 경우 short_hair, bright smile, stern expression처럼 구체적 시각 단서로 바꾼다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 단, white background, simple background, plain background, studio background처럼 실제 화면에 보이는 배경/구도 조건은 Quality가 아니라 assets[].prompt의 Positive에 넣는다. wellspringQualityPrompt에는 masterpiece, best_quality, highres처럼 품질/미감/해상도 계열만 둔다.
 - Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
