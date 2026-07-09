@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.122
-//@version 1.5.122
+//@display-name 🐸 SuperVibeBot v1.5.123
+//@version 1.5.123
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.122는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.123는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,12 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.123 Release Notes
+ * - v1.5.123: replaces Asset Studio AI recommendation with artist-only Danbooru DB selection
+ * - v1.5.123: expands validated embedded artist candidates from 48 to 512 tags derived from danbooru-taxonomy.release.sqlite
+ * - v1.5.123: stops the artist recommendation button from writing Quality or Negative fields
+ * - v1.5.123: removes image prompt guidance that encouraged identity/gender/hair/eye mismatch negatives unless the user asks for them
+ *
  * SuperVibeBot v1.5.122 Release Notes
  * - v1.5.122: deletes the free-form Asset Studio artist/style recommendation path and replaces it with a compact Danbooru taxonomy-derived candidate DB
  * - v1.5.122: makes the main LLM choose only candidate pack/tag IDs while final artist/style prompt text is assembled from validated DB tags
@@ -1880,13 +1886,13 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is final Positive, assets[].negative is final Negative, and wellspringQualityPrompt is final Quality. The runtime passes these fields through; it does not repair, merge, sanitize, or reinterpret split prompt layers.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
-- Before writing any assets[] item, choose one style anchor for the whole requested asset set. The style anchor is a comma-separated prompt prefix from the user's fixed Asset Studio style, user sample, saved Asset Studio metadata, or Wellspring reference block. If no real style source exists, keep the style anchor minimal instead of inventing generic style filler. Copy the exact same style anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed styles.
-- If the user asks for artist tags or the Wellspring reference block provides artist/style atoms, include them in that style anchor. Do not leave the style anchor empty and do not switch art style between characters in one batch.
+- Before writing any assets[] item, choose one artist anchor for the whole requested asset set. The artist anchor is a comma-separated prefix of 2 to 6 validated artist tags from the user's fixed Asset Studio artist prompt, user sample, saved Asset Studio metadata, or Wellspring reference block. Copy the exact same artist anchor at the start of every assets[].prompt in the same action unless the user explicitly asks for mixed artists.
+- If the user asks for artist tags or the Wellspring reference block provides artist atoms, include them in that artist anchor. Do not invent non-artist tags, generic filler, or natural-language artist credits.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
-- Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable style anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
+- Positive must already be the final image prompt. Write it as concise comma-separated prompt atoms: stable artist anchor, subject/focus, visible identity anchors, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use real Danbooru/Wellspring prompt language and compact natural visual phrases. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. For specific local concepts that have no reliable tag, use common visual tags plus a short natural phrase.
-- Character consistency comes from repeating the same style anchor and visible identity anchors, plus LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
-- Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on likely failures such as anatomy, text/watermark, identity drift, wrong props, or wrong setting.
+- Character consistency comes from repeating the same artist anchor and visible identity anchors, plus LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
+- Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
 - If the visual result depends on Wellspring workflow/character/preset/profile fields provided in context, preserve and pass those fields in the asset create payload instead of inventing incompatible route fields.`;
@@ -21465,7 +21471,6 @@ function normalizeImagePresetOutput(output = {}, index = 0) {
         stylePreset: safeString(source.stylePreset || source.style || source.styleId).trim(),
         stylePrompt: safeString(source.stylePrompt || source.baseStylePrompt).trim(),
         artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
-        styleTags: safeString(source.styleTags || source.danbooruStyleTags).trim(),
         identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject),
         identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt).trim(),
         danbooruTags: safeString(source.danbooruTags || source.tags).trim(),
@@ -22271,7 +22276,6 @@ function collectWellspringGalleryPromptLines(data, maxItems = 8) {
         const parts = [];
         pushUniquePromptReference(parts, prompt, 280);
         pushUniquePromptReference(parts, job.quality_prompt || job.qualityPrompt || job.input?.quality_prompt || job.request?.quality_prompt, 160);
-        pushUniquePromptReference(parts, job.negative_prompt || job.negativePrompt || job.input?.negative_prompt || job.request?.negative_prompt, 160);
         if (parts.length) lines.push(`- gallery sample: ${parts.join(' | ')}`);
     });
     return lines.slice(0, maxItems);
@@ -22299,22 +22303,17 @@ function collectKeroAssetStudioPromptReferenceLines(char = null) {
         styleEntries.forEach(([name, style]) => {
             const parts = [];
             pushUniquePromptReference(parts, style?.artistTags, 260);
-            pushUniquePromptReference(parts, style?.styleTags, 260);
             pushUniquePromptReference(parts, style?.stylePrompt, 260);
-            if (parts.length) lines.push(`- stored style ${name}: ${parts.join(', ')}`);
+            if (parts.length) lines.push(`- stored artist prompt ${name}: ${parts.join(', ')}`);
             const qualityParts = [];
             pushUniquePromptReference(qualityParts, style?.qualityPrompt || style?.wellspringQualityPrompt, 180);
-            if (qualityParts.length) lines.push(`- stored style ${name} quality: ${qualityParts.join(', ')}`);
-            const negativeParts = [];
-            pushUniquePromptReference(negativeParts, style?.negativePrompt, 180);
-            if (negativeParts.length) lines.push(`- stored style ${name} negative: ${negativeParts.join(', ')}`);
+            if (qualityParts.length) lines.push(`- stored artist prompt ${name} quality: ${qualityParts.join(', ')}`);
         });
         const identityEntries = Object.values(meta?.identities || {}).slice(0, 8);
         identityEntries.forEach((entry) => {
             const name = svbNormalizeAssetIdentityName(entry?.name);
             const parts = [];
             pushUniquePromptReference(parts, entry?.artistTags, 240);
-            pushUniquePromptReference(parts, entry?.styleTags, 240);
             pushUniquePromptReference(parts, entry?.stylePrompt, 240);
             pushUniquePromptReference(parts, entry?.prompt, 260);
             if (name && parts.length) lines.push(`- stored identity ${name}: ${parts.join(', ')}`);
@@ -22333,8 +22332,8 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
         '',
         '## Wellspring/Danbooru Prompt Reference',
         '- This block is reference material for the LLM. The runtime will not rewrite generated prompts.',
-        '- Pick one style anchor for the current asset set and copy it exactly at the start of every assets[].prompt in the same action.',
-        '- Use real tag syntax and weighted artist/style atoms from the provided references. Keep visible character cues compact. Use short natural phrases only when no reliable tag exists.'
+        '- Pick one artist anchor for the current asset set and copy it exactly at the start of every assets[].prompt in the same action.',
+        '- Use real tag syntax and weighted artist atoms from the provided references. Keep visible character cues compact. Use short natural phrases only when no reliable tag exists.'
     ];
 
     const studioLines = collectKeroAssetStudioPromptReferenceLines(options.char || null);
@@ -22397,12 +22396,12 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
     }
 
     lines.push('### Required Output Behavior');
-    lines.push('- If Asset Studio Stored References contains "stored style default:", treat only that line value as the user-fixed style prefix and put it first in every assets[].prompt. Use stored style quality/negative lines for wellspringQualityPrompt or Negative, not as Positive prefix.');
-    lines.push('- Stored identity/style references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
-    lines.push('- Prefer user samples, stored Asset Studio styles, Wellspring library entries, and Wellspring gallery samples. Do not invent generic style filler when no real style source exists.');
-    lines.push('- Choose one real style anchor and reuse it exactly for every asset in the batch.');
+    lines.push('- If Asset Studio Stored References contains "stored artist prompt default:", treat only that line value as the user-fixed artist prefix and put it first in every assets[].prompt.');
+    lines.push('- Stored identity/artist references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
+    lines.push('- Prefer user samples, stored Asset Studio artist prompts, Wellspring library entries, and Wellspring gallery samples. Do not invent generic style filler when no real artist source exists.');
+    lines.push('- Choose one real artist anchor and reuse it exactly for every asset in the batch.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
-    lines.push('- Do not omit the style anchor on later assets. A batch with changing style anchors is a failed asset prompt batch.');
+    lines.push('- Do not omit the artist anchor on later assets. A batch with changing artist anchors is a failed asset prompt batch.');
 
     if (liveReferenceCount > 0) {
         try {
@@ -30395,13 +30394,13 @@ Rules:
 - Each asset must be assetType:"additional".
 - If the user requested English filenames, every asset name must be lowercase ASCII snake_case, usually romanized_name_profile or romanized_name_standing.
 - Use the same image prompt writer rules as normal Kero asset creation.
-- Choose one style anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good style anchor, continue that anchor. Otherwise choose one coherent artist/style anchor from the user sample, Asset Studio metadata, or Wellspring reference block; do not invent generic style filler when no real style source exists.
-- Positive is the final prompt body. Write compact prompt atoms: stable style anchor, subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
+- Choose one artist anchor for this recovery batch and copy it exactly at the start of every assets[].prompt. If previous plannedAssetItems already used a good artist anchor, continue that anchor. Otherwise choose one coherent artist anchor from the user sample, Asset Studio metadata, or Wellspring reference block; do not invent generic style filler when no real artist source exists.
+- Positive is the final prompt body. Write compact prompt atoms: stable artist anchor, subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
-- Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: anatomy, watermark/text, identity drift, wrong props, and wrong setting only.
+- Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
-- Put anatomy/watermark/identity-drift terms in negative.`;
+- Put only technical image failure terms in negative.`;
         const payload = {
             userRequest: request,
             previousAssistantText: safeString(assistantText).slice(0, 6000),
@@ -35552,19 +35551,19 @@ ${metaBlock}
 
 ### 이미지 에셋 프롬프팅 전문 규칙
 - 케로는 에셋 프롬프트를 최종 Positive/Negative/Quality로 직접 작성한다. 런타임은 프롬프트를 고치거나 합치거나 정리하지 않고 그대로 전달한다.
-- 먼저 이번 asset batch 전체의 style anchor를 하나 정한다. style anchor는 사용자가 Asset Studio에서 고정한 그림체, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 쉼표 단위 prefix다.
-- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 style anchor를 정확히 반복한다. 한 batch 안에서 그림체가 바뀌면 실패다.
-- 사용자가 작가 태그를 원했거나 reference block에 작가/스타일 태그가 있으면 style anchor에 포함한다. 근거 없는 새 작가명이나 generic style filler를 지어내지 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
+- 먼저 이번 asset batch 전체의 artist anchor를 하나 정한다. artist anchor는 사용자가 Asset Studio에서 고정한 작가 프롬프트, 사용자가 준 샘플, Asset Studio 메타, Wellspring reference block 중에서 고른 2~6명 작가 태그 prefix다.
+- 같은 요청에서 여러 인물/감정/스탠딩 에셋을 만들면 모든 assets[].prompt의 맨 앞에 같은 artist anchor를 정확히 반복한다. 한 batch 안에서 작가 조합이 바뀌면 실패다.
+- 사용자가 작가 태그를 원했거나 reference block에 작가 태그가 있으면 artist anchor에 포함한다. 근거 없는 새 작가명이나 generic style filler를 지어내지 말고, 사용자 샘플/Asset Studio/Wellspring reference에서 실제 근거가 있는 값을 고른다.
 - Asset Studio에 저장된 identity/style prompt는 이미지 생성 중 읽기 전용 참고자료다. 사용자가 저장 메타데이터 수정을 명시하지 않았으면 stored identity prompt를 정리/수정/재저장하겠다고 말하지 않는다.
-- Positive는 style anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
+- Positive는 artist anchor 뒤에 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 장면 단서를 붙인 최종 프롬프트 하나다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
-- Negative는 해부 오류, 텍스트/워터마크, 정체성 붕괴, 잘못된 소품, 잘못된 시대/장르 같은 실패 방향만 짧게 쓴다.
+- Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
 - 프롬프트 문법은 Wellspring/Danbooru 계열을 따른다. 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프, 사용자가 저장/제공한 작가·그림체 태그를 보존한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. Asset Studio에 기본 그림체가 저장되어 있으면 그 값을 assets[].prompt 맨 앞에 직접 포함하고, promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
-- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 style anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 최종 이미지 프롬프트 본문으로 쓴다. Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 그 값을 assets[].prompt 맨 앞에 직접 포함하고, promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층에 의존하지 않는다.
+- Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 artist anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
 
@@ -51729,7 +51728,6 @@ function svbNormalizeAssetIdentityEntry(value = {}, fallbackName = '') {
         negative: safeString(source.negative || source.identityNegative || source.characterNegative || source.uc).trim(),
         stylePrompt: safeString(source.stylePrompt || source.artistStyle || source.baseStylePrompt).trim(),
         artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
-        styleTags: safeString(source.styleTags || source.danbooruStyleTags || source.tagPrompt).trim(),
         qualityPrompt: safeString(source.qualityPrompt || source.wellspringQualityPrompt || source.quality_prompt).trim(),
         wellspringQualityPrompt: safeString(source.wellspringQualityPrompt || source.qualityPrompt || source.quality_prompt).trim(),
         wellspringLoras: svbNormalizeWellspringLoras(source.wellspringLoras || source.loras || source.wellspringLora || source.lora),
@@ -51744,7 +51742,7 @@ function svbNormalizeAssetIdentityMap(value = {}) {
     const addEntry = (entry, fallbackName = '') => {
         const normalized = svbNormalizeAssetIdentityEntry(entry, fallbackName);
         if (!normalized.name) return;
-        const hasStyleState = normalized.stylePrompt || normalized.artistTags || normalized.styleTags || normalized.qualityPrompt || normalized.wellspringQualityPrompt;
+        const hasStyleState = normalized.stylePrompt || normalized.artistTags || normalized.qualityPrompt || normalized.wellspringQualityPrompt;
         if (!normalized.prompt && !normalized.negative && !hasStyleState && !ensureArray(normalized.wellspringLoras).length && !normalized.wellspringTrainingId && !normalized.wellspringLoraName) return;
         identities[normalized.name] = {
             ...normalized,
@@ -51827,7 +51825,6 @@ function svbNormalizeAssetPromptRecord(value = {}) {
         stylePreset: safeString(source.stylePreset || source.style || source.styleId).trim(),
         stylePrompt: safeString(source.stylePrompt || source.artistStyle || source.baseStylePrompt).trim(),
         artistTags: safeString(source.artistTags || source.artistPrompt || source.artist).trim(),
-        styleTags: safeString(source.styleTags || source.danbooruStyleTags || source.tagPrompt).trim(),
         identityName: svbNormalizeAssetIdentityName(source.identityName || source.identityKey || source.characterName || source.subjectName || source.subject),
         identityPrompt: safeString(source.identityPrompt || source.characterPrompt || source.visualIdentityPrompt).trim(),
         danbooruTags: safeString(source.danbooruTags || source.tags).trim(),
@@ -51934,7 +51931,6 @@ function svbSetAssetIdentityPrompt(meta = {}, name = '', prompt = '', negative =
         const hasStyleState = [
             previous.stylePrompt,
             previous.artistTags,
-            previous.styleTags,
             previous.qualityPrompt,
             previous.wellspringQualityPrompt
         ].some(value => safeString(value).trim());
@@ -51969,7 +51965,6 @@ function svbSetAssetIdentityStylePrompt(meta = {}, name = '', style = {}) {
     const incoming = {
         stylePrompt: safeString(style.stylePrompt || style.artistStyle || style.baseStylePrompt).trim(),
         artistTags: safeString(style.artistTags || style.artistPrompt || style.artist).trim(),
-        styleTags: safeString(style.styleTags || style.danbooruStyleTags || style.tagPrompt).trim(),
         qualityPrompt: safeString(style.qualityPrompt || style.wellspringQualityPrompt || style.quality_prompt).trim(),
         wellspringQualityPrompt: safeString(style.wellspringQualityPrompt || style.qualityPrompt || style.quality_prompt).trim()
     };
@@ -52002,7 +51997,7 @@ function svbSetAssetIdentityWellspringLoras(meta = {}, name = '', loras = [], de
     if (!normalizedLoras.length) {
         const nextLoraName = safeString(details.loraName || details.name || previous.wellspringLoraName).trim();
         const nextTrainingId = safeString(details.trainingId || details.training_id || previous.wellspringTrainingId).trim();
-        const hasStyleState = [previous.stylePrompt, previous.artistTags, previous.styleTags, previous.qualityPrompt, previous.wellspringQualityPrompt]
+        const hasStyleState = [previous.stylePrompt, previous.artistTags, previous.qualityPrompt, previous.wellspringQualityPrompt]
             .some(value => safeString(value).trim());
         if (previous.prompt || previous.negative || hasStyleState || nextLoraName || nextTrainingId) {
             next.identities[cleanName] = {
@@ -52394,20 +52389,20 @@ async function openAssetStudio() {
         modal.id = 'svb-as-style-panel';
         modal.className = 'svb-as-style-modal';
         modal.innerHTML = `
-            <div class="svb-as-style-dialog" role="dialog" aria-modal="true" aria-label="그림체">
+            <div class="svb-as-style-dialog" role="dialog" aria-modal="true" aria-label="작가 프롬프트">
                 <div class="svb-as-style-head">
-                    <strong>그림체</strong>
+                    <strong>작가 프롬프트</strong>
                     <button class="svb-as-btn svb-as-close" data-action="close-style-panel" type="button" title="닫기">×</button>
                 </div>
                 <div class="svb-as-style-body">
-                    <label class="svb-as-mini-field svb-as-style-wide">작가/그림체 프롬프트
-                        <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="예: (artist_name:1.05), linework cue, color/shading cue">${escapeHtml(fixedStylePrompt || '')}</textarea>
+                    <label class="svb-as-mini-field svb-as-style-wide">작가 프롬프트
+                        <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="예: (artist_name:1.05), second_artist, (third_artist:0.85)">${escapeHtml(fixedStylePrompt || '')}</textarea>
                     </label>
                     <label class="svb-as-mini-field">퀄리티
                         <textarea class="svb-as-input" id="svb-as-style-quality" placeholder="white background, simple background, masterpiece...">${escapeHtml(style.qualityPrompt || '')}</textarea>
                     </label>
                     <label class="svb-as-mini-field">네거티브 기본값
-                        <textarea class="svb-as-input" id="svb-as-style-negative" placeholder="스타일을 깨는 요소만 짧게">${escapeHtml(style.negativePrompt || '')}</textarea>
+                        <textarea class="svb-as-input" id="svb-as-style-negative" placeholder="수동 네거티브만 입력">${escapeHtml(style.negativePrompt || '')}</textarea>
                     </label>
                 </div>
                 <div class="svb-as-style-actions">
@@ -52434,7 +52429,7 @@ async function openAssetStudio() {
         const style = readAssetStylePanelValues();
         assetStudioMeta = svbSetAssetStudioDefaultStyle(assetStudioMeta, style);
         await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
-        await saveCurrentAssets('그림체를 저장하고 현재 이미지 프리셋 맨 앞 prefix에 적용했습니다.');
+        await saveCurrentAssets('작가 프롬프트를 저장하고 현재 이미지 프리셋 맨 앞 prefix에 적용했습니다.');
         closeAssetStylePanel();
         renderAll();
     }
@@ -52450,7 +52445,7 @@ async function openAssetStudio() {
         const maxOutputTokens = Math.min(Math.max(4096, Number(getMaxOutputTokens()) || 4096), 16384);
         return await translateSingleChunk(systemPrompt, userText, 2, {
             maxOutputTokens,
-            activityDetail: 'Asset Studio 그림체 AI 추천',
+            activityDetail: 'Asset Studio 작가 AI 추천',
             keroMode: 'daily',
             useSubmodels: false,
             disableKeroContext: true,
@@ -52458,98 +52453,147 @@ async function openAssetStudio() {
         });
     }
 
-    const SVB_DANBOORU_STYLE_DB_VERSION = 'danbooru-taxonomy-artist-style-compact-2026-07-09';
+    const SVB_DANBOORU_ARTIST_DB_VERSION = 'danbooru-taxonomy-artist-expanded-2026-07-09';
+    const SVB_DANBOORU_ARTIST_SOURCE_COUNT = 35386;
     const SVB_DANBOORU_ARTIST_TAG_DB = Object.freeze([
         ['hiyori_(rindou66)', 357], ['ratatatat74', 470], ['doremi_(doremi4704)', 391], ['mikozin', 1295],
         ['kadeart', 542], ['mayo_(becky2006)', 329], ['asako_(itiba)', 145], ['dino_(dinoartforame)', 487],
-        ['ask_(askzy)', 482], ['wlop', 365], ['tony_taka', 3147], ['kantoku', 2340], ['redjuice', 418],
-        ['huke', 456], ['honjou_raita', 517], ['takeuchi_takashi', 1721], ['mika_pikazo', 1016],
-        ['lam_(ramdayo)', 394], ['rurudo', 196], ['torino_aqua', 519], ['anmi', 639], ['saitou_masatsugu', 639],
-        ['neco', 398], ['yd_(orange_maru)', 1687], ['ciloranko', 205], ['sho_(sho_lwlw)', 98],
-        ['yutokamizu', 63], ['nakta', 114], ['swd3e2', 1337], ['morikura_en', 696], ['lack', 1108],
-        ['toi8', 340], ['baffu', 795], ['carnelian', 2480], ['tsunako', 2042], ['bunbun', 597],
+        ['ask_(askzy)', 482], ['wlop', 365], ['tony_taka', 3147], ['kantoku', 2340],
+        ['redjuice', 418], ['huke', 456], ['honjou_raita', 517], ['takeuchi_takashi', 1721],
+        ['mika_pikazo', 1016], ['lam_(ramdayo)', 394], ['rurudo', 196], ['torino_aqua', 519],
+        ['anmi', 639], ['saitou_masatsugu', 639], ['neco', 398], ['yd_(orange_maru)', 1687],
+        ['ciloranko', 205], ['sho_(sho_lwlw)', 98], ['yutokamizu', 63], ['nakta', 114],
+        ['swd3e2', 1337], ['morikura_en', 696], ['lack', 1108], ['toi8', 340],
+        ['baffu', 795], ['carnelian', 2480], ['tsunako', 2042], ['bunbun', 597],
         ['wada_arco', 681], ['fuzichoco', 889], ['yoshida_akihiko', 182], ['shinkawa_youji', 71],
         ['namori', 1296], ['aoki_ume', 400], ['shibafu_(glock23)', 577], ['mignon', 870],
-        ['noco_(adamas)', 566], ['tiv', 376], ['yoneyama_mai', 262], ['ebifurya', 5991]
+        ['noco_(adamas)', 566], ['tiv', 376], ['yoneyama_mai', 262], ['ebifurya', 5991],
+        ['krenz', 142], ['pako_(pakosun)', 554], ['ito_noizi', 1442], ['kuroboshi_kouhaku', 787],
+        ['tomose_shunsaku', 1785], ['misaki_kurehito', 1247], ['yuugen', 557], ['ke-ta', 926],
+        ['kakage', 526], ['kaedeko_(kaedelic)', 410], ['happoubi_jin', 1319], ['kousaki_rui', 598],
+        ['miyama-zero', 521], ['redrop', 873], ['rin_yuu', 683], ['minaba_hideo', 2384],
+        ['koyama_shigeru', 2099], ['shimada_fumikane', 1408], ['shirow_masamune', 962], ['murata_range', 958],
+        ['kishida_mel', 1014], ['haimura_kiyotaka', 931], ['shirabi', 1009], ['watanabe_akio', 971],
+        ['horiguchi_yukiko', 910], ['suzuhira_hiro', 1399], ['urushihara_satoshi', 1156], ['hammer_(sunset_beach)', 5448],
+        ['haruyama_kazunori', 5230], ['itomugi-kun', 4545], ['mizuki_hitoshi', 4315], ['kouji_(campus_life)', 4290],
+        ['ruu_(tksymkw)', 4229], ['yaegashi_nan', 4052], ['kanon_(kurogane_knights)', 4004], ['naga_u', 3612],
+        ['rebecca_(keinelove)', 3563], ['kou_hiyoyo', 3525], ['bkub', 3504], ['tani_takeshi', 3411],
+        ['ojipon', 3179], ['matsunaga_kouyou', 3085], ['blade_(galaxist)', 3067], ['hara_(harayutaka)', 3009],
+        ['bow_(bhp)', 3001], ['ixy', 2948], ['a1_(initial-g)', 2943], ['ido_(teketeke)', 2833],
+        ['chihuri', 2806], ['futa_(nabezoko)', 2769], ['bb_(baalbuddy)', 2760], ['hiroki_(yyqw7151)', 2673],
+        ['hisahiko', 2613], ['hews', 2608], ['yohane', 2593], ['hungry_clicker', 2591],
+        ['dd_(ijigendd)', 2576], ['m-da_s-tarou', 2574], ['kirisawa_juuzou', 2546], ['zounose', 2502],
+        ['boris_(noborhys)', 2476], ['warugaki_(sk-ii)', 2446], ['shiseki_hirame', 2398], ['rariatto_(ganguri)', 2395],
+        ['hamu_koutarou', 2386], ['kani_biimu', 2370], ['houtengeki', 2362], ['abubu', 2362],
+        ['nyantcha', 2337], ['ishiyumi', 2319], ['slugbox', 2303], ['iesupa', 2299],
+        ['nanashi_(nlo)', 2290], ['tsukishiro_saika', 2278], ['ichimi', 2274], ['hisona_(suaritesumi)', 2260],
+        ['avogado6', 2249], ['yua_(checkmate)', 2214], ['yukie_(kusaka_shi)', 2197], ['kouno_(masao)', 2181],
+        ['sofra', 2179], ['drawfag', 2178], ['tsukudani_(coke-buta)', 2154], ['milkpanda', 2115],
+        ['kanikama', 2114], ['takafumi', 2104], ['neocoill', 2099], ['shino_(ponjiyuusu)', 2087],
+        ['ueyama_michirou', 2081], ['gomashio_(goma_feet)', 2054], ['sincos', 2023], ['hana_kazari', 2009],
+        ['belko', 1988], ['tsuda_nanafushi', 1973], ['izumi_tsubasu', 1968], ['taisa_(kari)', 1968],
+        ['konoshige_(ryuun)', 1964], ['agawa_ryou', 1962], ['mizumizuni', 1950], ['sayori_(neko_works)', 1930],
+        ['sumiyao_(amam)', 1927], ['ginhaha', 1926], ['toosaka_asagi', 1922], ['wa_(genryusui)', 1912],
+        ['null_(nyanpyoun)', 1908], ['kotorai', 1905], ['saiguchi_otoufu', 1880], ['yuuhagi_(amaretto-no-natsu)', 1880],
+        ['mattaku_mousuke', 1876], ['anti_(untea9)', 1874], ['echo_(circa)', 1859], ['yamamoto_souichirou', 1855],
+        ['yuuji_(and)', 1833], ['lolita_channel', 1829], ['kitsunerider', 1822], ['mochi_au_lait', 1813],
+        ['horosuke', 1810], ['enkyo_yuuichirou', 1806], ['beni_shake', 1804], ['nekotoufu', 1800],
+        ['miyo_(ranthath)', 1787], ['mizuki_makoto', 1775], ['fujima_takuya', 1771], ['haruhisky', 1769],
+        ['kashikaze', 1761], ['zen_(kamuro)', 1749], ['fumihiko_(fu_mihi_ko)', 1738], ['minami_(colorful_palette)', 1737],
+        ['gonzarez', 1733], ['pageratta', 1725], ['gweda', 1723], ['clearite', 1707],
+        ['diva_(hyxpk)', 1694], ['rokugou_daisuke', 1686], ['ishikei', 1656], ['ayu_(mog)', 1649],
+        ['yuureidoushi_(yuurei6214)', 1646], ['shiromanta', 1643], ['imu_sanjo', 1638], ['rappa_(rappaya)', 1626],
+        ['creayus', 1623], ['ichikawa_feesu', 1617], ['kaamin_(mariarose753)', 1615], ['matsuryuu', 1608],
+        ['merunyaa', 1602], ['dagasi', 1602], ['kasumi_(skchkko)', 1599], ['shimazaki_mujirushi', 1595],
+        ['hinghoi', 1593], ['mery_(yangmalgage)', 1589], ['tukiwani', 1588], ['oouso', 1585],
+        ['torotei', 1574], ['aaaa_(quad-a)', 1566], ['shirosato', 1566], ['hizaka', 1565],
+        ['chanta_(ayatakaoisii)', 1564], ['goma_(gomasamune)', 1563], ['ha_akabouzu', 1560], ['kamille_(vcx68)', 1557],
+        ['nikorashi-ka', 1548], ['afrobull', 1534], ['eromame', 1532], ['ohisashiburi', 1531],
+        ['asanagi', 1530], ['jako_(jakoo21)', 1530], ['ebi_193', 1527], ['as109', 1525],
+        ['yukito_(dreamrider)', 1524], ['cle_masahiro', 1521], ['koruri', 1514], ['ilya_kuvshinov', 1514],
+        ['aldehyde', 1511], ['butcha-u', 1509], ['k-suwabe', 1496], ['kaigen_1025', 1491],
+        ['yunamaro', 1487], ['tonda', 1487], ['katahira_masashi', 1482], ['ikeuchi_tanuma', 1482],
+        ['murakami_suigun', 1479], ['yuichirou', 1479], ['pokemoa', 1474], ['agahari', 1471],
+        ['phantom_ix_row', 1463], ['e.o.', 1452], ['lets0020', 1449], ['mikage_takashi', 1447],
+        ['cutesexyrobutts', 1443], ['chigusa_minori', 1438], ['kankan33333', 1438], ['personal_ami', 1437],
+        ['sorimachi-doufu', 1436], ['fumio_(rsqkr)', 1433], ['gurande_(g-size)', 1431], ['usashiro_mani', 1431],
+        ['takiki', 1427], ['dokomon', 1422], ['bubukka', 1421], ['sekina', 1420],
+        ['b-ginga', 1419], ['mizumoto_tadashi', 1419], ['kilye_kairi', 1413], ['kinkymation', 1409],
+        ['tsuruse', 1400], ['tk8d32', 1399], ['ootsuki_wataru', 1396], ['kuromiya', 1391],
+        ['nori_tamago', 1390], ['meito_(maze)', 1389], ['mishima_kurone', 1389], ['sheya', 1388],
+        ['niwatazumi', 1385], ['kame_(kamepan44231)', 1381], ['waero', 1381], ['kawashina_(momen_silicon)', 1380],
+        ['fujigaya_arctia', 1377], ['dr_rex', 1370], ['homare_(fool\'s_art)', 1364], ['karukan_(monjya)', 1362],
+        ['mk_(mod0)', 1360], ['asutora', 1359], ['yomu_(sgt_epper)', 1359], ['tonee', 1355],
+        ['yanyo_(ogino_atsuki)', 1354], ['satou_kibi', 1352], ['cato_(monocatienus)', 1351], ['fuuzasa', 1349],
+        ['moisture_(chichi)', 1348], ['niiko_(gonnzou)', 1346], ['ogami_kazuki', 1345], ['makuwauri', 1343],
+        ['kujou_karasuma', 1342], ['mizuhara_aki', 1339], ['ini_(inunabe00)', 1338], ['isshiki_(ffmania7)', 1338],
+        ['imizu_(nitro_unknown)', 1336], ['negom', 1335], ['fusu_(a95101221)', 1334], ['asteroid_ill', 1333],
+        ['asamura_hiori', 1332], ['mauve', 1330], ['onikobe_rin', 1329], ['sky-freedom', 1326],
+        ['engiyoshi', 1326], ['kuavera', 1323], ['himura_kiseki', 1322], ['ririko_(zhuoyandesailaer)', 1319],
+        ['jokanhiyou', 1319], ['samneco', 1317], ['dishwasher1910', 1317], ['karaagetarou', 1316],
+        ['otokuyou', 1314], ['nishi_koutarou', 1314], ['akairiot', 1313], ['jjune', 1312],
+        ['niliu_chahui', 1311], ['dei_shirou', 1308], ['saku_usako_(rabbit)', 1307], ['mitya', 1301],
+        ['akitsuki_karasu', 1301], ['frapowa', 1301], ['masukuza_j', 1300], ['wakabayashi_toshiya', 1298],
+        ['nanase_nao', 1297], ['maturiuta_sorato', 1297], ['optionaltypo', 1295], ['tf_cafe', 1286],
+        ['ramchi', 1284], ['yokochou', 1282], ['dandon_fuga', 1281], ['hidefu_kitayan', 1278],
+        ['yabuki_kentarou', 1277], ['yoshi_tama', 1277], ['yopparai_oni', 1273], ['ikuchan_kaoru', 1265],
+        ['meow_(nekodenki)', 1257], ['gaoo_(frpjx283)', 1257], ['yano_toshinori', 1256], ['cougar_(cougar1404)', 1251],
+        ['seraziel', 1248], ['chikuwa.', 1246], ['nanakusa_suzuna', 1243], ['uccow', 1242],
+        ['unya', 1239], ['cait_aron', 1228], ['suzuki_toto', 1227], ['oryo_(oryo04)', 1226],
+        ['pote_(ptkan)', 1223], ['kase_daiki', 1220], ['mitsumoto_jouji', 1214], ['yoshio_(55level)', 1211],
+        ['gofu', 1210], ['pentagon_(railgun_ky1206)', 1206], ['tanaka_kusao', 1206], ['dairi', 1206],
+        ['momoko_(momopoco)', 1204], ['dikko', 1204], ['koto_inari', 1203], ['gomennasai', 1203],
+        ['yamashita_shun\'ya', 1199], ['horn/wood', 1197], ['ban!_(bansankan)', 1194], ['youmu-kun', 1193],
+        ['ama_mitsuki', 1193], ['satou_yuuki', 1193], ['meyoco', 1192], ['utano', 1191],
+        ['mossacannibalis', 1190], ['noai_nioshi', 1189], ['jmg', 1189], ['kagami_hirotaka', 1188],
+        ['sakura_oriko', 1188], ['takato_kurosuke', 1185], ['oyari_ashito', 1182], ['kukie-nyan', 1175],
+        ['eu03', 1174], ['92m', 1173], ['mikeou', 1164], ['elf_(stroll_in_the_woods)', 1162],
+        ['lpip', 1162], ['tima', 1159], ['mota', 1155], ['6_(yuchae)', 1154],
+        ['ikari_manatsu', 1154], ['goma_(yoku_yatta_hou_jane)', 1153], ['xinzoruo', 1147], ['kazenokaze', 1146],
+        ['aoshima', 1146], ['kemachiku', 1145], ['harada_takehito', 1144], ['chan_co', 1144],
+        ['kashiwamochi_yomogi', 1144], ['hori_(hori_no_su)', 1141], ['kanpa_(campagne_9)', 1140], ['jack_dempa', 1140],
+        ['bee_(deadflow)', 1139], ['colonel_aki', 1139], ['obiwan', 1137], ['izawa_(bhive003)', 1135],
+        ['kurukurumagical', 1134], ['spacezin', 1133], ['zanntetu', 1128], ['momo_no_sukebe', 1128],
+        ['jinguu_(4839ms)', 1122], ['zyugoya', 1121], ['aoki_(fumomo)', 1117], ['bai_lao_shu', 1116],
+        ['piromizu', 1115], ['milkshakework', 1110], ['kaisen_chuui', 1108], ['oekakizuki', 1107],
+        ['ninahachi', 1106], ['yukimoto_shuuji_(gurigura)', 1105], ['annin_musou', 1104], ['iizuki_tasuku', 1104],
+        ['scottie_(phantom2)', 1102], ['ayamy', 1099], ['kuro_kosyou', 1097], ['rokuwata_tomoe', 1097],
+        ['niwarhythm', 1096], ['menma_(enaic31)', 1096], ['rtil', 1095], ['aztodio', 1092],
+        ['sakiyamama', 1092], ['gunjyou_(gunjyou_00)', 1091], ['massakasama', 1090], ['hizuki_yayoi', 1089],
+        ['seo_tatsuya', 1088], ['fkey', 1088], ['misumi_(macaroni)', 1086], ['morino_hon', 1080],
+        ['serebi_ryousangata', 1080], ['sakazaki_freddy', 1078], ['ulrich_(tagaragakuin)', 1077], ['riichu', 1077],
+        ['hoshizuki_(seigetsu)', 1077], ['asaya_minoru', 1076], ['doitsuken', 1076], ['himajin_noizu', 1071],
+        ['tanabe_(fueisei)', 1069], ['re_ghotion', 1067], ['bigrbear', 1063], ['kloah', 1061],
+        ['minakami_(flyingman555)', 1060], ['ryoji_(nomura_ryouji)', 1056], ['mogudan', 1054], ['awa', 1050],
+        ['koyorin', 1048], ['shichimenchou', 1048], ['riyo_(lyomsnpmp)', 1048], ['kichihachi', 1047],
+        ['do_m_kaeru', 1045], ['sousouman', 1044], ['criis-chan', 1044], ['moke_ro', 1043],
+        ['kairunoburogu', 1041], ['jin_(mugenjin)', 1039], ['catstudioinc_(punepuni)', 1038], ['zunusama', 1035],
+        ['7010', 1034], ['ragho_no_erika', 1034], ['nanao_naru', 1034], ['abmayo', 1032],
+        ['odawara_hakone', 1032], ['meremero', 1029], ['gmkj', 1029], ['eiri_(eirri)', 1028],
+        ['em_(totsuzen_no_hakike)', 1027], ['eroe', 1027], ['qqqrinkappp', 1026], ['akinbo_(hyouka_fuyou)', 1026],
+        ['sakurazawa_izumi', 1026], ['mo_(kireinamo)', 1025], ['syhan', 1021], ['kanduki_kamibukuro', 1021],
+        ['kfr', 1021], ['kenkou_cross', 1020], ['choufu_shimin', 1019], ['bosshi', 1018],
+        ['kazuma_muramasa', 1017], ['sakimichan', 1014], ['jun_(navigavi)', 1013], ['nt00', 1013],
+        ['setz', 1013], ['niichi_(komorebi-palette)', 1013], ['sakuraba_yuuki', 1011], ['bbb_(friskuser)', 1011],
+        ['waterring', 1010], ['cis_(carcharias)', 1010], ['kiritto', 1009], ['kanzakietc', 1008],
+        ['kopaka_(karda_nui)', 1002], ['mashuu_(neko_no_oyashiro)', 1002], ['nii_manabu', 1000], ['inaba_shiki', 999],
+        ['kusaka_souji', 999], ['ru_zhai', 999], ['okina_ika', 999], ['tenken_(gotannda)', 998],
+        ['maruki_(punchiki)', 998], ['untue', 998], ['maru_(marg0613)', 997], ['nishieda', 996],
+        ['umanosuke', 994], ['yuuji_(yukimimi)', 994], ['akkijin', 993], ['lamb-oic029', 992],
+        ['niameresp', 990], ['deadnooodles', 988], ['wanta_(futoshi)', 987], ['mashiro_yukiya', 986],
+        ['tandohark', 985], ['eto_(ikumika)', 985], ['lambda_(kusowarota)', 984], ['ominaeshi_(takenoko)', 984],
+        ['lasterk', 979], ['arinu', 978], ['wisespeak', 977], ['non_(z-art)', 977],
+        ['hospital_king', 977], ['cluseller', 976], ['geewhy', 976], ['kirishima_satoshi', 975]
     ].map(([tag, posts]) => Object.freeze({ tag, posts })));
-    const SVB_DANBOORU_STYLE_TAG_DB = Object.freeze([
-        'flat_color', 'anime_coloring', 'lineart', 'no_lineart', 'painterly', 'blending', 'cel_rendering',
-        'watercolor_effect', 'watercolor_(medium)', 'painting_(medium)', 'colored_pencil_(medium)',
-        'sketch', 'oekaki', 'tegaki', 'crosshatching', 'retro_artstyle', '1990s_(style)', '2000s_(style)',
-        '1980s_(style)', 'toon_(style)', 'official_style', 'monochrome', 'spot_color', 'partially_colored',
-        'muted_color', 'pastel_colors'
-    ]);
-    const SVB_DANBOORU_STYLE_PACK_DB = Object.freeze([
-        Object.freeze({
-            id: 'clean_character_flat',
-            label: 'clean character flat color',
-            match: ['default', 'standing', 'profile', 'visual novel', 'white background', '상반신', '스탠딩', '프로필', '미연시'],
-            artists: ['hiyori_(rindou66)', 'ratatatat74', 'doremi_(doremi4704)', 'mikozin'],
-            styles: ['flat_color', 'anime_coloring', 'lineart'],
-            quality: 'white background, simple background, best quality, amazing quality, very aesthetic, highres',
-            negative: 'photo, realistic, 3d, text, logo, watermark, messy lineart, muddy colors'
-        }),
-        Object.freeze({
-            id: 'modern_military_clean',
-            label: 'modern military clean illustration',
-            match: ['military', 'army', 'soldier', 'uniform', 'rank', 'rok', '군', '군복', '한국군', '장교', '부사관', '전투복'],
-            artists: ['shibafu_(glock23)', 'huke', 'redjuice', 'neco'],
-            styles: ['lineart', 'anime_coloring', 'muted_color'],
-            quality: 'white background, simple background, clean lineart, best quality, amazing quality, highres',
-            negative: 'photo, realistic, 3d, fantasy armor, medieval weapon, text, logo, watermark, muddy colors'
-        }),
-        Object.freeze({
-            id: 'polished_key_visual',
-            label: 'polished key visual color',
-            match: ['hero', 'main character', 'key visual', 'bright', '주인공', '대표', '화려', '키비주얼'],
-            artists: ['mika_pikazo', 'yoneyama_mai', 'lam_(ramdayo)', 'lack'],
-            styles: ['anime_coloring', 'lineart', 'pastel_colors'],
-            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
-            negative: 'photo, realistic, 3d, text, logo, watermark, low contrast'
-        }),
-        Object.freeze({
-            id: 'soft_visual_novel',
-            label: 'soft visual novel illustration',
-            match: ['romance', 'school', 'soft', 'daily', 'visual novel', '연애', '일상', '부드러운', '학교'],
-            artists: ['kantoku', 'tony_taka', 'carnelian', 'torino_aqua'],
-            styles: ['anime_coloring', 'lineart', 'pastel_colors'],
-            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
-            negative: 'photo, realistic, 3d, harsh shadows, text, logo, watermark'
-        }),
-        Object.freeze({
-            id: 'painterly_fantasy',
-            label: 'painterly fantasy illustration',
-            match: ['fantasy', 'magic', 'kingdom', 'myth', '판타지', '마법', '왕국', '신화'],
-            artists: ['wlop', 'fuzichoco', 'swd3e2', 'ask_(askzy)'],
-            styles: ['painterly', 'blending', 'painting_(medium)'],
-            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
-            negative: 'photo, realistic, 3d, muddy colors, text, logo, watermark'
-        }),
-        Object.freeze({
-            id: 'sharp_scifi',
-            label: 'sharp sci-fi character illustration',
-            match: ['sci-fi', 'scifi', 'cyber', 'future', 'mecha', 'sf', '사이버', '미래', '기계', '메카'],
-            artists: ['redjuice', 'huke', 'neco', 'shinkawa_youji'],
-            styles: ['lineart', 'anime_coloring', 'muted_color'],
-            quality: 'simple background, best quality, amazing quality, very aesthetic, highres',
-            negative: 'photo, realistic, 3d, fantasy robe, medieval weapon, text, logo, watermark'
-        }),
-        Object.freeze({
-            id: 'retro_manga',
-            label: 'retro manga illustration',
-            match: ['retro', 'manga', 'old anime', 'classic', '복고', '만화', '고전'],
-            artists: ['takeuchi_takashi', 'yoshida_akihiko', 'aoki_ume', 'namori'],
-            styles: ['retro_artstyle', '1990s_(style)', 'lineart'],
-            quality: 'simple background, best quality, amazing quality, highres',
-            negative: 'photo, realistic, 3d, text, logo, watermark'
-        })
+    const SVB_DANBOORU_ARTIST_FALLBACK_TAGS = Object.freeze([
+        'hiyori_(rindou66)', 'ratatatat74', 'doremi_(doremi4704)', 'mikozin'
     ]);
 
     function svbDanbooruTagSet(list) {
         return new Set(ensureArray(list).map((item) => safeString(item?.tag || item).trim()).filter(Boolean));
     }
 
-    function svbNormalizeStyleSelectionList(value) {
+    function svbNormalizeArtistSelectionList(value) {
         if (Array.isArray(value)) return value.map(item => safeString(item?.tag || item).trim()).filter(Boolean);
         return safeString(value)
             .split(',')
@@ -52557,67 +52601,40 @@ async function openAssetStudio() {
             .filter(Boolean);
     }
 
-    function svbPromptAtomFromDanbooruTag(tag = '') {
+    function svbPromptAtomFromDanbooruArtist(tag = '') {
         return safeString(tag).trim().replace(/_/g, ' ').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
     }
 
-    function svbWeightedDanbooruTag(tag = '', weight = 1) {
-        const atom = svbPromptAtomFromDanbooruTag(tag);
+    function svbWeightedDanbooruArtist(tag = '', weight = 1) {
+        const atom = svbPromptAtomFromDanbooruArtist(tag);
         if (!atom) return '';
         const fixedWeight = Number(weight);
         if (!Number.isFinite(fixedWeight) || Math.abs(fixedWeight - 1) < 0.01) return atom;
         return `(${atom}:${fixedWeight.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')})`;
     }
 
-    function svbFindDanbooruStylePackById(id = '') {
-        return SVB_DANBOORU_STYLE_PACK_DB.find(pack => pack.id === safeString(id).trim()) || null;
-    }
-
-    function svbChooseDanbooruStylePack(context = {}) {
-        const text = JSON.stringify(context || {}).toLowerCase();
-        let best = SVB_DANBOORU_STYLE_PACK_DB[0];
-        let bestScore = -1;
-        SVB_DANBOORU_STYLE_PACK_DB.forEach((pack) => {
-            const score = ensureArray(pack.match).reduce((sum, key) => sum + (text.includes(safeString(key).toLowerCase()) ? 1 : 0), 0);
-            if (score > bestScore) {
-                best = pack;
-                bestScore = score;
-            }
-        });
-        return best || SVB_DANBOORU_STYLE_PACK_DB[0];
-    }
-
-    function svbBuildDanbooruStyleCandidatePayload(context = {}) {
+    function svbBuildDanbooruArtistCandidatePayload(context = {}) {
         return {
-            dbVersion: SVB_DANBOORU_STYLE_DB_VERSION,
-            rule: 'Choose only packId and tags that exactly exist in this payload. Do not invent names. Do not write by/inspired-by/style-of prose.',
-            packs: SVB_DANBOORU_STYLE_PACK_DB.map(pack => ({
-                id: pack.id,
-                label: pack.label,
-                match: pack.match,
-                artistTags: pack.artists,
-                styleTags: pack.styles,
-                qualityPrompt: pack.quality,
-                negativePrompt: pack.negative
-            })),
-            allowedArtistTags: SVB_DANBOORU_ARTIST_TAG_DB.map(item => item.tag),
-            allowedStyleTags: SVB_DANBOORU_STYLE_TAG_DB,
+            dbVersion: SVB_DANBOORU_ARTIST_DB_VERSION,
+            sourceArtistCount: SVB_DANBOORU_ARTIST_SOURCE_COUNT,
+            rule: 'Choose 2 to 6 artistTags only. Use exact candidate tag strings. Do not output non-artist tag fields, qualityPrompt, negativePrompt, prose credits, or invented names.',
+            candidateArtists: SVB_DANBOORU_ARTIST_TAG_DB.map(item => ({ tag: item.tag, posts: item.posts })),
             context
         };
     }
 
-    async function chooseAssetStylePackWithMainModel(context = {}) {
+    async function chooseAssetArtistsWithMainModel(context = {}) {
         const systemPrompt = [
-            'You choose an Asset Studio art style pack from a compact Danbooru taxonomy-derived candidate DB.',
-            'You do not write final prompts. You only choose packId and optional tag arrays from the provided candidate DB.',
-            'Every artistTags/styleTags item must exactly match an allowed candidate tag.',
-            'Never invent artist names. Never output natural-language credits such as by Artist, style of Artist, inspired by Artist.',
-            'Return only JSON: {"packId":"...", "artistTags":["..."], "styleTags":["..."], "rationale":"short Korean reason"}'
+            'You choose a reusable Asset Studio artist blend from a Danbooru artist candidate DB.',
+            'Match the selected bot/character genre, world, tone, and visual mood using the provided context.',
+            'Return only 2 to 6 exact artistTags from candidateArtists. Do not output non-artist tags, quality tags, negative prompts, or natural-language credits.',
+            'Never invent artist names. Never output by Artist, style of Artist, inspired by Artist, model names, or prose.',
+            'Return only JSON: {"artistTags":["candidate_artist_tag","candidate_artist_tag"],"rationale":"short Korean reason"}'
         ].join('\n');
-        const userText = JSON.stringify(svbBuildDanbooruStyleCandidatePayload(context), null, 2);
+        const userText = JSON.stringify(svbBuildDanbooruArtistCandidatePayload(context), null, 2);
         const response = await callAssetStudioMainModel(systemPrompt, userText);
         const parsedPack = await parseJsonFromAI(response, {
-            schemaHint: '{"packId":"candidate pack id","artistTags":["allowed artist tag"],"styleTags":["allowed style tag"],"rationale":"short Korean reason"}',
+            schemaHint: '{"artistTags":["allowed artist tag","allowed artist tag"],"rationale":"short Korean reason"}',
             allowModelRepair: true
         });
         const parsed = parsedPack?.data;
@@ -52625,28 +52642,27 @@ async function openAssetStudio() {
         return parsed;
     }
 
-    function svbResolveDanbooruStyleSelection(selection = {}, context = {}) {
+    function svbResolveDanbooruArtistSelection(selection = {}) {
         const artistSet = svbDanbooruTagSet(SVB_DANBOORU_ARTIST_TAG_DB);
-        const styleSet = svbDanbooruTagSet(SVB_DANBOORU_STYLE_TAG_DB);
-        const pack = svbFindDanbooruStylePackById(selection.packId || selection.pack_id)
-            || svbChooseDanbooruStylePack(context);
-        const selectedArtists = svbNormalizeStyleSelectionList(selection.artistTags || selection.artist_tags || selection.artists)
+        const selectedArtists = svbNormalizeArtistSelectionList(selection.artistTags || selection.artist_tags || selection.artists)
             .filter(tag => artistSet.has(tag))
-            .slice(0, 4);
-        const selectedStyles = svbNormalizeStyleSelectionList(selection.styleTags || selection.style_tags || selection.styles)
-            .filter(tag => styleSet.has(tag))
-            .slice(0, 5);
-        const artists = selectedArtists.length ? selectedArtists : ensureArray(pack.artists).slice(0, 3);
-        const styles = selectedStyles.length ? selectedStyles : ensureArray(pack.styles).slice(0, 4);
-        const weightedArtists = artists.map((tag, index) => svbWeightedDanbooruTag(tag, [1.08, 0.95, 0.82, 0.72][index] || 0.7));
-        const stylePrompt = svbJoinPromptFragments(weightedArtists, styles.map(svbPromptAtomFromDanbooruTag));
+            .slice(0, 6);
+        const artists = [...selectedArtists];
+        SVB_DANBOORU_ARTIST_FALLBACK_TAGS.forEach((tag) => {
+            if (artists.length >= 2) return;
+            if (artistSet.has(tag) && !artists.includes(tag)) artists.push(tag);
+        });
+        if (artists.length < 2) {
+            SVB_DANBOORU_ARTIST_TAG_DB.some((item) => {
+                if (!artists.includes(item.tag)) artists.push(item.tag);
+                return artists.length >= 2;
+            });
+        }
+        const weights = [1.12, 1, 0.9, 0.82, 0.74, 0.68];
+        const artistPrompt = svbJoinPromptFragments(artists.map((tag, index) => svbWeightedDanbooruArtist(tag, weights[index] || 0.68)));
         return {
-            pack,
             artists,
-            styles,
-            stylePrompt,
-            qualityPrompt: pack.quality,
-            negativePrompt: pack.negative,
+            artistPrompt,
             rationale: safeString(selection.rationale).trim()
         };
     }
@@ -52664,8 +52680,8 @@ async function openAssetStudio() {
             firstMessage: fields.firstMessage || '',
             globalNote: fields.globalNote || '',
             lorebooks,
-            currentStyle: getDefaultAssetStyle() || null,
-            task: 'Recommend one coherent Danbooru/Wellspring-compatible artist/style blend for this selected character. Do not generate images. Return JSON only.'
+            currentArtistPrompt: svbBuildAssetStylePrompt(getDefaultAssetStyle() || {}),
+            task: 'Recommend 2 to 6 Danbooru artist tags for this selected character. Do not generate images, non-artist tags, quality prompts, or negative prompts. Return JSON only.'
         };
     }
 
@@ -52676,30 +52692,24 @@ async function openAssetStudio() {
             button.textContent = '추천 중...';
         }
         try {
-            setStatus('LLM으로 캐릭터 설정 기반 그림체 조합을 추천받는 중...', 'info');
+            setStatus('LLM으로 캐릭터 설정 기반 작가 조합을 추천받는 중...', 'info');
             const styleContext = buildAssetStyleRecommendationContext();
-            const selection = await chooseAssetStylePackWithMainModel(styleContext).catch(error => {
-                Logger.warn('Asset Studio DB style chooser fell back to deterministic pack:', error?.message || error);
+            const selection = await chooseAssetArtistsWithMainModel(styleContext).catch(error => {
+                Logger.warn('Asset Studio DB artist chooser fell back to deterministic artists:', error?.message || error);
                 return {};
             });
-            const resolved = svbResolveDanbooruStyleSelection(selection, styleContext);
-            const fixedStylePrompt = resolved.stylePrompt;
-            const qualityPrompt = resolved.qualityPrompt;
-            const negativePrompt = resolved.negativePrompt;
-            if (!fixedStylePrompt && !qualityPrompt && !negativePrompt) {
-                throw new Error('Danbooru compact DB에서 적용할 그림체/퀄리티/네거티브 값을 만들지 못했습니다.');
+            const resolved = svbResolveDanbooruArtistSelection(selection);
+            const fixedStylePrompt = resolved.artistPrompt;
+            if (!fixedStylePrompt) {
+                throw new Error('Danbooru artist DB에서 적용할 작가 프롬프트를 만들지 못했습니다.');
             }
             const styleInput = document.getElementById('svb-as-style-prompt');
-            const qualityInput = document.getElementById('svb-as-style-quality');
-            const negativeInput = document.getElementById('svb-as-style-negative');
             if (styleInput) styleInput.value = fixedStylePrompt;
-            if (qualityInput) qualityInput.value = qualityPrompt;
-            if (negativeInput) negativeInput.value = negativePrompt;
-            setStatus(`Danbooru DB 후보 기반 그림체를 입력칸에 채웠습니다: ${resolved.pack.label}. 저장을 누르면 적용됩니다.`, 'success');
+            setStatus(`Danbooru DB 작가 ${resolved.artists.length}명을 입력칸에 채웠습니다. 저장을 누르면 적용됩니다.`, 'success');
         } catch (error) {
-            Logger.error('Asset Studio style recommendation failed:', error);
-            setStatus(`그림체 AI 추천 실패: ${error?.message || error}`, 'error');
-            alert(`그림체 AI 추천 실패: ${error?.message || error}`);
+            Logger.error('Asset Studio artist recommendation failed:', error);
+            setStatus(`작가 AI 추천 실패: ${error?.message || error}`, 'error');
+            alert(`작가 AI 추천 실패: ${error?.message || error}`);
         } finally {
             if (button) {
                 button.disabled = false;
@@ -54929,7 +54939,7 @@ async function openAssetStudio() {
             folder: ref.folder,
             prompt: safeString(ref.promptMeta?.prompt).slice(0, 220),
             identityPrompt: safeString(ref.promptMeta?.identityPrompt).slice(0, 180),
-            style: safeString(ref.promptMeta?.stylePreset || ref.promptMeta?.stylePrompt || ref.promptMeta?.artistTags || ref.promptMeta?.styleTags).slice(0, 180)
+            style: safeString(ref.promptMeta?.stylePreset || ref.promptMeta?.stylePrompt || ref.promptMeta?.artistTags).slice(0, 180)
         }));
         return {
             characterName: getCharacterDisplayName(char),
@@ -56169,7 +56179,7 @@ async function openAssetStudio() {
                                 </div>
                                 <div class="svb-as-actions svb-as-library-actions">
                                     <button class="svb-as-btn primary" id="svb-as-upload-btn" type="button">파일 업로드</button>
-                                    <button class="svb-as-btn primary" data-action="open-style-panel" type="button">그림체</button>
+                                    <button class="svb-as-btn primary" data-action="open-style-panel" type="button">작가</button>
                                     <button class="svb-as-btn" data-action="select-all" data-kind="all" type="button">전체 선택</button>
                                     <button class="svb-as-btn" data-action="clear-selection" data-kind="all" type="button">선택 해제</button>
                                     <button class="svb-as-btn danger" data-action="delete-selected" data-kind="all" type="button">선택 삭제</button>
@@ -56227,7 +56237,7 @@ async function openAssetStudio() {
                                     </div>
                                     <div class="svb-as-grid">
                                         <textarea class="svb-as-input" id="svb-as-character-prompt" placeholder="캐릭터 고정 프롬프트: 얼굴형, 눈/머리, 체형, 복식 핵심, 상징 소품, 색 조합"></textarea>
-                                        <textarea class="svb-as-input" id="svb-as-character-negative" placeholder="캐릭터 일관성을 깨는 요소: different character, inconsistent hair, wrong eye color 등"></textarea>
+                                        <textarea class="svb-as-input" id="svb-as-character-negative" placeholder="수동 캐릭터 네거티브: bad anatomy, bad hands, text, logo, watermark"></textarea>
                                     </div>
                                     <div class="svb-as-grid">
                                         <textarea class="svb-as-input" id="svb-as-prompt-prefix" placeholder="Positive 앞에 항상 붙일 그림체/품질 태그"></textarea>
