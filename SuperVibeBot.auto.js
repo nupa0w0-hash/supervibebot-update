@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.118
-//@version 1.5.118
+//@display-name 🐸 SuperVibeBot v1.5.119
+//@version 1.5.119
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.118는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.119는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,10 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.119 Release Notes
+ * - v1.5.119: routes Asset Studio style AI recommendation through Kero's main LLM translateSingleChunk path instead of a separate API dispatcher
+ * - v1.5.119: fixes Asset Studio style recommendation parsing by reading parseJsonFromAI().data and allowing normal model repair
+ *
  * SuperVibeBot v1.5.118 Release Notes
  * - v1.5.118: replaces Asset Studio folder mode with a real folder tile browser and click-through folder contents instead of grouped list sections
  * - v1.5.118: merges artist/style input into one fixed art-style prompt field while keeping quality and negative separate
@@ -52423,17 +52427,15 @@ async function openAssetStudio() {
     }
 
     async function callAssetStudioMainModel(systemPrompt, userText) {
-        const options = {
-            maxOutputTokens: 4096,
-            activityDetail: 'Asset Studio style recommendation'
-        };
-        if (currentApiType === 'github-copilot') return await callGitHubCopilot_API(systemPrompt, userText, options);
-        if (currentApiType === 'vertex-ai-direct') return await callVertexAI_Directly(systemPrompt, userText, options);
-        if (currentApiType === 'ollama-direct') return await callOllamaAPI(systemPrompt, userText, ollamaSettings, options);
-        if (currentApiType === 'api-hub') return await callApiHubAPI(systemPrompt, userText, apiHubSettings, options);
-        const apiKey = typeof risuai?.getArgument === 'function' ? (await risuai.getArgument('api_key') || '') : '';
-        if (!apiKey) throw new Error('Google AI Studio API Key가 없습니다. API Hub/NanoGPT 등을 쓰는 경우 설정에서 메인 API 타입을 확인하세요.');
-        return await callGeminiAPI(apiKey, currentModel, systemPrompt, userText, options);
+        const maxOutputTokens = Math.min(Math.max(4096, Number(getMaxOutputTokens()) || 4096), 16384);
+        return await translateSingleChunk(systemPrompt, userText, 2, {
+            maxOutputTokens,
+            activityDetail: 'Asset Studio 그림체 AI 추천',
+            keroMode: 'daily',
+            useSubmodels: false,
+            disableKeroContext: true,
+            detached: true
+        });
     }
 
     function buildAssetStyleRecommendationContext() {
@@ -52471,10 +52473,11 @@ async function openAssetStudio() {
                 'Do not add generic style filler unless the supplied context explicitly asks for that exact style.'
             ].join('\n');
             const response = await callAssetStudioMainModel(systemPrompt, JSON.stringify(buildAssetStyleRecommendationContext(), null, 2));
-            const parsed = await parseJsonFromAI(response, {
+            const parsedPack = await parseJsonFromAI(response, {
                 schemaHint: '{"stylePrompt":"fixed artist/style prompt prefix","qualityPrompt":"quality prompt","negativePrompt":"negative style defaults","rationale":"short reason"}',
-                allowModelRepair: false
+                allowModelRepair: true
             });
+            const parsed = parsedPack?.data;
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw new Error('LLM 추천 응답이 JSON 객체가 아닙니다.');
             }
@@ -52483,13 +52486,16 @@ async function openAssetStudio() {
             const fixedStylePrompt = svbJoinPromptFragments(artistTags, stylePrompt);
             const qualityPrompt = safeString(parsed.qualityPrompt || parsed.quality_prompt || parsed.quality).trim();
             const negativePrompt = safeString(parsed.negativePrompt || parsed.negative_prompt || parsed.negative).trim();
+            if (!fixedStylePrompt && !qualityPrompt && !negativePrompt) {
+                throw new Error('LLM 추천 응답에 적용할 그림체/퀄리티/네거티브 값이 없습니다.');
+            }
             const styleInput = document.getElementById('svb-as-style-prompt');
             const qualityInput = document.getElementById('svb-as-style-quality');
             const negativeInput = document.getElementById('svb-as-style-negative');
             if (styleInput) styleInput.value = fixedStylePrompt;
             if (qualityInput) qualityInput.value = qualityPrompt;
             if (negativeInput) negativeInput.value = negativePrompt;
-            setStatus('AI 추천을 입력칸에 채웠습니다. 적용하려면 저장을 누르세요.', 'success');
+            setStatus('메인 LLM 추천을 입력칸에 채웠습니다. 적용하려면 저장을 누르세요.', 'success');
         } catch (error) {
             Logger.error('Asset Studio style recommendation failed:', error);
             setStatus(`그림체 AI 추천 실패: ${error?.message || error}`, 'error');
