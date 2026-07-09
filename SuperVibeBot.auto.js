@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.132
-//@version 1.5.132
+//@display-name 🐸 SuperVibeBot v1.5.133
+//@version 1.5.133
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.132는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.133는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.133 Release Notes
+ * - v1.5.133: deduplicates Asset Studio artist prompts when the same style exists both as the active artist preset and the image preset promptPrefix
+ * - v1.5.133: restores the artist: namespace for legacy backslash-parenthesized artist prefix atoms before Kero sends the image prompt
+ * - v1.5.133: keeps artist prompt cleanup scoped to the fixed artist prefix so character/world prompt atoms are not rewritten as artist tags
+ *
  * SuperVibeBot v1.5.132 Release Notes
  * - v1.5.132: preserves user-saved artist prompt syntax such as artist:(name:0.8), negative weights, and artist collaboration tags without splitting or escaping it
  * - v1.5.132: changes Kero height/body cues from prose labels such as tall stature or average height into image-model prompt tags such as short, tall, very tall, slender, broad shoulders, small body, large body, and huge body
@@ -30791,6 +30796,63 @@ Rules:
         return joinKeroPromptAtoms(atoms.filter((atom) => !(typeof predicate === 'function' && predicate(atom))));
     }
 
+    function looksLikeKeroArtistWeightInner(inner = '') {
+        const text = safeString(inner).trim();
+        if (!/:[+-]?\d+(?:\.\d+)?$/.test(text)) return false;
+        if (/^(?:artist\s*:|flat color|artist collaboration|solo artist|year\s+\d{4})\b/i.test(text)) return false;
+        if (/\b(?:background|quality|resolution|composition|lighting|color|lineart|linework)\b/i.test(text)) return false;
+        return true;
+    }
+
+    function restoreKeroFixedArtistPromptSyntax(prompt = '') {
+        const text = safeString(prompt).trim();
+        if (!text) return '';
+        return text
+            .replace(/artist\s*:\s*\\\(([^\\()]*?:[+-]?\d+(?:\.\d+)?)\\\)/gi, (_match, inner) => `artist:(${safeString(inner).trim()})`)
+            .replace(/\\\(([^\\()]*?:[+-]?\d+(?:\.\d+)?)\\\)/g, (match, inner) => {
+                const clean = safeString(inner).trim();
+                return looksLikeKeroArtistWeightInner(clean) ? `artist:(${clean})` : match;
+            });
+    }
+
+    function normalizeKeroArtistPromptKey(atom = '') {
+        return restoreKeroFixedArtistPromptSyntax(atom)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function normalizeKeroFixedArtistPrompt(...values) {
+        const seen = new Set();
+        const output = [];
+        values.forEach((value) => {
+            splitKeroPromptAtoms(restoreKeroFixedArtistPromptSyntax(value)).forEach((atom) => {
+                const clean = safeString(atom).trim();
+                if (!clean) return;
+                const key = normalizeKeroArtistPromptKey(clean);
+                if (!key || seen.has(key)) return;
+                seen.add(key);
+                output.push(clean);
+            });
+        });
+        return output.join(', ');
+    }
+
+    function stripKeroDuplicateFixedArtistPromptFromBody(bodyPrompt = '', fixedArtistPrompt = '') {
+        const fixedKeys = new Set(splitKeroPromptAtoms(normalizeKeroFixedArtistPrompt(fixedArtistPrompt)).map(normalizeKeroArtistPromptKey).filter(Boolean));
+        if (!fixedKeys.size) return safeString(bodyPrompt).trim();
+        const output = [];
+        splitKeroPromptAtoms(bodyPrompt).forEach((atom) => {
+            const clean = safeString(atom).trim();
+            if (!clean) return;
+            const restored = restoreKeroFixedArtistPromptSyntax(clean);
+            const key = normalizeKeroArtistPromptKey(restored);
+            if (fixedKeys.has(key)) return;
+            output.push(clean);
+        });
+        return output.join(', ');
+    }
+
     function getKeroUserFixedArtistPrompt(char = null, preset = {}) {
         let assetStudioArtistPrompt = '';
         try {
@@ -30799,7 +30861,7 @@ Rules:
         } catch (_) {
             assetStudioArtistPrompt = '';
         }
-        return svbJoinPromptFragments(assetStudioArtistPrompt, preset?.promptPrefix);
+        return normalizeKeroFixedArtistPrompt(assetStudioArtistPrompt, preset?.promptPrefix);
     }
 
     function getKeroUserFixedQualityPrompt(char = null, preset = {}, profile = {}) {
@@ -30815,8 +30877,8 @@ Rules:
     }
 
     function prependKeroUserFixedArtistPrompt(prompt = '', artistPrompt = '') {
-        const fixed = safeString(artistPrompt).trim();
-        const body = safeString(prompt).trim();
+        const fixed = normalizeKeroFixedArtistPrompt(artistPrompt);
+        const body = stripKeroDuplicateFixedArtistPromptFromBody(prompt, fixed);
         if (!fixed) return body;
         if (!body) return fixed;
         return svbJoinPromptFragments(fixed, body);
