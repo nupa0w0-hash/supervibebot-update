@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.133
-//@version 1.5.133
+//@display-name 🐸 SuperVibeBot v1.5.134
+//@version 1.5.134
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.133는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.134는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,8 +165,13 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.134 Release Notes
+ * - v1.5.134: stops copying the Asset Studio artist prompt preset into the old internal fixed-prefix slot
+ * - v1.5.134: makes Kero read the selected Asset Studio artist preset directly instead of merging it with any copied prefix
+ * - v1.5.134: keeps artist prompt presets as the single source of truth for user-saved artist prompts
+ *
  * SuperVibeBot v1.5.133 Release Notes
- * - v1.5.133: deduplicates Asset Studio artist prompts when the same style exists both as the active artist preset and the image preset promptPrefix
+ * - v1.5.133: deduplicates legacy duplicated Asset Studio artist prompts at the Kero send boundary
  * - v1.5.133: restores the artist: namespace for legacy backslash-parenthesized artist prefix atoms before Kero sends the image prompt
  * - v1.5.133: keeps artist prompt cleanup scoped to the fixed artist prefix so character/world prompt atoms are not rewritten as artist tags
  *
@@ -198,7 +203,7 @@ async function safeCopyText(text, options = {}) {
  * SuperVibeBot v1.5.127 Release Notes
  * - v1.5.127: adds Asset Studio artist prompt presets with active preset selection
  * - v1.5.127: adds artist preset save, delete, export, and import controls
- * - v1.5.127: applies the selected artist preset to Kero image generation and the active image preset prefix
+ * - v1.5.127: adds selected artist preset use for Kero image generation
  *
  * SuperVibeBot v1.5.126 Release Notes
  * - v1.5.126: keeps Kero quality terms in wellspringQualityPrompt instead of Positive
@@ -247,7 +252,7 @@ async function safeCopyText(text, options = {}) {
  *
  * SuperVibeBot v1.5.117 Release Notes
  * - v1.5.117: simplifies Asset Studio library controls by removing the separate direct-registration panel, moving selection/delete controls together, and adding a folder-grouped view
- * - v1.5.117: adds an Asset Library style button for a user-saved fixed art-style prefix that is stored in Asset Studio metadata and applied as the generation promptPrefix
+ * - v1.5.117: adds an Asset Library style button for a user-saved fixed art-style prefix stored in Asset Studio metadata
  * - v1.5.117: lets the style panel ask the configured LLM for an artist/style blend recommendation from the selected character context without local prompt judgment
  * - v1.5.117: removes canned Kero style-anchor examples and prioritizes user-saved/Wellspring style sources
  *
@@ -30861,7 +30866,7 @@ Rules:
         } catch (_) {
             assetStudioArtistPrompt = '';
         }
-        return normalizeKeroFixedArtistPrompt(assetStudioArtistPrompt, preset?.promptPrefix);
+        return normalizeKeroFixedArtistPrompt(assetStudioArtistPrompt);
     }
 
     function getKeroUserFixedQualityPrompt(char = null, preset = {}, profile = {}) {
@@ -52844,24 +52849,47 @@ async function openAssetStudio() {
         return options || '<option value="default" selected>default</option>';
     }
 
-    async function applyDefaultStyleToCurrentPreset(style = getDefaultAssetStyle()) {
-        const stylePrompt = svbBuildAssetStylePrompt(style);
-        const preset = normalizeImageGenerationPreset(readGenerationPresetFromUI(getSelectedImagePreset()));
-        preset.promptPrefix = stylePrompt;
-        preset.wellspringQualityPrompt = safeString(style?.qualityPrompt || style?.wellspringQualityPrompt).trim();
-        preset.negativePrefix = safeString(style?.negativePrompt).trim();
-        const saved = upsertImageGenerationPreset(preset);
-        activeImageGenerationPresetId = saved.id;
+    function normalizeAssetStylePromptCompareKey(value = '') {
+        return safeString(value)
+            .trim()
+            .replace(/\\\(/g, '(')
+            .replace(/\\\)/g, ')')
+            .replace(/\s+/g, ' ')
+            .toLowerCase();
+    }
+
+    function collectAssetStylePromptCompareKeys() {
+        const keys = new Set();
+        Object.values(getAssetStylePresetMap()).forEach((style) => {
+            const prompt = svbBuildAssetStylePrompt(style);
+            const key = normalizeAssetStylePromptCompareKey(prompt);
+            if (key) keys.add(key);
+        });
+        return keys;
+    }
+
+    async function removeCopiedArtistPromptsFromImagePresets() {
+        const styleKeys = collectAssetStylePromptCompareKeys();
+        if (!styleKeys.size) return false;
+        let changed = false;
+        imageGenerationPresets = normalizeImageGenerationPresets(imageGenerationPresets).map((preset) => {
+            const key = normalizeAssetStylePromptCompareKey(preset.promptPrefix);
+            if (!key || !styleKeys.has(key)) return preset;
+            changed = true;
+            return { ...preset, promptPrefix: '' };
+        });
+        if (!changed) return false;
         await saveImageGenerationPresets();
-        const prefixInput = document.getElementById('svb-as-prompt-prefix');
-        const qualityInput = document.getElementById('svb-as-wellspring-quality-prompt');
-        const negativePrefixInput = document.getElementById('svb-as-negative-prefix');
-        if (prefixInput) prefixInput.value = saved.promptPrefix || '';
-        if (qualityInput) qualityInput.value = saved.wellspringQualityPrompt || '';
-        if (negativePrefixInput) negativePrefixInput.value = saved.negativePrefix || '';
+        renderGenerationControls();
+        applyGenerationPresetToUI(getSelectedImagePreset());
+        renderGenerationConnectionSummary();
+        return true;
+    }
+
+    async function refreshAfterAssetStylePresetChange() {
         renderGenerationControls();
         renderGenerationConnectionSummary();
-        return saved;
+        return normalizeImageGenerationPreset(getSelectedImagePreset());
     }
 
     function closeAssetStylePanel() {
@@ -52943,8 +52971,9 @@ async function openAssetStudio() {
     async function saveDefaultStyleFromPanel() {
         const style = readAssetStylePanelValues();
         assetStudioMeta = svbSetAssetStudioStylePreset(assetStudioMeta, style.name, style, { activate: true });
-        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
-        await saveCurrentAssets(`작가 프리셋 "${style.name}"을 저장하고 현재 이미지 프리셋 prefix에 적용했습니다.`);
+        await refreshAfterAssetStylePresetChange();
+        await removeCopiedArtistPromptsFromImagePresets();
+        await saveCurrentAssets(`작가 프리셋 "${style.name}"을 저장했습니다.`);
         closeAssetStylePanel();
         renderAll();
     }
@@ -52955,7 +52984,8 @@ async function openAssetStudio() {
         const style = styles[cleanName];
         if (!cleanName || !style) return;
         assetStudioMeta = svbNormalizeAssetStudioMeta({ ...assetStudioMeta, activeStyle: cleanName });
-        await applyDefaultStyleToCurrentPreset(style);
+        await refreshAfterAssetStylePresetChange();
+        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 "${style.name || cleanName}"을 선택했습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -52981,7 +53011,8 @@ async function openAssetStudio() {
         }
         if (!confirm(`작가 프리셋 "${name}"을 삭제할까요?`)) return;
         assetStudioMeta = svbDeleteAssetStudioStylePreset(assetStudioMeta, name);
-        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
+        await refreshAfterAssetStylePresetChange();
+        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 "${name}"을 삭제했습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -53013,7 +53044,8 @@ async function openAssetStudio() {
             styles: { ...(assetStudioMeta.styles || {}), ...importedStyles },
             activeStyle: safeString(data.activeStyle).trim() || names[0]
         });
-        await applyDefaultStyleToCurrentPreset(svbGetAssetStudioDefaultStyle(assetStudioMeta));
+        await refreshAfterAssetStylePresetChange();
+        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 ${names.length}개를 가져왔습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -56949,15 +56981,7 @@ async function openAssetStudio() {
     document.addEventListener('keydown', handleEsc);
     try {
         renderAll();
-        const defaultStyle = getDefaultAssetStyle();
-        const hasDefaultStyle = [
-            svbBuildAssetStylePrompt(defaultStyle),
-            defaultStyle?.qualityPrompt,
-            defaultStyle?.wellspringQualityPrompt,
-            defaultStyle?.negativePrompt
-        ].some(value => safeString(value).trim());
-        if (hasDefaultStyle && !safeString(getSelectedImagePreset()?.promptPrefix).trim()) {
-            await applyDefaultStyleToCurrentPreset(defaultStyle);
+        if (await removeCopiedArtistPromptsFromImagePresets()) {
             renderAll();
         }
         studioWindow.querySelector('.svb-as-container')?.focus?.();
