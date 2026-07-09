@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.127
-//@version 1.5.127
+//@display-name 🐸 SuperVibeBot v1.5.128
+//@version 1.5.128
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.127는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.128는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.128 Release Notes
+ * - v1.5.128: moves neutral background tags such as "white background" and "simple background" into Positive before Kero image API calls
+ * - v1.5.128: keeps Kero's in-chat work bubble visible through action execution instead of removing it right after the model response
+ * - v1.5.128: preserves visible Kero chat history while reloading stored history so transient storage lag does not blank the chat pane
+ *
  * SuperVibeBot v1.5.127 Release Notes
  * - v1.5.127: adds Asset Studio artist prompt presets with active preset selection
  * - v1.5.127: adds artist preset save, delete, export, and import controls
@@ -1903,16 +1908,16 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use registered asset references in saved code: {{asset::asset_name}}, {{image::asset_name}}, or <img src="{{asset::asset_name}}"> inside backgroundHTML/regex display HTML.
 - Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
 - Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
-- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the character/world Positive body, assets[].negative is Negative, and wellspringQualityPrompt is final Quality. For Kero asset actions, the runtime prepends the user's saved Asset Studio artist prefix when one exists and removes Kero-generated fixed medium/style labels before image API calls.
+- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the character/world/composition/background Positive body, assets[].negative is Negative, and wellspringQualityPrompt is final Quality. For Kero asset actions, the runtime prepends the user's saved Asset Studio artist prefix when one exists and removes Kero-generated fixed medium/style labels before image API calls.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
 - Before writing any assets[] item, use artist tags only when the user supplied explicit artist tags or the action needs to reference a user sample. The saved Asset Studio artist prefix is added by the runtime; do not restate it unless it is already part of the user's direct request.
 - Do not invent non-artist tags, generic filler, natural-language artist credits, or fixed medium/style labels unless the user explicitly supplied that exact phrase.
 - Treat stored Asset Studio identity/style prompts as read-only reference material during image asset generation. Do not say you will clean, rewrite, or edit stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.
-- Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: subject/focus, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, and scene cues. If a lore trait is not visible, use it only to choose visible cues or omit it.
+- Positive must already be the final image prompt. Write it from the bot's world, era, genre, scene, and character settings: subject/focus, face, eyes, hair, body silhouette, outfit/equipment that truly appears, pose/framing, scene cues, and requested background tags such as white background or simple background. If a lore trait is not visible, use it only to choose visible cues or omit it.
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags.
 - Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
-- Put shared quality and neutral studio background direction in wellspringQualityPrompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
+- Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
 - If the visual result depends on Wellspring workflow/character/preset/profile fields provided in context, preserve and pass those fields in the asset create payload instead of inventing incompatible route fields.`;
@@ -30380,7 +30385,7 @@ Rules:
 - Positive is the final prompt body. Write compact prompt atoms from the bot's world, era, genre, scene, and character settings: subject/focus, visible identity anchors, real outfit/equipment cues, pose/framing, and scene cues that truly appear.
 - Do not add canned medium/style phrases unless the user explicitly supplied that exact phrase.
 - Do not create fake underscore tags from lore labels, rank names, jobs, nationality, or setting labels. Use real Danbooru/Wellspring tag language plus short natural visual phrases only when no reliable tag exists.
-- Put shared studio background and global quality direction in wellspringQualityPrompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
+- Put only global quality direction in wellspringQualityPrompt. Put visible studio/background direction such as white background or simple background in assets[].prompt. Keep Negative short: bad anatomy, bad hands, text, logo, watermark, blurry only. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat profile asset/profile image names as profile-use portraits or standing assets, not side-view prompts. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Translate age, height, nationality, rank, and job lore into visible design cues only when the source context supports those cues. Do not copy bare age/height/nationality/media-genre/setting-label words into Positive. Props, weapons, and tools must come from the user request or character context; do not invent them from genre alone.
 - Put only technical image failure terms in negative.`;
@@ -30511,6 +30516,29 @@ Rules:
     }
 
     const KERO_ASSET_DEFAULT_QUALITY_PROMPT = 'masterpiece, best_quality, highres';
+
+    function isKeroPositiveBackgroundAtom(atom = '') {
+        const text = normalizeKeroGeneratedPromptAtom(atom);
+        if (!text) return false;
+        return /^(?:white|simple|plain|transparent|blank|empty|studio|solid color|single color|clean white)\s+(?:background|backdrop)$/.test(text)
+            || /^(?:white|simple|plain|transparent|blank|empty|studio)\s+bg$/.test(text);
+    }
+
+    function splitKeroQualityPromptForPositive(qualityPrompt = '') {
+        const positiveAtoms = [];
+        const qualityAtoms = [];
+        splitKeroPromptAtoms(qualityPrompt).forEach((atom) => {
+            if (isKeroPositiveBackgroundAtom(atom)) {
+                keroAssetPushUnique(positiveAtoms, atom);
+            } else {
+                keroAssetPushUnique(qualityAtoms, atom);
+            }
+        });
+        return {
+            positivePrompt: joinKeroPromptAtoms(positiveAtoms),
+            qualityPrompt: joinKeroPromptAtoms(qualityAtoms)
+        };
+    }
 
     function normalizeKeroGeneratedPromptAtom(atom = '') {
         return safeString(atom)
@@ -30845,15 +30873,21 @@ Rules:
             const isWellspringRoute = isWellspringImageProvider(profile.provider) || safeString(profile.endpoint).includes('wellspring.encrypt.gay');
             const renderedItemPrompt = svbRenderImagePromptTemplate(item.prompt, vars).trim();
             const bodyPrompt = buildKeroAssetPositivePrompt(renderedItemPrompt);
-            const fixedArtistPrompt = getKeroUserFixedArtistPrompt(char, preset);
-            const prompt = prependKeroUserFixedArtistPrompt(bodyPrompt, fixedArtistPrompt);
             const explicitQualityPrompt = buildKeroAssetQualityPrompt(
                 svbRenderImagePromptTemplate(item.wellspringQualityPrompt, vars).trim()
             );
             const fixedQualityPrompt = buildKeroAssetQualityPrompt(getKeroUserFixedQualityPrompt(char, preset, profile));
-            const qualityPrompt = explicitQualityPrompt
+            const rawQualityPrompt = explicitQualityPrompt
                 || fixedQualityPrompt
                 || KERO_ASSET_DEFAULT_QUALITY_PROMPT;
+            const splitQuality = splitKeroQualityPromptForPositive(rawQualityPrompt);
+            const bodyWithBackgroundPrompt = joinKeroPromptAtoms([
+                ...splitKeroPromptAtoms(bodyPrompt),
+                ...splitKeroPromptAtoms(splitQuality.positivePrompt)
+            ]);
+            const fixedArtistPrompt = getKeroUserFixedArtistPrompt(char, preset);
+            const prompt = prependKeroUserFixedArtistPrompt(bodyWithBackgroundPrompt, fixedArtistPrompt);
+            const qualityPrompt = splitQuality.qualityPrompt || KERO_ASSET_DEFAULT_QUALITY_PROMPT;
             const negative = normalizeKeroAssetNegativePrompt(
                 svbRenderImagePromptTemplate(item.negative, vars).trim(),
                 profile,
@@ -33401,10 +33435,24 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
     async function renderChatHistory(char) {
         const historyDiv = document.getElementById('risu-trans-chat-history');
         if (!historyDiv) return;
+        const targetId = await getKeroCharId(char).catch(() => '');
+        const currentInMemory = targetId
+            ? chatHistory.filter((entry) => {
+                const entryTargetId = safeString(entry?.targetId || entry?.charId || entry?.characterId).trim();
+                return !entryTargetId || entryTargetId === targetId;
+            })
+            : chatHistory;
+        let storedHistory = [];
+        try {
+            storedHistory = await loadKeroChat(char);
+        } catch (error) {
+            Logger.warn('Kero chat history reload failed; keeping visible in-memory chat:', error?.message || error);
+        }
+        const mergedHistory = mergeKeroChatHistories(storedHistory, currentInMemory);
         historyDiv.innerHTML = '';
         ensureKeroProposalContainer();
         renderKeroProposals();
-        chatHistory = await loadKeroChat(char);
+        chatHistory = mergedHistory.length ? mergedHistory : currentInMemory;
         chatHistory.forEach(message => {
             historyDiv.appendChild(appendChatMessageElement(message.role, message.content, message.timestamp, message.artifacts));
         });
@@ -34329,6 +34377,14 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         if (loadingMsg) loadingMsg.remove();
     }
 
+    function updateLoadingMessage(text = '') {
+        const loadingMsg = document.getElementById('chat-loading-msg');
+        if (!loadingMsg) return;
+        const body = loadingMsg.querySelector('.chat-loading');
+        const value = safeString(text).trim();
+        if (body && value) body.textContent = value;
+    }
+
     async function displayKeroAssistantResponseText(text) {
         const cleaned = safeString(text).trim();
         if (!cleaned) return;
@@ -34750,6 +34806,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
         const stopStaleTaskFinalization = (detail) => {
             const message = safeString(detail || '현재 미션이 바뀌어 이전 요청의 후처리를 중단합니다.');
             Logger.warn(`Kero stale task finalization skipped: ${message}`);
+            removeLoadingMessage();
             if (backgroundJobId && !backgroundJobClosed) {
                 finishKeroBackgroundJob(backgroundJobId, 'warning', message);
                 backgroundJobClosed = true;
@@ -34797,7 +34854,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             if (backgroundJobId) {
                 updateKeroProgress(3, 4, '응답과 작업 명령을 정리하는 중...', taskProgressOptions);
             }
-            removeLoadingMessage();
+            updateLoadingMessage('응답과 작업 명령을 정리하는 중...');
             const parsed = parseKeroAction(response || '');
             const taskRequestText = modelVisibleUserInput || modelUserInput;
             const isWorkTargetActionMode = ['module', 'plugin'].includes(normalizeWorkTargetMode(taskWorkTargetMode));
@@ -34943,6 +35000,7 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
             if (parsed.actions?.length) {
                 if (isWorkMode) {
                     addKeroWorkstreamEvent('액션 감지', `${parsed.actions.length}개 작업 후보`, 'action', taskProgressOptions);
+                    updateLoadingMessage('작업을 적용하고 검증하는 중...');
                     if (backgroundJobId) {
                         updateKeroProgress(4, 4, `${parsed.actions.length}개 작업 후보를 처리하는 중...`, taskProgressOptions);
                     }
@@ -34985,10 +35043,12 @@ ${steeringBlock ? `\n${steeringBlock}` : ''}`;
                     if (finalJobStatus === 'done') {
                         await displayKeroAssistantResponseText(cleaned);
                     } else {
-                        addKeroWorkstreamEvent('모델 완료 문구 보류', '실제 적용/검증 결과가 완료 상태가 아니라서 모델 응답 본문을 먼저 표시하지 않았습니다.', 'warning', taskProgressOptions);
+                        await displayKeroAssistantResponseText(`검증 확인 필요 상태에서 보류된 모델 응답 본문:\n\n${cleaned}`);
+                        addKeroWorkstreamEvent('모델 응답 본문 표시', '실제 적용/검증 결과가 완료 상태가 아니므로 확인 필요 문구를 붙여 모델 응답 본문을 채팅에 남겼습니다.', 'warning', taskProgressOptions);
                     }
                 }
             }
+            removeLoadingMessage();
             if (backgroundJobId) {
                 finishKeroBackgroundJob(backgroundJobId, finalJobStatus, finalJobDetail.replace(/\s+/g, ' ').slice(0, 220));
             }
@@ -35655,7 +35715,7 @@ ${metaBlock}
 - Positive는 세계관, 시대, 장르, 장면, 인물 설정을 읽고 subject/focus, 얼굴/눈/머리/체형/고유 표식, 실제 복식/장비, 포즈/구도, 필요한 배경 단서를 붙인 최종 프롬프트 하나다.
 - 나이, 키, 국적, 계급, 직업, 세계관 라벨은 그대로 붙이는 텍스트가 아니라 외형 판단의 근거다. 보이는 단서로 바꾸거나 보이지 않으면 생략한다.
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
-- Quality는 wellspringQualityPrompt에 둔다. 품질, 미감, 해상도, 단순 배경/스튜디오 배경처럼 모든 이미지에 공통 적용되는 조건은 Positive에 반복하지 않는다.
+- Quality는 wellspringQualityPrompt에 둔다. 단, white background, simple background, plain background, studio background처럼 실제 화면에 보이는 배경/구도 조건은 Quality가 아니라 assets[].prompt의 Positive에 넣는다. wellspringQualityPrompt에는 masterpiece, best_quality, highres처럼 품질/미감/해상도 계열만 둔다.
 - Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
 - 프롬프트 문법은 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프를 보존한다. 하지만 그림체 라벨을 새로 만들지 말고, 사용자가 저장/제공한 작가 태그와 실제 세계관/인물 단서만 사용한다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
@@ -52570,7 +52630,7 @@ async function openAssetStudio() {
                         <textarea class="svb-as-input" id="svb-as-style-prompt" placeholder="예: (artist_name:1.05), second_artist, (third_artist:0.85)">${escapeHtml(fixedStylePrompt || '')}</textarea>
                     </label>
                     <label class="svb-as-mini-field">퀄리티
-                        <textarea class="svb-as-input" id="svb-as-style-quality" placeholder="white background, simple background, masterpiece...">${escapeHtml(style.qualityPrompt || '')}</textarea>
+                        <textarea class="svb-as-input" id="svb-as-style-quality" placeholder="masterpiece, best_quality, highres">${escapeHtml(style.qualityPrompt || '')}</textarea>
                     </label>
                     <label class="svb-as-mini-field">네거티브 기본값
                         <textarea class="svb-as-input" id="svb-as-style-negative" placeholder="수동 네거티브만 입력">${escapeHtml(style.negativePrompt || '')}</textarea>
