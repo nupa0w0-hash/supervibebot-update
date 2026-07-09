@@ -1,13 +1,13 @@
 //@name SuperVibeBot
-//@display-name 🐸 SuperVibeBot v1.5.136
-//@version 1.5.136
+//@display-name 🐸 SuperVibeBot v1.5.137
+//@version 1.5.137
 //@api 3.0
 //@update-url https://raw.githubusercontent.com/nupa0w0-hash/supervibebot-update/main/SuperVibeBot.js
 //@arg api_key string "" "Google AI Studio API 키를 입력하세요 (Vertex AI, API Hub 또는 GitHub Copilot 연동 시 불필요)."
 //@arg disable_safety int 0 "안전 필터 비활성화 (1=OFF, 0=ON)"
 
 if (typeof risuai === "undefined") {
-    alert("⚠️ SuperVibeBot v1.5.136는 RisuAI Plugin API 3.0이 필요합니다.");
+    alert("⚠️ SuperVibeBot v1.5.137는 RisuAI Plugin API 3.0이 필요합니다.");
     throw new Error("API 3.0 required");
 }
 
@@ -165,6 +165,11 @@ async function safeCopyText(text, options = {}) {
 }
 
 /**
+ * SuperVibeBot v1.5.137 Release Notes
+ * - v1.5.137: removes the previous artist prompt repair stack instead of patching more escape cases
+ * - v1.5.137: deletes legacy hidden image preset promptPrefix/promptSuffix fields from the generation path
+ * - v1.5.137: changes Kero image instructions so artist weights are written as artist:(tag:weight), never markdown-escaped \(tag:weight\)
+ *
  * SuperVibeBot v1.5.136 Release Notes
  * - v1.5.136: replaces scattered artist prompt repair paths with one final image-send normalizer
  * - v1.5.136: converts only outer escaped artist-weight atoms such as \(tag:0.8\) into artist:(tag:0.8) without touching normal prompt tags
@@ -1947,7 +1952,7 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use registered asset references in saved code: {{asset::asset_name}}, {{image::asset_name}}, or <img src="{{asset::asset_name}}"> inside backgroundHTML/regex display HTML.
 - Use stable semantic asset names so later code can reference them safely: ui_bg_*, status_frame_*, profile_*, standing_*, emotion_*, faction_emblem_*, map_*, item_*, title_*, splash_*.
 - Reuse existing assets when they already fit. Do not generate images for pure text edits, code bug fixes, administrative settings, or analysis/planning-only requests unless the user explicitly asks to execute visual production.
-- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the character/world/composition/background Positive body, assets[].negative is Negative, and wellspringQualityPrompt is final Quality. For Kero asset actions, the runtime prepends the user's saved Asset Studio artist prefix when one exists and removes Kero-generated fixed medium/style labels before image API calls.
+- Build Wellspring/Danbooru prompts as three separate fields: assets[].prompt is the character/world/composition/background Positive body, assets[].negative is Negative, and wellspringQualityPrompt is final Quality. For asset actions, the runtime only prepends the user's saved Asset Studio artist prompt verbatim when one exists.
 - Return syntactically valid JSON for image asset actions. Keep type:"create", target:"asset", payload, assets, and every opened object/array properly closed.
 - Do not wrap action JSON in markdown code fences. Output raw JSON only when the response is an action-only payload.
 - Before writing any assets[] item, use artist tags only when the user supplied explicit artist tags or the action needs to reference a user sample. The saved Asset Studio artist prefix is added by the runtime; do not restate it unless it is already part of the user's direct request.
@@ -1958,7 +1963,7 @@ const KERO_VISUAL_ASSET_WORKFLOW_GUIDE = `
 - Use compact prompt atoms and short natural visual phrases from the actual character/world context. Do not turn lore labels, jobs, ranks, nationalities, or setting labels into fake underscore tags. Do not write vague non-visual prose such as regulation length, precise appearance, vivid expression, quick eyebrows, economical movements, nursing officer, or Korean man/woman.
 - Preserve visual age range, height, and body shape when they affect the character image. Convert exact age numbers into image-model-friendly nouns, not abstract labels: "24 years old" -> "man" or "woman", "31 years old" -> "man" or "woman", "65 years old" -> "old man" or "old woman". Do not use young, young adult, adult, mature adult, adult male, or young woman unless the user explicitly asks for that wording. Convert height and body shape into direct image prompt tags: short, tall, very tall, slender, broad shoulders, muscular, petite, stocky, small body, large body, huge body. Do not write tall stature, short stature, average height, lean build, or broad-shouldered in final Positive prompts.
 - Distinct identity marks must include a stable visible location. Write "small mole under left eye", "scar across right eyebrow", or "birthmark on left cheek"; do not write bare "mole", "scar", "tattoo", "birthmark", or "freckles". If the source only says the mark exists without a location, choose one consistent visible location for that character in the generated prompt or omit the mark.
-- Character consistency comes from visible identity anchors, the runtime-prepended user-fixed artist prefix when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
+- Character consistency comes from visible identity anchors, the user-saved Asset Studio artist prompt prepended verbatim when present, and LoRA/workflow/project fields when available. It does not come from local identityPrompt/stylePrompt/danbooruTags fields.
 - Put only quality, aesthetic, and resolution terms in wellspringQualityPrompt. Put visible background/composition terms such as white background, simple background, plain background, or studio background in assets[].prompt. Keep Negative short and focused on technical image failures only: bad anatomy, bad hands, text, logo, watermark, blurry. Do not add identity, gender, hair, eye, or face-mismatch negative terms unless the user explicitly asks for those constraints.
 - Treat "profile asset", "profile image", and "프로필 에셋" as a profile-use portrait/standing asset, not a side-view portrait. Use side view/from side/profile view only when the user explicitly asks for side profile or 옆모습.
 - Omit ratioId, steps, profileId, and presetId unless the user explicitly asks for a non-default route. Active image settings and presets already provide defaults.
@@ -3433,7 +3438,7 @@ const DEFAULT_IMAGE_GENERATION_PRESETS = Object.freeze([
         responseParser: "auto",
         jsonPath: "",
         parts: DEFAULT_IMAGE_PRESET_PARTS,
-        notes: "Wellspring /images의 활성 설정을 쓰고, 작가 프롬프트는 사용자 prefix나 Wellspring 프리셋에서 정합니다."
+        notes: "Wellspring /images의 활성 설정을 쓰고, 작가 프롬프트는 Asset Studio 작가 입력값을 그대로 앞에 붙입니다."
     },
     {
         id: "comfyui-workflow-basic",
@@ -21129,70 +21134,14 @@ function svbJoinPromptFragments(...values) {
     return fragments.join(", ");
 }
 
-function svbSplitPromptAtomsLoose(prompt = "") {
-    const text = safeString(prompt);
-    const atoms = [];
-    let current = "";
-    let depth = 0;
-    for (let i = 0; i < text.length; i += 1) {
-        const char = text[i];
-        if (char === "(" || char === "[" || char === "{") depth += 1;
-        else if ((char === ")" || char === "]" || char === "}") && depth > 0) depth -= 1;
-        if (char === "," && depth === 0) {
-            const atom = current.trim();
-            if (atom) atoms.push(atom);
-            current = "";
-            continue;
-        }
-        current += char;
-    }
-    const tail = current.trim();
-    if (tail) atoms.push(tail);
-    return atoms;
+function svbPrependPromptText(prefix = "", prompt = "") {
+    return svbJoinPromptFragments(safeString(prefix).trim(), safeString(prompt).trim());
 }
 
-function svbLooksLikeEscapedArtistWeightAtom(inner = "") {
-    const text = safeString(inner).trim();
-    if (!/:[+-]?\d+(?:\.\d+)?$/.test(text)) return false;
-    if (/^(?:artist\s*:|flat color|artist collaboration|solo artist|year\s+\d{4})\b/i.test(text)) return false;
-    if (/\b(?:background|quality|resolution|composition|lighting|lineart|linework)\b/i.test(text)) return false;
-    return true;
-}
-
-function svbNormalizeImageArtistPromptAtom(atom = "") {
-    const raw = safeString(atom).trim();
-    if (!raw) return "";
-    const escapedArtist = raw.match(/^artist\s*:\s*\\+\(([\s\S]*?)\\+\)$/i);
-    if (escapedArtist) return `artist:(${safeString(escapedArtist[1]).trim()})`;
-    const escapedWeighted = raw.match(/^\\+\(([\s\S]*?)\\+\)$/);
-    if (escapedWeighted) {
-        const inner = safeString(escapedWeighted[1]).trim();
-        if (svbLooksLikeEscapedArtistWeightAtom(inner)) return `artist:(${inner})`;
-    }
-    return raw;
-}
-
-function svbNormalizeImageArtistPromptSyntax(prompt = "") {
-    const atoms = svbSplitPromptAtomsLoose(prompt);
-    if (!atoms.length) return "";
-    const seen = new Set();
-    const normalized = [];
-    atoms.forEach((atom) => {
-        const clean = svbNormalizeImageArtistPromptAtom(atom);
-        if (!clean) return;
-        const key = clean.replace(/\s+/g, " ").trim().toLowerCase();
-        if (seen.has(key)) return;
-        seen.add(key);
-        normalized.push(clean);
-    });
-    return normalized.join(", ");
-}
-
-function svbApplyImagePresetPromptDefaults(preset = {}, prompt = "", negative = "") {
-    const normalized = normalizeImageGenerationPreset(preset);
+function svbApplyImagePresetPromptDefaults(_preset = {}, prompt = "", negative = "") {
     return {
-        prompt: svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(normalized.promptPrefix, normalized.characterPrompt, prompt, normalized.promptSuffix)),
-        negative: svbJoinPromptFragments(normalized.negativePrefix, normalized.characterNegative, negative, normalized.negativeSuffix)
+        prompt: safeString(prompt).trim(),
+        negative: safeString(negative).trim()
     };
 }
 
@@ -21686,10 +21635,10 @@ function normalizeImageGenerationPreset(preset = {}, index = 0) {
         || safeString(defaultPreset.prompt).trim();
     merged.negative = safeString(merged.negative || merged.negativePrompt || defaults.negativePrompt || merged.uc).trim()
         || safeString(defaultPreset.negative).trim();
-    merged.characterPrompt = safeString(merged.characterPrompt || merged.identityPrompt || merged.characterConsistencyPrompt || defaults.characterPrompt || defaults.identityPrompt || merged.defaultCharacterPrompt || merged.defaultIdentityPrompt).trim();
-    merged.characterNegative = safeString(merged.characterNegative || merged.identityNegative || defaults.characterNegative || defaults.identityNegative || merged.defaultCharacterNegative || merged.defaultIdentityNegative).trim();
-    merged.promptPrefix = safeString(merged.promptPrefix || merged.positivePrefix || defaults.promptPrefix || defaults.positivePrefix || merged.defaultPromptPrefix || merged.defaultPositivePrefix).trim();
-    merged.promptSuffix = safeString(merged.promptSuffix || merged.positiveSuffix || defaults.promptSuffix || defaults.positiveSuffix || merged.defaultPromptSuffix || merged.defaultPositiveSuffix).trim();
+    merged.characterPrompt = '';
+    merged.characterNegative = '';
+    delete merged.promptPrefix;
+    delete merged.promptSuffix;
     merged.negativePrefix = safeString(merged.negativePrefix || defaults.negativePrefix || merged.defaultNegativePrefix || merged.ucPrefix).trim();
     merged.negativeSuffix = safeString(merged.negativeSuffix || defaults.negativeSuffix || merged.defaultNegativeSuffix || merged.ucSuffix).trim();
     merged.referenceImagePath = safeString(
@@ -22487,7 +22436,7 @@ async function buildKeroImagePromptReferenceBlock(options = {}) {
     lines.push('### Required Output Behavior');
     lines.push('- If Asset Studio Stored References contains "stored artist prompt default:", treat it as a runtime-fixed artist prefix. Do not omit it from your reasoning, but do not duplicate it inside assets[].prompt unless the user directly asked for that exact text.');
     lines.push('- Stored identity/artist references are read-only context. Do not clean, rewrite, or save changes to stored identity prompts unless the user explicitly asks to edit saved Asset Studio metadata.');
-    lines.push('- Prefer the selected bot world/character text for assets[].prompt. The runtime will prepend stored Asset Studio artist prompts when the user saved one.');
+    lines.push('- Prefer the selected bot world/character text for assets[].prompt. Asset Studio artist prompt is a user input string that is prepended verbatim by the runtime when saved.');
     lines.push('- Do not infer a style from Wellspring gallery/library examples. They are not a source for Kero image prompts.');
     lines.push('- Do not output bare role/rank lore as fake tags. Convert it to visible uniform, insignia, tool, pose, face, hair, and silhouette cues.');
 
@@ -23539,7 +23488,7 @@ async function svbGenerateImageWithProfile(profile, options = {}) {
     if (normalized.provider === "comfyui" && !safeString(normalized.workflow).trim()) {
         throw new Error("ComfyUI는 Workflow API JSON이 필요합니다. 이미지 API 설정의 고급 연결 옵션에서 저장해주세요.");
     }
-    const prompt = svbNormalizeImageArtistPromptSyntax(options.prompt);
+    const prompt = safeString(options.prompt).trim();
     if (!prompt) throw new Error("이미지 프롬프트를 입력해주세요.");
     const applyProfileDefaults = options.applyProfileGenerationDefaults !== false;
     const request = {
@@ -23579,7 +23528,7 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
     const composed = applyPresetPromptDefaults
         ? svbApplyImagePresetPromptDefaults(normalizedPreset, basePrompt, baseNegative)
         : { prompt: basePrompt, negative: baseNegative };
-    const finalPrompt = svbNormalizeImageArtistPromptSyntax(composed.prompt);
+    const finalPrompt = safeString(composed.prompt).trim();
     const referenceImages = [...ensureArray(options.referenceImages)];
     const referenceImagePath = safeString(options.referenceImagePath || normalizedPreset.referenceImagePath).trim();
     if (!referenceImages.length && referenceImagePath) {
@@ -23593,8 +23542,8 @@ async function svbGenerateImageWithProfileAndPreset(profile, preset, options = {
         ...options,
         prompt: finalPrompt,
         negative: composed.negative,
-        characterPrompt: applyPresetPromptDefaults ? normalizedPreset.characterPrompt : "",
-        characterNegative: applyPresetPromptDefaults ? normalizedPreset.characterNegative : "",
+        characterPrompt: "",
+        characterNegative: "",
         applyProfileGenerationDefaults: applyRouteDefaults,
         referenceImages,
         wellspringMode: options.wellspringMode || normalizedPreset.wellspringMode,
@@ -30778,8 +30727,6 @@ Rules:
 
     function normalizeKeroConcreteVisualAtom(atom = '', options = {}) {
         const raw = safeString(atom).trim();
-        const restoredArtist = restoreKeroFixedArtistPromptSyntax(raw);
-        if (/^artist\s*:/i.test(restoredArtist)) return restoredArtist;
         const text = normalizeKeroGeneratedPromptAtom(raw);
         if (!text) return '';
         const ageCue = normalizeKeroVisualAgeAtom(text, options.subjectTag);
@@ -30872,49 +30819,13 @@ Rules:
         return joinKeroPromptAtoms(atoms.filter((atom) => !(typeof predicate === 'function' && predicate(atom))));
     }
 
-    function looksLikeKeroArtistWeightInner(inner = '') {
-        return svbLooksLikeEscapedArtistWeightAtom(inner);
-    }
-
-    function restoreKeroFixedArtistPromptSyntax(prompt = '') {
-        return svbNormalizeImageArtistPromptSyntax(prompt);
-    }
-
-    function normalizeKeroArtistPromptKey(atom = '') {
-        return restoreKeroFixedArtistPromptSyntax(atom)
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-    }
-
-    function normalizeKeroFixedArtistPrompt(...values) {
-        return svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(...values));
-    }
-
-    function stripKeroDuplicateFixedArtistPromptFromBody(bodyPrompt = '', fixedArtistPrompt = '') {
-        const fixedKeys = new Set(splitKeroPromptAtoms(normalizeKeroFixedArtistPrompt(fixedArtistPrompt)).map(normalizeKeroArtistPromptKey).filter(Boolean));
-        const normalizedBody = svbNormalizeImageArtistPromptSyntax(bodyPrompt);
-        if (!fixedKeys.size) return normalizedBody;
-        const output = [];
-        splitKeroPromptAtoms(normalizedBody).forEach((atom) => {
-            const clean = safeString(atom).trim();
-            if (!clean) return;
-            const key = normalizeKeroArtistPromptKey(clean);
-            if (fixedKeys.has(key)) return;
-            output.push(clean);
-        });
-        return output.join(', ');
-    }
-
-    function getKeroUserFixedArtistPrompt(char = null, preset = {}) {
-        let assetStudioArtistPrompt = '';
+    function getAssetStudioArtistPromptForCharacter(char = null) {
         try {
             const meta = svbReadAssetStudioMetaFromCharacter(char || {});
-            assetStudioArtistPrompt = svbBuildAssetStylePrompt(svbGetAssetStudioDefaultStyle(meta));
+            return svbBuildAssetStylePrompt(svbGetAssetStudioDefaultStyle(meta));
         } catch (_) {
-            assetStudioArtistPrompt = '';
+            return '';
         }
-        return normalizeKeroFixedArtistPrompt(assetStudioArtistPrompt);
     }
 
     function getKeroUserFixedQualityPrompt(char = null, preset = {}, profile = {}) {
@@ -30929,16 +30840,8 @@ Rules:
         return svbJoinPromptFragments(assetStudioQualityPrompt, preset?.wellspringQualityPrompt, profile?.wellspringQualityPrompt);
     }
 
-    function prependKeroUserFixedArtistPrompt(prompt = '', artistPrompt = '') {
-        const fixed = normalizeKeroFixedArtistPrompt(artistPrompt);
-        const body = stripKeroDuplicateFixedArtistPromptFromBody(prompt, fixed);
-        if (!fixed) return body;
-        if (!body) return fixed;
-        return svbJoinPromptFragments(fixed, body);
-    }
-
     function buildKeroAssetPositivePrompt(prompt = '', options = {}) {
-        return normalizeKeroAssetPositivePrompt(prompt, options);
+        return safeString(prompt).trim();
     }
 
     function buildKeroAssetQualityPrompt(qualityPrompt = '') {
@@ -31207,8 +31110,8 @@ Rules:
                 ...splitKeroPromptAtoms(bodyPrompt),
                 ...splitKeroPromptAtoms(splitQuality.positivePrompt)
             ]);
-            const fixedArtistPrompt = getKeroUserFixedArtistPrompt(char, preset);
-            const prompt = prependKeroUserFixedArtistPrompt(bodyWithBackgroundPrompt, fixedArtistPrompt);
+            const artistPrompt = getAssetStudioArtistPromptForCharacter(char);
+            const prompt = svbPrependPromptText(artistPrompt, bodyWithBackgroundPrompt);
             const qualityPrompt = splitQuality.qualityPrompt || KERO_ASSET_DEFAULT_QUALITY_PROMPT;
             const negative = normalizeKeroAssetNegativePrompt(
                 svbRenderImagePromptTemplate(item.negative, vars).trim(),
@@ -31259,7 +31162,7 @@ Rules:
                         provider: profile.name || profile.provider,
                         presetId: preset.id || preset.name,
                         identityName: item.identityName,
-                        artistPrompt: fixedArtistPrompt,
+                        artistPrompt,
                         qualityPrompt,
                         wellspringQualityPrompt: qualityPrompt,
                         ratioId,
@@ -36041,9 +35944,9 @@ ${metaBlock}
 - 직업/계급/국적/설정명을 가짜 underscore 태그로 만들지 않는다. 확실한 태그는 태그로 쓰고, 로컬 개념은 common visual tag + 짧은 자연어 시각 구문으로 쓴다.
 - Quality는 wellspringQualityPrompt에 둔다. 단, white background, simple background, plain background, studio background처럼 실제 화면에 보이는 배경/구도 조건은 Quality가 아니라 assets[].prompt의 Positive에 넣는다. wellspringQualityPrompt에는 masterpiece, best_quality, highres처럼 품질/미감/해상도 계열만 둔다.
 - Negative는 bad anatomy, bad hands, text, logo, watermark, blurry 같은 기술적 이미지 실패만 짧게 쓴다. 사용자가 명시하지 않은 정체성/성별/머리/눈/얼굴 불일치 계열 문구를 넣지 않는다.
-- 프롬프트 문법은 쉼표로 분리된 짧은 시각 단위, 괄호/중괄호/대괄호 가중치, 백슬래시 이스케이프를 보존한다. 하지만 그림체 라벨을 새로 만들지 말고, 사용자가 저장/제공한 작가 태그와 실제 세계관/인물 단서만 사용한다.
+- 프롬프트 문법은 쉼표로 분리된 짧은 시각 단위와 괄호/중괄호/대괄호 가중치를 그대로 쓴다. 괄호를 마크다운처럼 백슬래시로 이스케이프하지 않는다. 작가 가중치는 artist:(tag:weight) 또는 artist:tag 형태 그대로 쓴다.
 - 모델명, 체크포인트명, 공급자명, 프리셋명, 라우팅값은 창작 프롬프트가 아니다. 사용자가 라우팅 필드로 지시한 경우 payload 필드로만 전달한다.
-- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 작성한다. assets[].prompt는 세계관/인물 설정 기반 시각 단서 본문이고, Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 런타임이 최종 Positive 맨 앞에 붙인다. promptPrefix/promptSuffix, identityPrompt, stylePrompt, danbooruTags 같은 분리 계층을 새로 만들거나 직접 수정하지 않는다.
+- Kero 에셋 생성에서는 assets[].prompt, assets[].negative, wellspringQualityPrompt 세 값만 작성한다. assets[].prompt는 세계관/인물 설정 기반 시각 단서 본문이고, Asset Studio에 기본 작가 프롬프트가 저장되어 있으면 런타임이 최종 Positive 맨 앞에 그대로 붙인다. identityPrompt, stylePrompt, danbooruTags 같은 분리 계층을 새로 만들거나 직접 수정하지 않는다.
 - Wellspring workflow 캐릭터 일관성은 wellspringCharacterId/projectId, variantIds, LoRA/프리셋 조합, 반복되는 artist anchor와 인물 단서로 유지한다. 지원 여부를 모르는 reference image 필드는 지어내지 않는다.
 - LoRA/trigger word는 사용자가 제공했거나 저장된 메타에 있을 때만 쓴다. 모르는 trigger를 상상해서 넣지 않는다.
 - 신규 이미지 에셋은 기본적으로 additional이다. 감정 변형도 같은 캐릭터 디자인을 유지한 additional 에셋으로 만들고, Risu emotionImages 슬롯은 사용자가 명시적으로 요구할 때만 쓴다.
@@ -52243,10 +52146,16 @@ function svbNormalizeAssetStyleEntry(value = {}, fallbackName = 'default') {
         ? value
         : { stylePrompt: value };
     const name = safeString(source.name || source.styleName || source.label || fallbackName).trim() || fallbackName;
-    const prompt = svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(
-        source.artistTags || source.artistPrompt || source.artist,
-        source.stylePrompt || source.prompt || source.positive || source.baseStylePrompt || source.artistStyle
-    ));
+    const prompt = safeString(
+        source.stylePrompt
+        || source.prompt
+        || source.positive
+        || source.baseStylePrompt
+        || source.artistStyle
+        || source.artistPrompt
+        || source.artistTags
+        || source.artist
+    ).trim();
     const entry = {
         name,
         artistTags: '',
@@ -52301,7 +52210,7 @@ function svbGetAssetStudioDefaultStyle(meta = {}) {
 function svbBuildAssetStylePrompt(style = null) {
     const normalized = svbNormalizeAssetStyleEntry(style || {}, 'default');
     if (!normalized) return '';
-    return svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(normalized.artistTags, normalized.stylePrompt));
+    return safeString(normalized.stylePrompt).trim();
 }
 
 function svbSetAssetStudioDefaultStyle(meta = {}, style = {}) {
@@ -52888,6 +52797,14 @@ async function openAssetStudio() {
         return svbGetAssetStudioDefaultStyle(assetStudioMeta);
     }
 
+    function getActiveAssetArtistPrompt() {
+        return svbBuildAssetStylePrompt(getDefaultAssetStyle() || {});
+    }
+
+    function prependActiveAssetArtistPrompt(prompt = "") {
+        return svbPrependPromptText(getActiveAssetArtistPrompt(), prompt);
+    }
+
     function getAssetStylePresetMap() {
         return svbGetAssetStudioStyleMap(assetStudioMeta);
     }
@@ -52905,43 +52822,6 @@ async function openAssetStudio() {
             return `<option value="${escapeHtml(name)}"${name === active ? ' selected' : ''}>${escapeHtml(label)}</option>`;
         }).join('');
         return options || '<option value="default" selected>default</option>';
-    }
-
-    function normalizeAssetStylePromptCompareKey(value = '') {
-        return safeString(value)
-            .trim()
-            .replace(/\\\(/g, '(')
-            .replace(/\\\)/g, ')')
-            .replace(/\s+/g, ' ')
-            .toLowerCase();
-    }
-
-    function collectAssetStylePromptCompareKeys() {
-        const keys = new Set();
-        Object.values(getAssetStylePresetMap()).forEach((style) => {
-            const prompt = svbBuildAssetStylePrompt(style);
-            const key = normalizeAssetStylePromptCompareKey(prompt);
-            if (key) keys.add(key);
-        });
-        return keys;
-    }
-
-    async function removeCopiedArtistPromptsFromImagePresets() {
-        const styleKeys = collectAssetStylePromptCompareKeys();
-        if (!styleKeys.size) return false;
-        let changed = false;
-        imageGenerationPresets = normalizeImageGenerationPresets(imageGenerationPresets).map((preset) => {
-            const key = normalizeAssetStylePromptCompareKey(preset.promptPrefix);
-            if (!key || !styleKeys.has(key)) return preset;
-            changed = true;
-            return { ...preset, promptPrefix: '' };
-        });
-        if (!changed) return false;
-        await saveImageGenerationPresets();
-        renderGenerationControls();
-        applyGenerationPresetToUI(getSelectedImagePreset());
-        renderGenerationConnectionSummary();
-        return true;
     }
 
     async function refreshAfterAssetStylePresetChange() {
@@ -53020,7 +52900,7 @@ async function openAssetStudio() {
         return {
             name,
             artistTags: '',
-            stylePrompt: svbNormalizeImageArtistPromptSyntax(document.getElementById('svb-as-style-prompt')?.value || ''),
+            stylePrompt: document.getElementById('svb-as-style-prompt')?.value || '',
             qualityPrompt: document.getElementById('svb-as-style-quality')?.value || '',
             negativePrompt: document.getElementById('svb-as-style-negative')?.value || ''
         };
@@ -53030,7 +52910,6 @@ async function openAssetStudio() {
         const style = readAssetStylePanelValues();
         assetStudioMeta = svbSetAssetStudioStylePreset(assetStudioMeta, style.name, style, { activate: true });
         await refreshAfterAssetStylePresetChange();
-        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 "${style.name}"을 저장했습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -53043,7 +52922,6 @@ async function openAssetStudio() {
         if (!cleanName || !style) return;
         assetStudioMeta = svbNormalizeAssetStudioMeta({ ...assetStudioMeta, activeStyle: cleanName });
         await refreshAfterAssetStylePresetChange();
-        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 "${style.name || cleanName}"을 선택했습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -53070,7 +52948,6 @@ async function openAssetStudio() {
         if (!confirm(`작가 프리셋 "${name}"을 삭제할까요?`)) return;
         assetStudioMeta = svbDeleteAssetStudioStylePreset(assetStudioMeta, name);
         await refreshAfterAssetStylePresetChange();
-        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 "${name}"을 삭제했습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -53103,7 +52980,6 @@ async function openAssetStudio() {
             activeStyle: safeString(data.activeStyle).trim() || names[0]
         });
         await refreshAfterAssetStylePresetChange();
-        await removeCopiedArtistPromptsFromImagePresets();
         await saveCurrentAssets(`작가 프리셋 ${names.length}개를 가져왔습니다.`);
         closeAssetStylePanel();
         renderAll();
@@ -53335,7 +53211,7 @@ async function openAssetStudio() {
             });
         }
         const weights = [1.12, 1, 0.9, 0.82, 0.74, 0.68];
-        const artistPrompt = svbNormalizeImageArtistPromptSyntax(svbJoinPromptFragments(artists.map((tag, index) => svbWeightedDanbooruArtist(tag, weights[index] || 0.68))));
+        const artistPrompt = svbJoinPromptFragments(artists.map((tag, index) => svbWeightedDanbooruArtist(tag, weights[index] || 0.68)));
         return {
             artists,
             artistPrompt,
@@ -53375,7 +53251,7 @@ async function openAssetStudio() {
                 return {};
             });
             const resolved = svbResolveDanbooruArtistSelection(selection);
-            const fixedStylePrompt = svbNormalizeImageArtistPromptSyntax(resolved.artistPrompt);
+            const fixedStylePrompt = resolved.artistPrompt;
             if (!fixedStylePrompt) {
                 throw new Error('Danbooru artist DB에서 적용할 작가 프롬프트를 만들지 못했습니다.');
             }
@@ -54213,8 +54089,6 @@ async function openAssetStudio() {
         const presetHeaders = document.getElementById('svb-as-preset-headers');
         const characterPrompt = document.getElementById('svb-as-character-prompt');
         const characterNegative = document.getElementById('svb-as-character-negative');
-        const promptPrefix = document.getElementById('svb-as-prompt-prefix');
-        const promptSuffix = document.getElementById('svb-as-prompt-suffix');
         const negativePrefix = document.getElementById('svb-as-negative-prefix');
         const negativeSuffix = document.getElementById('svb-as-negative-suffix');
         const referencePath = document.getElementById('svb-as-reference-image-path');
@@ -54244,8 +54118,6 @@ async function openAssetStudio() {
         if (presetHeaders && !presetHeaders.value) presetHeaders.value = preset.headersTemplate || '';
         if (characterPrompt && !characterPrompt.value) characterPrompt.value = preset.characterPrompt || '';
         if (characterNegative && !characterNegative.value) characterNegative.value = preset.characterNegative || '';
-        if (promptPrefix && !promptPrefix.value) promptPrefix.value = preset.promptPrefix || '';
-        if (promptSuffix && !promptSuffix.value) promptSuffix.value = preset.promptSuffix || '';
         if (negativePrefix && !negativePrefix.value) negativePrefix.value = preset.negativePrefix || '';
         if (negativeSuffix && !negativeSuffix.value) negativeSuffix.value = preset.negativeSuffix || '';
         if (referencePath && !referencePath.value) referencePath.value = preset.referenceImagePath || '';
@@ -54287,8 +54159,6 @@ async function openAssetStudio() {
         const headers = document.getElementById('svb-as-preset-headers');
         const characterPrompt = document.getElementById('svb-as-character-prompt');
         const characterNegative = document.getElementById('svb-as-character-negative');
-        const promptPrefix = document.getElementById('svb-as-prompt-prefix');
-        const promptSuffix = document.getElementById('svb-as-prompt-suffix');
         const negativePrefix = document.getElementById('svb-as-negative-prefix');
         const negativeSuffix = document.getElementById('svb-as-negative-suffix');
         const referencePath = document.getElementById('svb-as-reference-image-path');
@@ -54323,8 +54193,6 @@ async function openAssetStudio() {
         if (headers) headers.value = normalized.headersTemplate || '';
         if (characterPrompt) characterPrompt.value = normalized.characterPrompt || '';
         if (characterNegative) characterNegative.value = normalized.characterNegative || '';
-        if (promptPrefix) promptPrefix.value = normalized.promptPrefix || '';
-        if (promptSuffix) promptSuffix.value = normalized.promptSuffix || '';
         if (negativePrefix) negativePrefix.value = normalized.negativePrefix || '';
         if (negativeSuffix) negativeSuffix.value = normalized.negativeSuffix || '';
         if (referencePath) referencePath.value = normalized.referenceImagePath || '';
@@ -54367,7 +54235,7 @@ async function openAssetStudio() {
             ? 'Wellspring 프로필의 체크포인트·LoRA·워크플로우를 사용'
             : `${providerLabel} 호출`;
         const characterLockOn = [preset.characterPrompt, preset.characterNegative].some(value => safeString(value).trim());
-        const fixedTagsOn = [preset.promptPrefix, preset.promptSuffix, preset.negativePrefix, preset.negativeSuffix]
+        const fixedTagsOn = [preset.negativePrefix, preset.negativeSuffix]
             .some(value => safeString(value).trim());
         const referenceOn = !!safeString(preset.referenceImagePath).trim();
         const wellspringRouteOn = [
@@ -54384,7 +54252,7 @@ async function openAssetStudio() {
             preset.wellspringPayloadJson
         ]
             .some(value => safeString(value).trim());
-        const fixedTagNote = [referenceOn ? '참조 이미지' : '', wellspringRouteOn ? 'Wellspring 고급' : '', characterLockOn ? '캐릭터 고정' : '', fixedTagsOn ? '고정 태그' : ''].filter(Boolean).join(' · ');
+        const fixedTagNote = [referenceOn ? '참조 이미지' : '', wellspringRouteOn ? 'Wellspring 고급' : '', characterLockOn ? '캐릭터 고정' : '', fixedTagsOn ? '네거티브 고정' : ''].filter(Boolean).join(' · ');
         summary.innerHTML = `
             <strong>${escapeHtml(profile.name)}</strong>
             <span>${escapeHtml(preset.name)} · 파트 ${parts.length}개 · ${escapeHtml(remoteNote)}${fixedTagNote ? ` · ${escapeHtml(fixedTagNote)}` : ''}</span>
@@ -54443,10 +54311,8 @@ async function openAssetStudio() {
             requestTemplate: IMAGE_API_DEFAULT_CUSTOM_TEMPLATE,
             responseParser: "auto",
             jsonPath: "",
-            characterPrompt: currentPreset.characterPrompt,
-            characterNegative: currentPreset.characterNegative,
-            promptPrefix: currentPreset.promptPrefix,
-            promptSuffix: currentPreset.promptSuffix,
+            characterPrompt: '',
+            characterNegative: '',
             negativePrefix: currentPreset.negativePrefix,
             negativeSuffix: currentPreset.negativeSuffix,
             referenceImagePath: currentPreset.referenceImagePath,
@@ -54588,10 +54454,8 @@ async function openAssetStudio() {
             model: readValue('svb-as-preset-model', base.model),
             prompt: readValue('svb-as-gen-prompt', base.prompt),
             negative: readValue('svb-as-gen-negative', base.negative),
-            characterPrompt: readValue('svb-as-character-prompt', base.characterPrompt),
-            characterNegative: readValue('svb-as-character-negative', base.characterNegative),
-            promptPrefix: readValue('svb-as-prompt-prefix', base.promptPrefix),
-            promptSuffix: readValue('svb-as-prompt-suffix', base.promptSuffix),
+            characterPrompt: '',
+            characterNegative: '',
             negativePrefix: readValue('svb-as-negative-prefix', base.negativePrefix),
             negativeSuffix: readValue('svb-as-negative-suffix', base.negativeSuffix),
             referenceImagePath: readValue('svb-as-reference-image-path', base.referenceImagePath),
@@ -54822,7 +54686,8 @@ async function openAssetStudio() {
                     part: job.part.label,
                     name
                 };
-                const prompt = svbRenderImagePromptTemplate(job.part.prompt || preset.prompt, vars).trim();
+                const bodyPrompt = svbRenderImagePromptTemplate(job.part.prompt || preset.prompt, vars).trim();
+                const prompt = prependActiveAssetArtistPrompt(bodyPrompt);
                 const negative = svbRenderImagePromptTemplate(job.part.negative || preset.negative, vars).trim();
                 const ratioId = job.part.ratioId || preset.ratioId || profile.ratioId;
                 const steps = Number(job.part.steps || preset.steps || profile.steps) || 26;
@@ -54841,6 +54706,7 @@ async function openAssetStudio() {
                 const output = await saveGeneratedBatchAssetToState(result, job.part, name, {
                     prompt: result.prompt || prompt,
                     negative: result.negative || negative,
+                    artistPrompt: getActiveAssetArtistPrompt(),
                     provider: profile.name || profile.provider,
                     presetId: preset.id || preset.name,
                     ratioId,
@@ -54850,6 +54716,7 @@ async function openAssetStudio() {
                 output.partId = job.part.id;
                 output.prompt = result.prompt || prompt;
                 output.negative = result.negative || negative;
+                output.artistPrompt = getActiveAssetArtistPrompt();
                 output.provider = profile.name || profile.provider;
                 output.presetId = preset.id || preset.name;
                 output.sourceContext = 'asset_studio_batch';
@@ -55148,7 +55015,8 @@ async function openAssetStudio() {
             emotion: targetName,
             name: targetName
         };
-        const prompt = svbRenderImagePromptTemplate(document.getElementById('svb-as-gen-prompt')?.value, vars).trim();
+        const bodyPrompt = svbRenderImagePromptTemplate(document.getElementById('svb-as-gen-prompt')?.value, vars).trim();
+        const prompt = prependActiveAssetArtistPrompt(bodyPrompt);
         const negative = svbRenderImagePromptTemplate(document.getElementById('svb-as-gen-negative')?.value, vars).trim();
         const ratioId = document.getElementById('svb-as-gen-ratio')?.value || preset.ratioId || profile.ratioId;
         const steps = Number(document.getElementById('svb-as-gen-steps')?.value) || preset.steps || profile.steps || 26;
@@ -55169,6 +55037,7 @@ async function openAssetStudio() {
                 ...result,
                 provider: profile.name || profile.provider,
                 presetId: preset.id || preset.name,
+                artistPrompt: getActiveAssetArtistPrompt(),
                 ratioId,
                 steps,
                 sourceContext: 'asset_studio_single'
@@ -56918,10 +56787,6 @@ async function openAssetStudio() {
                                         <textarea class="svb-as-input" id="svb-as-character-negative" placeholder="수동 캐릭터 네거티브: bad anatomy, bad hands, text, logo, watermark"></textarea>
                                     </div>
                                     <div class="svb-as-grid">
-                                        <textarea class="svb-as-input" id="svb-as-prompt-prefix" placeholder="Positive 앞에 붙일 사용자 지정 작가/고정 태그"></textarea>
-                                        <textarea class="svb-as-input" id="svb-as-prompt-suffix" placeholder="Positive 뒤에 항상 붙일 마무리 태그"></textarea>
-                                    </div>
-                                    <div class="svb-as-grid">
                                         <textarea class="svb-as-input" id="svb-as-negative-prefix" placeholder="Negative 앞에 항상 붙일 금지 태그"></textarea>
                                         <textarea class="svb-as-input" id="svb-as-negative-suffix" placeholder="Negative 뒤에 항상 붙일 금지 태그"></textarea>
                                     </div>
@@ -57039,9 +56904,6 @@ async function openAssetStudio() {
     document.addEventListener('keydown', handleEsc);
     try {
         renderAll();
-        if (await removeCopiedArtistPromptsFromImagePresets()) {
-            renderAll();
-        }
         studioWindow.querySelector('.svb-as-container')?.focus?.();
     } catch (error) {
         Logger.error('Asset Studio initial render failed:', error);
